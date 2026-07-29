@@ -123,9 +123,20 @@ If you'd rather approve categories before they go live, disable **Auto-enable se
 3. [Collection Sections](https://github.com/IAmParadox27/jellyfin-plugin-collection-sections) installed on top of it.
 4. An API key for Anthropic or OpenAI, **or** a local OpenAI-compatible endpoint (Ollama, LM Studio, vLLM).
 
-### Install the plugin
+### Install from the plugin catalogue (recommended)
 
-There is no plugin-catalogue repository yet, so installation is a folder drop:
+1. In Jellyfin, go to **Dashboard → Plugins → Repositories** and add:
+
+   ```
+   https://raw.githubusercontent.com/nitramivel/jellyfin-curator/main/manifest.json
+   ```
+
+2. Switch to the **Catalog** tab — Curator now appears under General. Click it and press **Install**.
+3. Restart Jellyfin when prompted.
+4. Open Curator's configuration page, choose a provider and model, and enter your API key (or base URL for a local endpoint).
+5. Run the **Curator: Generate Categories** scheduled task manually for a first pass, and watch the server log — every run logs its token count and estimated cost at INFO.
+
+### Install manually (folder drop)
 
 1. Grab a packaged build — either from the repository's releases, or build one yourself (next section). Either way you end up with a folder containing `Jellyfin.Plugin.Curator.dll` and `meta.json`.
 2. Copy that folder into your server's plugin directory as `plugins/Curator_<version>`:
@@ -137,9 +148,7 @@ There is no plugin-catalogue repository yet, so installation is a folder drop:
    | Windows | `%ProgramData%\Jellyfin\Server\plugins\Curator_0.1.0.0\` |
 
 3. Make sure the files are readable by the Jellyfin user (for containers, match the UID the container runs as).
-4. Restart Jellyfin. **Dashboard → Plugins** should now list Curator as Active.
-5. Open Curator's configuration page, choose a provider and model, and enter your API key (or base URL for a local endpoint).
-6. Run the **Curator: Generate Categories** scheduled task manually for a first pass, and watch the server log — every run logs its token count and estimated cost at INFO.
+4. Restart Jellyfin. **Dashboard → Plugins** should now list Curator as Active, then configure and run as in the catalogue steps above.
 
 ### Building from source
 
@@ -152,7 +161,7 @@ dotnet test                # full test suite; no network access needed
 ./build/package.sh         # produces artifacts/Curator_<version>/ ready to copy
 ```
 
-`build/package.sh` accepts `VERSION` and `TARGET_ABI` environment variables if you need to pin either.
+`build/package.sh` accepts `VERSION` and `TARGET_ABI` environment variables if you need to pin either. Releasing a new catalogue version is `VERSION=x.y.z.w CHANGELOG="..." ./build/release.sh`, which builds the zip, computes its checksum, and updates `manifest.json` — then upload the zip to a GitHub release tagged `vx.y.z.w`.
 
 ## ⚠️ Caveats
 

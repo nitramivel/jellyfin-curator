@@ -1,0 +1,21 @@
+[
+  {
+    "guid": "de2b72e7-90f9-47e8-aeef-0436d71d01ac",
+    "name": "Curator",
+    "description": "Asks an LLM what your library has in common and builds the answers into ordered playlists surfaced as home screen rows.",
+    "overview": "LLM-inferred vibe categories for your Jellyfin library.",
+    "owner": "nitramivel",
+    "category": "General",
+    "imageUrl": "",
+    "versions": [
+      {
+        "version": "0.1.0.0",
+        "changelog": "Initial release: library scan, LLM providers (Anthropic / OpenAI / OpenAI-compatible), reconciliation, and playlist building with ownership tagging.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.1.0.0/curator_0.1.0.0.zip",
+        "checksum": "b42eb2a27fdf5bd5b6a1f6aab0610689",
+        "timestamp": "2026-07-29T19:00:41Z"
+      }
+    ]
+  }
+]
