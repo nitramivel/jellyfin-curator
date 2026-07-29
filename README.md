@@ -2,6 +2,8 @@
 
 **A Jellyfin plugin that asks an LLM what your library has in common, and builds the answers into home screen rows.**
 
+> **Status:** in active development. The core pipeline — scan → propose → reconcile → build playlists — is implemented and tested; home screen auto-registration and the scheduled task are landing next.
+
 Curator is a scheduled task. It sends every movie and show in your library to a model you configure, asks it to find the threads running through them, and turns each thread into an ordered Jellyfin playlist — surfaced on your home screen as a row via Collection Sections.
 
 The categories it produces are the ones a query can't express:
@@ -33,7 +35,7 @@ The bet is that the interesting gap in the Jellyfin ecosystem isn't *more ways t
 
 Each run proceeds in five phases.
 
-**1. Scan.** Every movie and series in the library is collected and reduced to a compact record: title, year, genres, tags, official rating, runtime, community rating, a truncated overview, and its Jellyfin item ID. Nothing else is sent — no file paths, no watch history, no user data.
+**1. Scan.** Every movie and series in the library is collected and reduced to a compact record: title, year, genres, tags, official rating, runtime, community rating, a truncated overview, and its Jellyfin item ID. No file paths or account details are ever sent. Watch history stays local too, with one opt-out exception: when **personalized playlists** are enabled (the default for playlist output), each target user's watch activity — played state, play count, favorites, personal rating — is attached so the model can shape categories to their taste. Turn the toggle off and nothing about viewing behavior leaves the server.
 
 **2. Batch.** The records are chunked to fit the configured model's context window. A large library will span many requests.
 
@@ -53,24 +55,27 @@ Set in the plugin's configuration page:
 
 | Setting | Description |
 |---|---|
-| **Provider** | Anthropic, OpenAI, Google, or any OpenAI-compatible endpoint |
+| **Provider** | Anthropic, OpenAI, or any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter — Gemini works via Google's OpenAI-compatible API) |
 | **Model** | The model identifier to use |
-| **API key** | Stored in the plugin configuration |
-| **Base URL** | Optional override for self-hosted or proxied endpoints (Ollama, LM Studio, vLLM, OpenRouter) |
+| **API key** | Stored in the plugin configuration; optional for local OpenAI-compatible servers |
+| **Base URL** | Optional override for self-hosted or proxied endpoints; required for the OpenAI-compatible provider (e.g. `http://localhost:11434/v1`) |
 | **Batch size** | Items per request. Lower this if you hit context limits |
+| **Max output tokens** | Output cap per request. Raise it if batch responses get truncated |
 | **Max categories** | Ceiling on how many categories a run may produce |
 | **Min category size** | Categories with fewer members than this are discarded |
 | **Token budget** | Hard cap per run, so a large library can't run up an unexpected bill |
+| **Input / output cost per million** | Your provider's prices, used only for the estimated-cost log line; leave at 0 to log token counts alone |
 
-> **A note on what gets sent.** Curator transmits your library's titles and metadata to whatever provider you configure. With a hosted provider, that means a third party sees a list of everything you own. If that's not acceptable, point Curator at a local model using the base URL override — nothing leaves your network.
+> **A note on what gets sent.** Curator transmits your library's titles and metadata to whatever provider you configure — and, when personalized playlists are enabled, each target user's watch activity too. With a hosted provider, that means a third party sees a list of everything you own and how you watch it. If that's not acceptable, disable personalization, or point Curator at a local model using the base URL override — then nothing leaves your network.
 
 ### Output
 
 | Setting | Description |
 |---|---|
 | **Output type** | Playlists (default) or collections |
+| **Personalized playlists** | Attach each target user's watch activity so their playlists reflect their taste. Playlists only; runs the model once per user, so cost scales with user count |
 | **Include episodes** | Allow the model to select individual episodes, not just whole series |
-| **Target users** | Which users get playlists generated for them |
+| **Target users** | Which users get playlists generated for them (empty = all users) |
 | **Auto-enable sections** | Enable newly created sections on the home screen automatically |
 
 ---
@@ -116,17 +121,49 @@ If you'd rather approve categories before they go live, disable **Auto-enable se
 
 ## Installation
 
-1. Install Home Screen Sections and Collection Sections, following their installation guides.
-2. Add the Curator repository to your Jellyfin plugin catalogue.
-3. Install Curator and restart Jellyfin.
-4. Open the plugin configuration, choose a provider and model, and enter your API key.
-5. Run the **Curator: Generate Categories** scheduled task manually for a first pass.
+### Prerequisites
+
+1. A Jellyfin **10.11.x** server.
+2. [Home Screen Sections](https://github.com/IAmParadox27/jellyfin-plugin-home-sections) installed and working — follow its guide first, including enabling modular home in your user settings.
+3. [Collection Sections](https://github.com/IAmParadox27/jellyfin-plugin-collection-sections) installed on top of it.
+4. An API key for Anthropic or OpenAI, **or** a local OpenAI-compatible endpoint (Ollama, LM Studio, vLLM).
+
+### Install the plugin
+
+There is no plugin-catalogue repository yet, so installation is a folder drop:
+
+1. Grab a packaged build — either from the repository's releases, or build one yourself (next section). Either way you end up with a folder containing `Jellyfin.Plugin.Curator.dll` and `meta.json`.
+2. Copy that folder into your server's plugin directory as `plugins/Curator_<version>`:
+
+   | Setup | Plugin directory |
+   |---|---|
+   | Podman/Docker (config dir mounted at `/config`) | `<your config mount>/plugins/Curator_0.1.0.0/` |
+   | Linux package | `/var/lib/jellyfin/plugins/Curator_0.1.0.0/` |
+   | Windows | `%ProgramData%\Jellyfin\Server\plugins\Curator_0.1.0.0\` |
+
+3. Make sure the files are readable by the Jellyfin user (for containers, match the UID the container runs as).
+4. Restart Jellyfin. **Dashboard → Plugins** should now list Curator as Active.
+5. Open Curator's configuration page, choose a provider and model, and enter your API key (or base URL for a local endpoint).
+6. Run the **Curator: Generate Categories** scheduled task manually for a first pass, and watch the server log — every run logs its token count and estimated cost at INFO.
+
+### Building from source
+
+Requires the .NET 9 SDK.
+
+```bash
+git clone https://github.com/nitramivel/jellyfin-curator
+cd jellyfin-curator
+dotnet test                # full test suite; no network access needed
+./build/package.sh         # produces artifacts/Curator_<version>/ ready to copy
+```
+
+`build/package.sh` accepts `VERSION` and `TARGET_ABI` environment variables if you need to pin either.
 
 ---
 
 ## Caveats
 
-- **LLM output is not deterministic.** Two runs over the same library will not produce identical categories. This is arguably the point, but it means categories churn between runs unless you pin the ones you like.
+- **LLM output is not deterministic.** Two runs over the same library will not produce identical categories. This is arguably the point, but it means categories churn between runs. To keep a playlist you love exactly as it is, remove its `curator` tag — Curator hands it to you permanently and never touches it again.
 - **Cost scales with library size.** A 3,000-item library is a lot of tokens per run. Set a token budget and start with a wide schedule.
 - **The model can be wrong about your media.** It sees a title and an overview, not the film. It will occasionally group things confidently and incorrectly.
 - **Collection Sections resolves rows by name.** Renaming a Curator playlist by hand will break its home screen section.
