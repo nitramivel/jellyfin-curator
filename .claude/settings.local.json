@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude --version)",
+      "Bash(git remote *)",
+      "Bash(git merge *)",
+      "Bash(curl -sS -o /dev/null -w \"v0.1.0.0 asset: %{http_code}\\\\n\" -L https://github.com/nitramivel/jellyfin-curator/releases/download/v0.1.0.0/curator_0.1.0.0.zip)",
+      "Bash(curl -sS -o /dev/null -w \"releases page: %{http_code}\\\\n\" -L https://github.com/nitramivel/jellyfin-curator/releases)",
+      "Bash(python3 -c \"import json,sys; m=json.load\\(sys.stdin\\); print\\('manifest versions:', [v['version'] for v in m[0]['versions']]\\)\")",
+      "Bash(python3 -)",
+      "Bash(unzip -l curator_0.2.0.0.zip)",
+      "Bash(python3 -c ' *)"
+    ]
+  }
+}
