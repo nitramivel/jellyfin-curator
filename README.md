@@ -33,7 +33,7 @@ The bet is that the interesting gap in the Jellyfin ecosystem isn't *more ways t
 
 Each run proceeds in five phases.
 
-**1. Scan.** Every movie and series in the library is collected and reduced to a compact record: title, year, genres, tags, official rating, runtime, community rating, a truncated overview, and its Jellyfin item ID. Nothing else is sent — no file paths, no watch history, no user data.
+**1. Scan.** Every movie and series in the library is collected and reduced to a compact record: title, year, genres, tags, official rating, runtime, community rating, a truncated overview, and its Jellyfin item ID. No file paths are ever sent. When playlist output is selected and **personalized playlists** are enabled (the default), each target user's watch activity — played state, play count, favorite flag, personal rating, days since last played — is attached to the items so the model can build user-specific categories; disable the toggle to keep watch history out of what's sent.
 
 **2. Batch.** The records are chunked to fit the configured model's context window. A large library will span many requests.
 
@@ -62,13 +62,14 @@ Set in the plugin's configuration page:
 | **Min category size** | Categories with fewer members than this are discarded |
 | **Token budget** | Hard cap per run, so a large library can't run up an unexpected bill |
 
-> **A note on what gets sent.** Curator transmits your library's titles and metadata to whatever provider you configure. With a hosted provider, that means a third party sees a list of everything you own. If that's not acceptable, point Curator at a local model using the base URL override — nothing leaves your network.
+> **A note on what gets sent.** Curator transmits your library's titles and metadata to whatever provider you configure — and, when personalized playlists are enabled, each target user's watch activity too. With a hosted provider, that means a third party sees a list of everything you own and how you watch it. If that's not acceptable, disable personalization, or point Curator at a local model using the base URL override — nothing leaves your network.
 
 ### Output
 
 | Setting | Description |
 |---|---|
 | **Output type** | Playlists (default) or collections |
+| **Personalized playlists** | Send each target user's watch activity with the library so playlists reflect their taste (playlists only; multiplies LLM cost by user count) |
 | **Include episodes** | Allow the model to select individual episodes, not just whole series |
 | **Target users** | Which users get playlists generated for them |
 | **Auto-enable sections** | Enable newly created sections on the home screen automatically |
