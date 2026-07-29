@@ -4,27 +4,344 @@
     <title>Curator</title>
 </head>
 <body>
-    <div id="CuratorConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button">
-        <div data-role="content">
-            <div class="content-primary">
-                <form id="CuratorConfigForm">
-                    <div class="verticalSection">
-                        <h2 class="sectionTitle">Curator</h2>
-                        <p>Configuration UI arrives in a later phase. Settings are currently managed via the plugin configuration XML.</p>
+<div id="CuratorConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+     data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="CuratorConfigForm">
+
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Curator</h2>
+                    <p class="fieldDescription">
+                        Sends your library to an LLM, asks what threads run through it, and builds the answers
+                        into ordered playlists surfaced as home screen rows.
+                    </p>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Model</h3>
+
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="Provider">Provider</label>
+                        <select is="emby-select" id="Provider" name="Provider" class="emby-select-withcolor emby-select">
+                            <option value="0">Anthropic</option>
+                            <option value="1">OpenAI</option>
+                            <option value="2">OpenAI-compatible (Ollama, LM Studio, vLLM, OpenRouter)</option>
+                        </select>
+                        <div class="fieldDescription">
+                            Gemini works through the OpenAI-compatible option using Google's compatibility endpoint.
+                        </div>
                     </div>
-                </form>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="Model">Model</label>
+                        <input id="Model" name="Model" type="text" class="emby-input" />
+                        <div class="fieldDescription">
+                            The model identifier, for example <code>claude-opus-5</code>, <code>gpt-5</code>,
+                            or <code>llama3.3</code>.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="ApiKey">API key</label>
+                        <input id="ApiKey" name="ApiKey" type="password" class="emby-input" autocomplete="off" />
+                        <div class="fieldDescription">Optional for local OpenAI-compatible servers that need no key.</div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="BaseUrl">Base URL</label>
+                        <input id="BaseUrl" name="BaseUrl" type="text" class="emby-input"
+                               placeholder="http://localhost:11434/v1" />
+                        <div class="fieldDescription">
+                            Leave empty to use the provider's default endpoint. Required for the OpenAI-compatible
+                            provider — include the version segment.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Run limits</h3>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="BatchSize">Batch size</label>
+                        <input id="BatchSize" name="BatchSize" type="number" min="10" max="1000" class="emby-input" />
+                        <div class="fieldDescription">Items per request. Lower this if you hit context limits.</div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="MaxOutputTokens">Max output tokens</label>
+                        <input id="MaxOutputTokens" name="MaxOutputTokens" type="number" min="512" max="128000" class="emby-input" />
+                        <div class="fieldDescription">Raise this if the log reports truncated batch responses.</div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="TokenBudget">Token budget per run</label>
+                        <input id="TokenBudget" name="TokenBudget" type="number" min="0" class="emby-input" />
+                        <div class="fieldDescription">
+                            Hard cap on input plus output tokens for a whole run. 0 disables the cap.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="MaxCategories">Max categories</label>
+                        <input id="MaxCategories" name="MaxCategories" type="number" min="0" max="200" class="emby-input" />
+                        <div class="fieldDescription">Ceiling on categories per run. 0 means no cap.</div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="MinCategorySize">Minimum category size</label>
+                        <input id="MinCategorySize" name="MinCategorySize" type="number" min="1" max="100" class="emby-input" />
+                        <div class="fieldDescription">Categories with fewer members than this are discarded.</div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="InputCostPerMillion">Input cost per million tokens (USD)</label>
+                        <input id="InputCostPerMillion" name="InputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="OutputCostPerMillion">Output cost per million tokens (USD)</label>
+                        <input id="OutputCostPerMillion" name="OutputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
+                        <div class="fieldDescription">
+                            Used only for the estimated-cost line each run logs. Leave both at 0 to log token counts alone.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Output</h3>
+
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="OutputType">Output type</label>
+                        <select is="emby-select" id="OutputType" name="OutputType" class="emby-select-withcolor emby-select">
+                            <option value="0">Playlists (recommended)</option>
+                            <option value="1">Collections</option>
+                        </select>
+                        <div class="fieldDescription">
+                            Collection Sections renders collection rows without any ordering control, so playlists
+                            are the better choice unless you have a specific reason.
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="PersonalizedPlaylists" name="PersonalizedPlaylists" />
+                            <span>Personalized playlists</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Send each target user's watch activity so their playlists reflect their taste. Playlist
+                            output only. This runs the model once per user, so cost scales with user count, and it
+                            means viewing behaviour reaches your configured provider.
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="IncludeEpisodes" name="IncludeEpisodes" />
+                            <span>Include individual episodes</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Lets the model build episode-level categories such as "Bottle Episodes". Increases the
+                            item count considerably on large libraries.
+                        </div>
+                    </div>
+
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="AutoEnableSections" name="AutoEnableSections" />
+                            <span>Enable new sections automatically</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Turn new rows on for target users without them visiting home screen settings. Leave off
+                            to have rows appear as available-but-disabled.
+                        </div>
+                    </div>
+
+                    <div class="selectContainer">
+                        <label class="selectLabel" for="TargetUsers">Target users</label>
+                        <select is="emby-select" id="TargetUsers" name="TargetUsers" multiple
+                                class="emby-select-withcolor emby-select" size="6"></select>
+                        <div class="fieldDescription">Select none to build for every user.</div>
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <button is="emby-button" type="submit" class="raised button-submit block">
+                        <span>Save</span>
+                    </button>
+                </div>
+            </form>
+
+            <div class="verticalSection">
+                <h3 class="sectionTitle">Run now</h3>
+                <p class="fieldDescription" id="CuratorRunState">Checking status&hellip;</p>
+                <button is="emby-button" type="button" id="CuratorRunButton" class="raised block">
+                    <span>Generate categories now</span>
+                </button>
+                <div class="fieldDescription" style="margin-top:0.5em;">
+                    Save your settings first. A run can take several minutes and costs money — watch the server
+                    log for token counts and estimated cost. The same run happens on schedule via the
+                    <em>Curator: Generate Categories</em> scheduled task.
+                </div>
+            </div>
+
+            <div class="verticalSection">
+                <h3 class="sectionTitle">Categories</h3>
+                <div id="CuratorCategories"><p class="fieldDescription">Loading&hellip;</p></div>
             </div>
         </div>
-        <script type="text/javascript">
-            var CuratorConfig = {
-                pluginUniqueId: 'de2b72e7-90f9-47e8-aeef-0436d71d01ac'
-            };
-
-            document.querySelector('#CuratorConfigPage')
-                .addEventListener('pageshow', function () {
-                    Dashboard.hideLoadingMsg();
-                });
-        </script>
     </div>
+
+    <script type="text/javascript">
+        (function () {
+            var pluginId = 'de2b72e7-90f9-47e8-aeef-0436d71d01ac';
+            var page;
+
+            function fillUsers(selectedIds) {
+                return ApiClient.getUsers().then(function (users) {
+                    var select = page.querySelector('#TargetUsers');
+                    select.innerHTML = users.map(function (user) {
+                        var selected = selectedIds.indexOf(user.Id) !== -1 ? ' selected' : '';
+                        return '<option value="' + user.Id + '"' + selected + '>' + escapeHtml(user.Name) + '</option>';
+                    }).join('');
+                });
+            }
+
+            function escapeHtml(value) {
+                return String(value === null || value === undefined ? '' : value)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+            }
+
+            function renderCategories(categories) {
+                var container = page.querySelector('#CuratorCategories');
+                if (!categories.length) {
+                    container.innerHTML = '<p class="fieldDescription">No categories yet. Run Curator to generate some.</p>';
+                    return;
+                }
+
+                var rows = categories.map(function (category) {
+                    var meta = category.MemberCount + ' items · ' + category.PlaylistCount + ' playlist(s)';
+                    if (category.HandedOffCount) {
+                        meta += ' · ' + category.HandedOffCount + ' handed off';
+                    }
+                    meta += ' · ' + escapeHtml(category.ModelId);
+                    return '<div class="listItem listItem-border">'
+                        + '<div class="listItemBody two-line">'
+                        + '<div class="listItemBodyText">' + escapeHtml(category.Name) + '</div>'
+                        + '<div class="listItemBodyText secondary">' + escapeHtml(category.Description) + '</div>'
+                        + '<div class="listItemBodyText secondary">' + meta + '</div>'
+                        + '</div></div>';
+                }).join('');
+
+                container.innerHTML = '<div class="paperList">' + rows + '</div>';
+            }
+
+            function refreshStatus() {
+                return ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Status'),
+                    dataType: 'json'
+                }).then(function (status) {
+                    var stateText = page.querySelector('#CuratorRunState');
+                    var runButton = page.querySelector('#CuratorRunButton');
+                    if (status.IsRunning) {
+                        stateText.innerHTML = 'A run is in progress. Watch the server log for detail.';
+                        runButton.disabled = true;
+                        setTimeout(refreshStatus, 5000);
+                    } else {
+                        stateText.innerHTML = 'Idle.';
+                        runButton.disabled = false;
+                    }
+                    renderCategories(status.Categories || []);
+                }, function () {
+                    page.querySelector('#CuratorRunState').innerHTML = 'Status unavailable.';
+                });
+            }
+
+            function loadConfiguration() {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    page.querySelector('#Provider').value = config.Provider;
+                    page.querySelector('#Model').value = config.Model || '';
+                    page.querySelector('#ApiKey').value = config.ApiKey || '';
+                    page.querySelector('#BaseUrl').value = config.BaseUrl || '';
+                    page.querySelector('#BatchSize').value = config.BatchSize;
+                    page.querySelector('#MaxOutputTokens').value = config.MaxOutputTokens;
+                    page.querySelector('#TokenBudget').value = config.TokenBudget;
+                    page.querySelector('#MaxCategories').value = config.MaxCategories;
+                    page.querySelector('#MinCategorySize').value = config.MinCategorySize;
+                    page.querySelector('#InputCostPerMillion').value = config.InputCostPerMillion;
+                    page.querySelector('#OutputCostPerMillion').value = config.OutputCostPerMillion;
+                    page.querySelector('#OutputType').value = config.OutputType;
+                    page.querySelector('#PersonalizedPlaylists').checked = config.PersonalizedPlaylists;
+                    page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
+                    page.querySelector('#AutoEnableSections').checked = config.AutoEnableSections;
+
+                    return fillUsers(config.TargetUsers || []);
+                }).then(function () {
+                    Dashboard.hideLoadingMsg();
+                    refreshStatus();
+                });
+            }
+
+            function saveConfiguration(event) {
+                event.preventDefault();
+                Dashboard.showLoadingMsg();
+
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    config.Provider = parseInt(page.querySelector('#Provider').value, 10);
+                    config.Model = page.querySelector('#Model').value.trim();
+                    config.ApiKey = page.querySelector('#ApiKey').value;
+                    config.BaseUrl = page.querySelector('#BaseUrl').value.trim();
+                    config.BatchSize = parseInt(page.querySelector('#BatchSize').value, 10);
+                    config.MaxOutputTokens = parseInt(page.querySelector('#MaxOutputTokens').value, 10);
+                    config.TokenBudget = parseInt(page.querySelector('#TokenBudget').value, 10);
+                    config.MaxCategories = parseInt(page.querySelector('#MaxCategories').value, 10);
+                    config.MinCategorySize = parseInt(page.querySelector('#MinCategorySize').value, 10);
+                    config.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value);
+                    config.OutputCostPerMillion = parseFloat(page.querySelector('#OutputCostPerMillion').value);
+                    config.OutputType = parseInt(page.querySelector('#OutputType').value, 10);
+                    config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
+                    config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;
+                    config.AutoEnableSections = page.querySelector('#AutoEnableSections').checked;
+
+                    config.TargetUsers = Array.prototype.filter.call(
+                        page.querySelector('#TargetUsers').options,
+                        function (option) { return option.selected; }
+                    ).map(function (option) { return option.value; });
+
+                    return ApiClient.updatePluginConfiguration(pluginId, config);
+                }).then(function (result) {
+                    Dashboard.processPluginConfigurationUpdateResult(result);
+                });
+
+                return false;
+            }
+
+            function startRun() {
+                var runButton = page.querySelector('#CuratorRunButton');
+                runButton.disabled = true;
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Run')
+                }).then(function () {
+                    page.querySelector('#CuratorRunState').innerHTML = 'Run started. Watch the server log for detail.';
+                    setTimeout(refreshStatus, 2000);
+                }, function () {
+                    page.querySelector('#CuratorRunState').innerHTML = 'Could not start a run — check the server log.';
+                    runButton.disabled = false;
+                });
+            }
+
+            document.querySelector('#CuratorConfigPage').addEventListener('pageshow', function () {
+                page = this;
+                page.querySelector('#CuratorConfigForm').addEventListener('submit', saveConfiguration);
+                page.querySelector('#CuratorRunButton').addEventListener('click', startRun);
+                loadConfiguration();
+            });
+        })();
+    </script>
+</div>
 </body>
 </html>

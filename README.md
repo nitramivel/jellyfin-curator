@@ -18,7 +18,7 @@ Curator is a scheduled task. It sends every movie and show in your library to a 
 
 The categories it produces are the ones a query can't express.
 
-> **Status:** in active development. The core pipeline — scan → propose → reconcile → build playlists — is implemented and tested; home screen auto-registration and the scheduled task are landing next.
+> **Status:** feature-complete and pending real-world testing. The full pipeline — scan, propose, reconcile, build playlists, publish home screen rows — runs end to end from the scheduled task or the configuration page's **Generate categories now** button.
 
 ## 🎯 Scope
 
@@ -80,6 +80,8 @@ Set in the plugin's configuration page:
 | **Include episodes** | Allow the model to select individual episodes, not just whole series |
 | **Target users** | Which users get playlists generated for them (empty = all users) |
 | **Auto-enable sections** | Enable newly created sections on the home screen automatically |
+
+Runs happen weekly by default via the **Curator: Generate Categories** scheduled task (adjust the schedule under **Dashboard → Scheduled Tasks**), or on demand from the **Generate categories now** button on the configuration page. Only one run happens at a time, and the page lists every category with its item and playlist counts.
 
 ## 🎵 Playlists, collections, and ordering
 

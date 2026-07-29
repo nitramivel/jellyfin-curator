@@ -1,3 +1,4 @@
+using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
 using Jellyfin.Plugin.Curator.Services.HomeScreen;
 using Jellyfin.Plugin.Curator.Services.Library;
@@ -25,6 +26,8 @@ namespace Jellyfin.Plugin.Curator
             serviceCollection.AddSingleton<ICuratorPlaylistService, CuratorPlaylistService>();
             serviceCollection.AddSingleton<IApiKeyProvider, ServerApiKeyProvider>();
             serviceCollection.AddSingleton<IHomeScreenIntegrationService, HomeScreenIntegrationService>();
+            serviceCollection.AddSingleton<CuratorRunService>();
+            serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, GenerateCategoriesTask>();
         }
     }
 }
