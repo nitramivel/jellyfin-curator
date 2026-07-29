@@ -78,6 +78,33 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public long TokenBudget { get; set; } = 2_000_000;
 
         /// <summary>
+        /// Gets or sets the maximum output tokens requested per LLM call.
+        /// </summary>
+        public int MaxOutputTokens { get; set; } = 8192;
+
+        /// <summary>
+        /// Gets or sets the provider's input price in USD per million tokens,
+        /// used only for the estimated-cost log line. 0 logs token counts without cost.
+        /// </summary>
+        public decimal InputCostPerMillion { get; set; }
+
+        /// <summary>
+        /// Gets or sets the provider's output price in USD per million tokens,
+        /// used only for the estimated-cost log line. 0 logs token counts without cost.
+        /// </summary>
+        public decimal OutputCostPerMillion { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether playlist runs include each target
+        /// user's watch activity (played, play count, favorite, rating) in what is
+        /// sent to the LLM, producing user-specific categories. Only applies when
+        /// <see cref="OutputType"/> is <see cref="OutputKind.Playlist"/>. Note this
+        /// multiplies LLM cost by the number of target users and shares viewing
+        /// behavior with the configured provider.
+        /// </summary>
+        public bool PersonalizedPlaylists { get; set; } = true;
+
+        /// <summary>
         /// Gets or sets the kind of Jellyfin list created per category.
         /// </summary>
         public OutputKind OutputType { get; set; } = OutputKind.Playlist;

@@ -1,4 +1,5 @@
 using Jellyfin.Plugin.Curator.Services.Library;
+using Jellyfin.Plugin.Curator.Services.Llm;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,9 @@ namespace Jellyfin.Plugin.Curator
         public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
         {
             serviceCollection.AddSingleton<ILibraryScanner, LibraryScanner>();
+            serviceCollection.AddSingleton<IUserActivityProvider, UserActivityProvider>();
+            serviceCollection.AddSingleton<LlmProviderFactory>();
+            serviceCollection.AddSingleton<CategoryProposalService>();
         }
     }
 }
