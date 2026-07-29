@@ -265,7 +265,7 @@ namespace Jellyfin.Plugin.Curator.Services
                     .ToArray();
             }
 
-            return _userManager.Users.Select(user => user.Id).ToArray();
+            return _userManager.GetUsers().Select(user => user.Id).ToArray();
         }
     }
 }

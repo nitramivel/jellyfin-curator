@@ -24,9 +24,9 @@
                     <div class="selectContainer">
                         <label class="selectLabel" for="Provider">Provider</label>
                         <select is="emby-select" id="Provider" name="Provider" class="emby-select-withcolor emby-select">
-                            <option value="0">Anthropic</option>
-                            <option value="1">OpenAI</option>
-                            <option value="2">OpenAI-compatible (Ollama, LM Studio, vLLM, OpenRouter)</option>
+                            <option value="Anthropic">Anthropic</option>
+                            <option value="OpenAi">OpenAI</option>
+                            <option value="OpenAiCompatible">OpenAI-compatible (Ollama, LM Studio, vLLM, OpenRouter)</option>
                         </select>
                         <div class="fieldDescription">
                             Gemini works through the OpenAI-compatible option using Google's compatibility endpoint.
@@ -114,8 +114,8 @@
                     <div class="selectContainer">
                         <label class="selectLabel" for="OutputType">Output type</label>
                         <select is="emby-select" id="OutputType" name="OutputType" class="emby-select-withcolor emby-select">
-                            <option value="0">Playlists (recommended)</option>
-                            <option value="1">Collections</option>
+                            <option value="Playlist">Playlists (recommended)</option>
+                            <option value="Collection">Collections</option>
                         </select>
                         <div class="fieldDescription">
                             Collection Sections renders collection rows without any ordering control, so playlists
@@ -213,6 +213,23 @@
                     .replace(/"/g, '&quot;');
             }
 
+            // Enum-valued config lands here as the member name ("Anthropic") because the
+            // server serializes enums as strings over HTTP, but older saved configs and
+            // some clients send the numeric value. Accept both; option values are names.
+            function setEnumSelect(select, value) {
+                var options = select.options;
+                var wanted = String(value === null || value === undefined ? '' : value);
+
+                for (var i = 0; i < options.length; i++) {
+                    if (options[i].value === wanted || String(i) === wanted) {
+                        select.selectedIndex = i;
+                        return;
+                    }
+                }
+
+                select.selectedIndex = 0;
+            }
+
             function renderCategories(categories) {
                 var container = page.querySelector('#CuratorCategories');
                 if (!categories.length) {
@@ -262,7 +279,7 @@
             function loadConfiguration() {
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    page.querySelector('#Provider').value = config.Provider;
+                    setEnumSelect(page.querySelector('#Provider'), config.Provider);
                     page.querySelector('#Model').value = config.Model || '';
                     page.querySelector('#ApiKey').value = config.ApiKey || '';
                     page.querySelector('#BaseUrl').value = config.BaseUrl || '';
@@ -273,7 +290,7 @@
                     page.querySelector('#MinCategorySize').value = config.MinCategorySize;
                     page.querySelector('#InputCostPerMillion').value = config.InputCostPerMillion;
                     page.querySelector('#OutputCostPerMillion').value = config.OutputCostPerMillion;
-                    page.querySelector('#OutputType').value = config.OutputType;
+                    setEnumSelect(page.querySelector('#OutputType'), config.OutputType);
                     page.querySelector('#PersonalizedPlaylists').checked = config.PersonalizedPlaylists;
                     page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
                     page.querySelector('#AutoEnableSections').checked = config.AutoEnableSections;
@@ -290,7 +307,7 @@
                 Dashboard.showLoadingMsg();
 
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    config.Provider = parseInt(page.querySelector('#Provider').value, 10);
+                    config.Provider = page.querySelector('#Provider').value;
                     config.Model = page.querySelector('#Model').value.trim();
                     config.ApiKey = page.querySelector('#ApiKey').value;
                     config.BaseUrl = page.querySelector('#BaseUrl').value.trim();
@@ -301,7 +318,7 @@
                     config.MinCategorySize = parseInt(page.querySelector('#MinCategorySize').value, 10);
                     config.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value);
                     config.OutputCostPerMillion = parseFloat(page.querySelector('#OutputCostPerMillion').value);
-                    config.OutputType = parseInt(page.querySelector('#OutputType').value, 10);
+                    config.OutputType = page.querySelector('#OutputType').value;
                     config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;
                     config.AutoEnableSections = page.querySelector('#AutoEnableSections').checked;
