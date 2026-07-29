@@ -9,12 +9,12 @@
     "imageUrl": "",
     "versions": [
       {
-        "version": "0.1.0.0",
-        "changelog": "Initial release: library scan, LLM providers (Anthropic / OpenAI / OpenAI-compatible), reconciliation, and playlist building with ownership tagging.",
+        "version": "0.2.0.0",
+        "changelog": "Feature-complete pipeline: library scan, LLM providers (Anthropic / OpenAI / OpenAI-compatible), category reconciliation, playlist building with ownership tagging, home screen rows via Collection Sections, a weekly scheduled task, and a full configuration page with a manual run button. Not yet exercised against a live server - please report issues.",
         "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.1.0.0/curator_0.1.0.0.zip",
-        "checksum": "b42eb2a27fdf5bd5b6a1f6aab0610689",
-        "timestamp": "2026-07-29T19:00:41Z"
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.2.0.0/curator_0.2.0.0.zip",
+        "checksum": "96a73f69058f713bf39a3d4de9c83daa",
+        "timestamp": "2026-07-29T19:59:17Z"
       }
     ]
   }
