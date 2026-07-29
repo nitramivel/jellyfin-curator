@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Curator</title>
+</head>
+<body>
+    <div id="CuratorConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="CuratorConfigForm">
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">Curator</h2>
+                        <p>Configuration UI arrives in a later phase. Settings are currently managed via the plugin configuration XML.</p>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <script type="text/javascript">
+            var CuratorConfig = {
+                pluginUniqueId: 'de2b72e7-90f9-47e8-aeef-0436d71d01ac'
+            };
+
+            document.querySelector('#CuratorConfigPage')
+                .addEventListener('pageshow', function () {
+                    Dashboard.hideLoadingMsg();
+                });
+        </script>
+    </div>
+</body>
+</html>
