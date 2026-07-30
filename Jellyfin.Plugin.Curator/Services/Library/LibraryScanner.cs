@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Curator.Core;
 using Jellyfin.Plugin.Curator.Core.Models;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -25,7 +27,7 @@ namespace Jellyfin.Plugin.Curator.Services.Library
         }
 
         /// <inheritdoc />
-        public IReadOnlyList<MediaItemRecord> ScanLibrary(bool includeEpisodes)
+        public IReadOnlyList<MediaItemRecord> ScanLibrary(bool includeEpisodes, string? surfacedCollections = null)
         {
             var kinds = includeEpisodes
                 ? new[] { BaseItemKind.Movie, BaseItemKind.Series, BaseItemKind.Episode }
@@ -40,6 +42,7 @@ namespace Jellyfin.Plugin.Curator.Services.Library
 
             var items = _libraryManager.GetItemsResult(query).Items;
             var roots = LibraryRoots();
+            var collections = ResolveCollections(surfacedCollections);
 
             var records = new List<MediaItemRecord>(items.Count);
             var skipped = 0;
@@ -62,6 +65,11 @@ namespace Jellyfin.Plugin.Curator.Services.Library
                     continue;
                 }
 
+                if (collections.TryGetValue(item.Id, out var names))
+                {
+                    record = record with { Collections = names };
+                }
+
                 records.Add(record);
             }
 
@@ -82,6 +90,68 @@ namespace Jellyfin.Plugin.Curator.Services.Library
                 includeEpisodes ? "included" : "excluded");
 
             return records;
+        }
+
+        /// <summary>
+        /// Maps item IDs to the names of the surfaced collections holding them.
+        /// </summary>
+        /// <remarks>
+        /// Collection membership is a <em>link</em>, not a parent: a BoxSet holds its
+        /// items in LinkedChildren, so querying children by parent ID returns nothing.
+        /// It has to be read off each BoxSet and inverted.
+        /// </remarks>
+        /// <param name="surfacedCollections">Comma-separated collection names; empty surfaces none.</param>
+        /// <returns>Collection names by item ID.</returns>
+        private Dictionary<Guid, IReadOnlyList<string>> ResolveCollections(string? surfacedCollections)
+        {
+            var wanted = (surfacedCollections ?? string.Empty)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var map = new Dictionary<Guid, IReadOnlyList<string>>();
+            if (wanted.Count == 0)
+            {
+                return map;
+            }
+
+            try
+            {
+                var boxSets = _libraryManager.GetItemsResult(new InternalItemsQuery
+                {
+                    IncludeItemTypes = [BaseItemKind.BoxSet],
+                    Recursive = true,
+                }).Items.OfType<BoxSet>();
+
+                foreach (var boxSet in boxSets)
+                {
+                    if (!wanted.Contains(boxSet.Name))
+                    {
+                        continue;
+                    }
+
+                    foreach (var child in boxSet.GetLinkedChildren())
+                    {
+                        if (map.TryGetValue(child.Id, out var existing))
+                        {
+                            map[child.Id] = [.. existing, boxSet.Name];
+                        }
+                        else
+                        {
+                            map[child.Id] = [boxSet.Name];
+                        }
+                    }
+                }
+
+                _logger.LogInformation(
+                    "Curator: {Count} item(s) carry a surfaced collection label", map.Count);
+            }
+            catch (Exception ex)
+            {
+                // Never fatal: a label is a nice-to-have, a run is not.
+                _logger.LogWarning(ex, "Curator: could not read collections; items go to the model unlabelled");
+            }
+
+            return map;
         }
 
         /// <summary>

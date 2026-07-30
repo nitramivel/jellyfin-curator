@@ -232,7 +232,7 @@ namespace Jellyfin.Plugin.Curator.Services
             Report(progress, runLog, 2);
 
             // 1. Scan.
-            var records = _libraryScanner.ScanLibrary(config.IncludeEpisodes);
+            var records = _libraryScanner.ScanLibrary(config.IncludeEpisodes, config.SurfacedCollections);
             if (records.Count == 0)
             {
                 _logger.LogWarning("Curator: library scan produced no items; nothing to categorize");
@@ -556,6 +556,7 @@ namespace Jellyfin.Plugin.Curator.Services
                 ["maxCategoryMembers"] = config.MaxCategoryMembers,
                 ["minPersonalCategorySize"] = config.MinPersonalCategorySize,
                 ["minWatchedForPersonalization"] = config.MinWatchedForPersonalization,
+                ["surfacedCollections"] = config.SurfacedCollections,
                 ["maxTagsPerItem"] = config.MaxTagsPerItem,
                 ["personalizedPlaylists"] = config.PersonalizedPlaylists,
                 ["outputType"] = config.OutputType.ToString(),

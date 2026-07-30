@@ -599,6 +599,43 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Contains("Read watch depth as intensity", prompt, StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// The owner names a few collections worth surfacing — awards, typically —
+        /// and membership rides along on the item so the model can weigh it.
+        /// </summary>
+        [Fact]
+        public void BuildItemList_WritesSurfacedCollections()
+        {
+            var item = Movie() with { Collections = ["Oscar Winners", "Oscar Nominees"] };
+
+            var line = PromptBuilder.BuildItemList([item]);
+
+            Assert.Contains("\"in\":[\"Oscar Winners\",\"Oscar Nominees\"]", line, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Most items are in none of them; an empty key on every line would be pure
+        /// overhead across a library-sized prompt.
+        /// </summary>
+        [Fact]
+        public void BuildItemList_OmitsTheFieldWhenAnItemIsInNoCollection()
+        {
+            Assert.DoesNotContain("\"in\":", PromptBuilder.BuildItemList([Movie()]), StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void BothSystemPrompts_ExplainTheCollectionField()
+        {
+            var shared = PromptBuilder.BuildSystemPrompt(new CategoryLimits(4));
+            var personal = PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(4));
+
+            foreach (var prompt in new[] { shared, personal })
+            {
+                Assert.Contains("An \"in\" field", prompt, StringComparison.Ordinal);
+                Assert.Contains("do not turn it into a category of its own", prompt, StringComparison.Ordinal);
+            }
+        }
+
         [Fact]
         public void SystemPrompt_StatesTheIndexOnlyRule()
         {

@@ -14,6 +14,6 @@ namespace Jellyfin.Plugin.Curator.Services.Library
         /// </summary>
         /// <param name="includeEpisodes">Whether individual episodes are included alongside their series.</param>
         /// <returns>The reduced records, in library enumeration order.</returns>
-        IReadOnlyList<MediaItemRecord> ScanLibrary(bool includeEpisodes);
+        IReadOnlyList<MediaItemRecord> ScanLibrary(bool includeEpisodes, string? surfacedCollections = null);
     }
 }

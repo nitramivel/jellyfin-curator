@@ -14,14 +14,23 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
         /// <paramref name="batchSize"/> items, preserving order.
         /// </summary>
         /// <param name="records">The reduced library records.</param>
-        /// <param name="batchSize">Maximum items per batch; must be positive.</param>
+        /// <param name="batchSize">
+        /// Maximum items per batch. 0 or less sends the whole library in one batch,
+        /// which is what you want whenever the model's context can hold it: a thread
+        /// running through items split across two batches is one the model never
+        /// gets to see, because each call only ever sees its own slice.
+        /// </param>
         /// <returns>The batches, in order.</returns>
         public static IReadOnlyList<IReadOnlyList<MediaItemRecord>> Split(
             IReadOnlyList<MediaItemRecord> records,
             int batchSize)
         {
             ArgumentNullException.ThrowIfNull(records);
-            ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+
+            if (batchSize <= 0)
+            {
+                return records.Count == 0 ? [] : [records];
+            }
 
             var batches = new List<IReadOnlyList<MediaItemRecord>>();
             for (var start = 0; start < records.Count; start += batchSize)
