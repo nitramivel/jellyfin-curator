@@ -99,6 +99,18 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         IReadOnlyList<RunLogSummary> List(int limit = 50);
 
         /// <summary>
+        /// A live snapshot of the run in flight, read from memory, or null when
+        /// nothing is running.
+        /// </summary>
+        /// <remarks>
+        /// Exists so the configuration page can move a progress bar without pulling
+        /// a run log — every prompt in full, hundreds of kilobytes — off disk on
+        /// every poll.
+        /// </remarks>
+        /// <returns>The current run's summary, or null.</returns>
+        RunLogSummary? Current();
+
+        /// <summary>
         /// Reads one run's whole document as raw JSON, exactly as stored.
         /// </summary>
         /// <param name="runId">The run ID.</param>

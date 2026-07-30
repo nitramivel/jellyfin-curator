@@ -85,10 +85,15 @@ namespace Jellyfin.Plugin.Curator.Api
     /// <param name="IsRunning">Whether a run is in progress.</param>
     /// <param name="Categories">The stored categories.</param>
     /// <param name="CurrentRunId">The run in progress, for following it through the Runs endpoints.</param>
+    /// <param name="CurrentRun">
+    /// Live progress, tokens and cost for the run in progress, or null when nothing
+    /// is running. Read from memory, so the page can poll it as fast as it likes.
+    /// </param>
     public sealed record CuratorStatus(
         bool IsRunning,
         IReadOnlyList<CategorySummary> Categories,
-        Guid? CurrentRunId);
+        Guid? CurrentRunId,
+        RunLogSummary? CurrentRun);
 
     /// <summary>
     /// Admin API backing the configuration page: run status, the category list,
@@ -162,7 +167,11 @@ namespace Jellyfin.Plugin.Curator.Api
                     category.OwnerUserId is { } owner ? userNames.GetValueOrDefault(owner) : null))
                 .ToArray();
 
-            return new CuratorStatus(_runService.IsRunning, categories, _runService.CurrentRunId);
+            return new CuratorStatus(
+                _runService.IsRunning,
+                categories,
+                _runService.CurrentRunId,
+                _runLogStore.Current());
         }
 
         /// <summary>

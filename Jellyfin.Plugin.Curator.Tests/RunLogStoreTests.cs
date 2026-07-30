@@ -23,6 +23,81 @@ namespace Jellyfin.Plugin.Curator.Tests
             ["batchSize"] = 150,
         };
 
+        // ---- live snapshot, which is what moves the progress bar ----
+
+        /// <summary>
+        /// The configuration page polls this every couple of seconds during a run.
+        /// It has to come from memory: a run log carries every prompt in full and
+        /// runs to hundreds of kilobytes.
+        /// </summary>
+        [Fact]
+        public void Current_ReportsProgressAndTheLatestStepWhileRunning()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+
+            log.Step("library.scanned", "Scanned 297 library item(s)");
+            log.Progress(42);
+
+            var snapshot = store.Current();
+
+            Assert.NotNull(snapshot);
+            Assert.Equal(log.RunId, snapshot!.RunId);
+            Assert.Equal(RunStatus.Running, snapshot.Status);
+            Assert.Equal(42, snapshot.Progress);
+            Assert.Equal("Scanned 297 library item(s)", snapshot.LastMessage);
+            Assert.Equal("library.scanned", snapshot.LastStep);
+        }
+
+        /// <summary>
+        /// LastStep is the machine name the page maps to a human phase label, and it
+        /// has to track the newest step rather than the first.
+        /// </summary>
+        [Fact]
+        public void Current_TracksTheNewestStep()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+
+            log.Step("library.scanned", "Scanned");
+            log.Step("discovery.reconciled", "Reconciled");
+
+            Assert.Equal("discovery.reconciled", store.Current()!.LastStep);
+        }
+
+        [Fact]
+        public void Current_IsNullBeforeAnyRunStarts()
+        {
+            Assert.Null(Store().Current());
+        }
+
+        /// <summary>
+        /// A finished run is reported from its file like any other. Leaving it here
+        /// would keep the progress bar up after the run ended.
+        /// </summary>
+        [Fact]
+        public void Current_IsNullOnceTheRunEnds()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+            Assert.NotNull(store.Current());
+
+            log.Complete();
+
+            Assert.Null(store.Current());
+        }
+
+        [Fact]
+        public void Current_IsNullAfterAFailedRun()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+
+            log.Fail("something went wrong");
+
+            Assert.Null(store.Current());
+        }
+
         private JsonDocument ReadOnlyFile()
         {
             var file = Assert.Single(Directory.EnumerateFiles(_root, "run_*.json"));
