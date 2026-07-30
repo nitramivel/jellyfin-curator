@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.3.20.0",
+        "changelog": "Adds a progress panel to the configuration page. Starting a run used to replace the status line with a note telling you to go read the server log; a run takes minutes and costs money, so it now shows a progress bar, the phase in plain words, and a stacked breakdown of estimated cost into input and output with token, call and cache counts. Cost reads as not priced rather than zero when no prices are set, and sub-cent totals show as less than a cent rather than rounding to nothing. Requires Jellyfin 10.11.11 or newer.",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.3.20.0/curator_0.3.20.0.zip",
+        "checksum": "e8f778de27cc822c375da3ec4a6168d0",
+        "timestamp": "2026-07-30T10:53:24Z"
+      },
+      {
         "version": "0.3.19.0",
         "changelog": "Fixes personalization for anyone who watches television. Jellyfin records playback against episodes, so a series row carries no watch history and every TV viewer read as a viewer of nothing \u2014 measured on a 297-item library, six users' activity held 210 movie entries against 3 series entries. Episode playback is now rolled up onto the series and reaches the model as watch depth. Shared categories go to every user rather than being opted into. A run interrupted by a plugin install is now reported as what it is instead of a stack trace. The landscape/portrait row split is a setting, and both category pools default to a floor of 4 members and a cap of 10. Requires Jellyfin 10.11.11 or newer.",
         "targetAbi": "10.11.11.0",
