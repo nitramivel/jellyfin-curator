@@ -274,14 +274,9 @@ namespace Jellyfin.Plugin.Curator.Services
             {
                 // Phase B — one pass per viewer. The item list is byte-identical to
                 // phase A, so it is a cache read; what varies is the candidate list
-                // and their history. The model both selects and invents.
-                var sharedSelections = new Dictionary<string, List<Guid>>(StringComparer.OrdinalIgnoreCase);
+                // and their history. The model only invents here: shared categories
+                // go to everyone (see the loop below), so there is nothing to select.
                 var personalByUser = new List<(Guid UserId, IReadOnlyList<ReconciledCategory> Categories)>();
-
-                // Users who watch too little to personalize. They are skipped before
-                // the LLM call — the prompt is the cost and it is paid on send — and
-                // fall back to the shared categories, which are already paid for.
-                var unpersonalizedUsers = new List<Guid>();
                 var userIndex = 0;
 
                 foreach (var userId in targetUsers)
@@ -300,7 +295,6 @@ namespace Jellyfin.Plugin.Curator.Services
                             watched,
                             config.MinWatchedForPersonalization);
 
-                        unpersonalizedUsers.Add(userId);
                         runLog.Step(
                             "user.skipped",
                             $"User {userId} has watched {watched} items, below the minimum of {config.MinWatchedForPersonalization}; skipped",
@@ -322,17 +316,6 @@ namespace Jellyfin.Plugin.Curator.Services
                             provider, records, candidates, settings, activity, cancellationToken, runLog, userId)
                         .ConfigureAwait(false);
 
-                    foreach (var name in personal.SelectedNames)
-                    {
-                        if (!sharedSelections.TryGetValue(name, out var users))
-                        {
-                            users = [];
-                            sharedSelections[name] = users;
-                        }
-
-                        users.Add(userId);
-                    }
-
                     // Invented categories are reconciled on their own so the same
                     // size and cap rules apply to them as to the shared pool.
                     // Personal categories use their own floor and cap. A viewer with a
@@ -346,22 +329,21 @@ namespace Jellyfin.Plugin.Curator.Services
                         : [];
 
                     _logger.LogInformation(
-                        "Curator: user {User} selected {Selected} shared categories and gained {New} of their own",
+                        "Curator: user {User} gained {New} categories of their own",
                         userId,
-                        personal.SelectedNames.Count,
                         invented.Count);
 
                     personalByUser.Add((userId, invented));
 
                     runLog.Step(
                         "user.pass",
-                        $"User {userId} selected {personal.SelectedNames.Count} shared categories and gained {invented.Count} of their own",
+                        $"User {userId} gained {invented.Count} categories of their own",
                         new Dictionary<string, object?>
                         {
                             ["userId"] = userId.ToString(),
                             ["watchedCount"] = watched,
                             ["activityEntries"] = activity.Count,
-                            ["selectedNames"] = personal.SelectedNames.ToArray(),
+                            ["seriesWithHistory"] = activity.Values.Count(a => a.EpisodesPlayed > 0),
                             ["proposedCount"] = personal.NewProposals.Count,
                             ["batchesSkipped"] = personal.BatchesSkipped,
                             ["invented"] = invented
@@ -378,37 +360,27 @@ namespace Jellyfin.Plugin.Curator.Services
                     Report(progress, runLog, 40 + (userIndex * 40.0 / targetUsers.Count));
                 }
 
-                // Shared categories: one definition each, linked to whoever chose it,
-                // plus everyone who never got a pass to choose with.
+                // Shared categories: one definition each, given to every target user.
+                //
+                // These used to be opt-in — a viewer's pass named the ones it wanted,
+                // and a category nobody named went unbuilt. On a real library that
+                // collapsed. The model was choosing from watch histories that were
+                // missing all television (see SeriesActivityRollup), so it declined
+                // 16 of 25 offers; three of eight shared categories ended up built for
+                // exactly one user, and that user was the one who had watched nothing
+                // and so received all of them by the thin-history fallback. A category
+                // drawn from the whole shared library belongs to the whole household;
+                // the viewer's pass earns its keep by inventing, not by vetoing.
                 foreach (var category in candidates)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    sharedSelections.TryGetValue(category.Name, out var chosenBy);
-                    var recipients = new List<Guid>(chosenBy ?? []);
-                    recipients.AddRange(unpersonalizedUsers);
-
-                    if (recipients.Count == 0)
-                    {
-                        // Nobody wanted it. Leave the definition unbuilt rather than
-                        // forcing a row on everyone.
-                        runLog.Step(
-                            "category.unwanted",
-                            $"Shared category '{category.Name}' was chosen by nobody; not built",
-                            new Dictionary<string, object?>
-                            {
-                                ["name"] = category.Name,
-                                ["memberCount"] = category.Members.Count,
-                            });
-                        continue;
-                    }
-
                     var definition = MergeIntoStore(existing, category, provider.ModelId, ownerUserId: null, runLog);
                     allCategoryIds.Add(definition.Id);
                     await _playlistService
-                        .SyncCategoryAsync(definition, recipients, cancellationToken)
+                        .SyncCategoryAsync(definition, targetUsers, cancellationToken)
                         .ConfigureAwait(false);
-                    LogCategoryBuilt(runLog, definition, recipients, "shared");
+                    LogCategoryBuilt(runLog, definition, targetUsers, "shared");
                 }
 
                 // Personal categories: one definition per user, theirs alone.

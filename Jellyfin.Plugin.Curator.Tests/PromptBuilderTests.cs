@@ -190,6 +190,73 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Contains("rewatched, times played: 1x2", section, StringComparison.Ordinal);
         }
 
+        /// <summary>
+        /// A series reaches the model as watch depth, on its own line. Its rolled-up
+        /// PlayCount is a sum over episodes, so routing it through "rewatched" would
+        /// report a sitcom watched once end to end as 140 rewatches.
+        /// </summary>
+        [Fact]
+        public void BuildActivitySection_SeriesReportDepthNotAPlayCount()
+        {
+            var series = Movie() with { Id = Guid.NewGuid(), Kind = MediaKind.Series, Name = "The Office" };
+            var activity = new Dictionary<Guid, UserActivity>
+            {
+                [series.Id] = new UserActivity
+                {
+                    Played = true,
+                    PlayCount = 152,
+                    EpisodesPlayed = 140,
+                    EpisodeCount = 201,
+                },
+            };
+
+            var section = PromptBuilder.BuildActivitySection([series], activity);
+
+            Assert.Contains("series, episodes watched of total: 0=140/201", section, StringComparison.Ordinal);
+            Assert.DoesNotContain("rewatched", section, StringComparison.Ordinal);
+            Assert.DoesNotContain("watched once", section, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Deepest-watched first: for a television viewer this line carries the
+        /// strongest evidence in the section, and the model reads the head of a list
+        /// most closely.
+        /// </summary>
+        [Fact]
+        public void BuildActivitySection_SeriesAreOrderedByDepth()
+        {
+            var shallow = Movie() with { Id = Guid.NewGuid(), Kind = MediaKind.Series };
+            var deep = Movie() with { Id = Guid.NewGuid(), Kind = MediaKind.Series };
+            var activity = new Dictionary<Guid, UserActivity>
+            {
+                [shallow.Id] = new UserActivity { Played = true, PlayCount = 2, EpisodesPlayed = 2, EpisodeCount = 10 },
+                [deep.Id] = new UserActivity { Played = true, PlayCount = 60, EpisodesPlayed = 60, EpisodeCount = 62 },
+            };
+
+            var section = PromptBuilder.BuildActivitySection([shallow, deep], activity);
+
+            Assert.Contains("series, episodes watched of total: 1=60/62,0=2/10", section, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// A series owned but never played contributes no line, exactly as an unwatched
+        /// movie does — the absence is already the signal.
+        /// </summary>
+        [Fact]
+        public void BuildActivitySection_UnwatchedSeriesGetNoLine()
+        {
+            var series = Movie() with { Id = Guid.NewGuid(), Kind = MediaKind.Series };
+            var activity = new Dictionary<Guid, UserActivity>
+            {
+                [series.Id] = new UserActivity { EpisodesPlayed = 0, EpisodeCount = 24, IsFavorite = true },
+            };
+
+            var section = PromptBuilder.BuildActivitySection([series], activity);
+
+            Assert.DoesNotContain("series, episodes watched", section, StringComparison.Ordinal);
+            Assert.Contains("favourites: 0", section, StringComparison.Ordinal);
+        }
+
         [Fact]
         public void BuildActivitySection_ItemCanAppearInSeveralGroups()
         {
@@ -492,13 +559,44 @@ namespace Jellyfin.Plugin.Curator.Tests
             // The personal pass is worth its tokens only if the history is read as
             // evidence about a person rather than as a list of titles.
             Assert.Contains("get to know this viewer", PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2)), StringComparison.Ordinal);
-            Assert.Contains("Before either job", PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2)), StringComparison.Ordinal);
 
             // ...without licensing invention past what the history supports.
             Assert.Contains(
-                "guessing past the evidence",
+                "What you must not do is invent a",
                 PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2)),
                 StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// The restraint clause used to read "if their history is too thin to support
+        /// a real observation, propose nothing rather than padding", and a viewer with
+        /// three watched films got back {"selected":[],"categories":[]} in a second
+        /// flat. Restraint must bound what is invented, not authorise silence: a short
+        /// history is answered with fewer and broader categories, and only a viewer
+        /// with no history at all gets nothing.
+        /// </summary>
+        [Fact]
+        public void PersonalSystemPrompt_TreatsAThinHistoryAsBroaderNotEmpty()
+        {
+            var prompt = PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2));
+
+            Assert.Contains("fewer and broader categories, not none", prompt, StringComparison.Ordinal);
+            Assert.Contains("no recorded history whatsoever", prompt, StringComparison.Ordinal);
+            Assert.DoesNotContain("propose nothing rather than padding", prompt, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Television is watched by the episode, so a series reaches the model on the
+        /// "series" line and never as a play count. The prompt has to say so, or a
+        /// deeply watched show reads as one more title watched once.
+        /// </summary>
+        [Fact]
+        public void PersonalSystemPrompt_ExplainsTheSeriesLine()
+        {
+            var prompt = PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2));
+
+            Assert.Contains("series, episodes watched of total", prompt, StringComparison.Ordinal);
+            Assert.Contains("Read watch depth as intensity", prompt, StringComparison.Ordinal);
         }
 
         [Fact]

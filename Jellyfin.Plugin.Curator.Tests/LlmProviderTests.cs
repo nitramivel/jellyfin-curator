@@ -441,8 +441,12 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.False(schema.GetProperty("properties").TryGetProperty("selected", out _));
         }
 
+        /// <summary>
+        /// Shared categories now go to every viewer, so a viewer's pass has nothing
+        /// to select and asks for the same object the discovery pass does.
+        /// </summary>
         [Fact]
-        public async Task Google_PersonalShape_AddsSelectedAndRequiresBoth()
+        public async Task Google_PersonalShape_AsksForCategoriesOnly()
         {
             var handler = new StubHandler(GoogleResponse);
             var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
@@ -454,15 +458,10 @@ namespace Jellyfin.Plugin.Curator.Tests
             using var body = JsonDocument.Parse(handler.RequestBody!);
             var schema = body.RootElement.GetProperty("generationConfig").GetProperty("responseSchema");
 
-            var selected = schema.GetProperty("properties").GetProperty("selected");
-            Assert.Equal("ARRAY", selected.GetProperty("type").GetString());
-            Assert.Equal("STRING", selected.GetProperty("items").GetProperty("type").GetString());
+            Assert.False(schema.GetProperty("properties").TryGetProperty("selected", out _));
 
-            // Both keys required, so "nothing to add" arrives as an empty array
-            // rather than a missing key.
             var required = schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList();
-            Assert.Contains("selected", required);
-            Assert.Contains("categories", required);
+            Assert.Equal(["categories"], required);
         }
 
         [Fact]
@@ -821,7 +820,7 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
-        public async Task Grok_PersonalShape_AddsSelected()
+        public async Task Grok_PersonalShape_AsksForCategoriesOnly()
         {
             var handler = new StubHandler(GrokResponse);
             var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
@@ -834,14 +833,13 @@ namespace Jellyfin.Plugin.Curator.Tests
             var jsonSchema = body.RootElement.GetProperty("response_format").GetProperty("json_schema");
             Assert.Equal("curator_personal_categories", jsonSchema.GetProperty("name").GetString());
 
+            // Shared categories now go to every viewer, so there is nothing left for
+            // a viewer's pass to select; the schema is the discovery one.
             var schema = jsonSchema.GetProperty("schema");
-            Assert.Equal(
-                "string",
-                schema.GetProperty("properties").GetProperty("selected").GetProperty("items").GetProperty("type").GetString());
+            Assert.False(schema.GetProperty("properties").TryGetProperty("selected", out _));
 
             var required = schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList();
-            Assert.Contains("selected", required);
-            Assert.Contains("categories", required);
+            Assert.Equal(["categories"], required);
         }
 
         [Fact]

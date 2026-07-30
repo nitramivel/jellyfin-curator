@@ -179,7 +179,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 {
                     maxOutputTokens = request.MaxOutputTokens,
                     responseMimeType = "application/json",
-                    responseSchema = BuildResponseSchema(request.Shape),
+                    responseSchema = BuildResponseSchema(),
                 };
             }
 
@@ -187,7 +187,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             {
                 maxOutputTokens = request.MaxOutputTokens,
                 responseMimeType = "application/json",
-                responseSchema = BuildResponseSchema(request.Shape),
+                responseSchema = BuildResponseSchema(),
                 thinkingConfig = new { thinkingBudget = 0 },
             };
         }
@@ -203,7 +203,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// the only one: every other provider still depends on the prose contract, so
         /// changing one without the other silently splits the two apart.
         /// </remarks>
-        private static object BuildResponseSchema(ResponseShape shape)
+        private static object BuildResponseSchema()
         {
             var category = new
             {
@@ -223,31 +223,10 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 propertyOrdering = new[] { "name", "description", "members" },
             };
 
-            if (shape == ResponseShape.PersonalCategories)
-            {
-                return new
-                {
-                    type = "OBJECT",
-                    properties = new
-                    {
-                        selected = new
-                        {
-                            type = "ARRAY",
-                            description = "Exact names of existing categories that suit this viewer.",
-                            items = new { type = "STRING" },
-                        },
-                        categories = new { type = "ARRAY", items = category },
-                    },
-
-                    // Both are required, so "nothing to add" arrives as an empty
-                    // array. That is a valid answer for a viewer with thin history —
-                    // the prompt asks for silence over padding — and an empty array
-                    // says it unambiguously where an absent key would not.
-                    required = new[] { "selected", "categories" },
-                    propertyOrdering = new[] { "selected", "categories" },
-                };
-            }
-
+            // A viewer's pass and the shared pass now ask for the same object. The
+            // viewer's pass used to also return a "selected" list of existing category
+            // names to put on that viewer's home screen; shared categories now go to
+            // every viewer, so there is nothing left to select.
             return new
             {
                 type = "OBJECT",

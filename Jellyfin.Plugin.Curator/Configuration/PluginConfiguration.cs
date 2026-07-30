@@ -176,20 +176,24 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// Gets or sets the smallest personal category kept, in members. Also the
         /// number the per-viewer prompt asks the model to meet. Minimum 2.
         /// <para>
-        /// Keep this at or below <see cref="MinSharedCategorySize"/>. A shared
-        /// category is drawn from the whole library and can reasonably be asked for
-        /// four members; a personal one is grounded in one viewer's history, and a
-        /// viewer with a handful of watched items cannot honestly support a category
-        /// that size. Holding both to the shared floor silently threw away most
-        /// invented categories.
+        /// Defaults to the same value as <see cref="MinSharedCategorySize"/> and is
+        /// deliberately a separate setting: a personal category is grounded in one
+        /// viewer's history rather than the whole library, so this is the knob to
+        /// lower if invented categories start being discarded on size. The two were
+        /// once 6 and 2, which made a personal row a much thinner thing than a shared
+        /// one for no reason the owner had asked for.
         /// </para>
         /// </summary>
-        public int MinPersonalCategorySize { get; set; } = 2;
+        public int MinPersonalCategorySize { get; set; } = 6;
 
         /// <summary>
         /// Gets or sets the most personal categories kept per user. 0 means no cap.
+        /// <para>
+        /// Defaults to the same value as <see cref="MaxSharedCategories"/>, and is
+        /// likewise kept separate so the two pools can still be capped independently.
+        /// </para>
         /// </summary>
-        public int MaxPersonalCategories { get; set; } = 6;
+        public int MaxPersonalCategories { get; set; } = 10;
 
         /// <summary>
         /// Gets or sets how many items a user must have watched before they get a
