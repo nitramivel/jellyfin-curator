@@ -39,6 +39,58 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal(6, category.Members.Count);
         }
 
+        /// <summary>
+        /// The config page shows what merged into a category, so the individual
+        /// proposals have to survive reconciliation rather than only their count.
+        /// </summary>
+        [Fact]
+        public void SourceProposals_AreRetainedFounderFirst()
+        {
+            var result = Reconciler.Reconcile(
+                [
+                    Proposal("Comfort Rewatch", 1, 2, 3),
+                    Proposal("Comfort Rewatch", 4, 5),
+                ],
+                Settings());
+
+            var category = Assert.Single(result);
+            Assert.Equal(category.SourceProposalCount, category.SourceProposals.Count);
+            Assert.Equal(2, category.SourceProposals.Count);
+
+            // Founder first, and each entry keeps its own pre-merge member count.
+            Assert.Equal(3, category.SourceProposals[0].MemberCount);
+            Assert.Equal(2, category.SourceProposals[1].MemberCount);
+            Assert.Equal("About Comfort Rewatch.", category.SourceProposals[0].Description);
+        }
+
+        [Fact]
+        public void SourceProposals_KeepEachProposalsOwnName()
+        {
+            // Near-miss names merge under the founder; the originals are the whole
+            // point of the panel, so they must not be flattened to the founder name.
+            var result = Reconciler.Reconcile(
+                [
+                    Proposal("Cerebral Sci-Fi", 1, 2, 3, 4),
+                    Proposal("Cerebral Sci Fi", 1, 2, 3, 5),
+                ],
+                Settings());
+
+            var category = Assert.Single(result);
+            if (category.SourceProposals.Count > 1)
+            {
+                Assert.Contains(category.SourceProposals, p => p.Name == "Cerebral Sci Fi");
+            }
+        }
+
+        [Fact]
+        public void SingleProposal_HasExactlyOneSourceProposal()
+        {
+            var result = Reconciler.Reconcile([Proposal("Quietly Devastating", 1, 2, 3)], Settings());
+
+            var category = Assert.Single(result);
+            Assert.Equal("Quietly Devastating", Assert.Single(category.SourceProposals).Name);
+        }
+
         [Fact]
         public void MergedMembers_AreRoundRobinInterleaved()
         {

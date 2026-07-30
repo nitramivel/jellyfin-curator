@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
 using MediaBrowser.Common.Api;
+using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -22,6 +24,10 @@ namespace Jellyfin.Plugin.Curator.Api
     /// <param name="HandedOffCount">Playlists the user took ownership of.</param>
     /// <param name="UpdatedAt">When the definition was last refreshed (UTC).</param>
     /// <param name="ModelId">Model that produced it.</param>
+    /// <param name="CreatedAt">When the definition was first created (UTC).</param>
+    /// <param name="SourceProposalCount">Batch proposals that produced it in the latest run.</param>
+    /// <param name="Users">Per-user playlist links.</param>
+    /// <param name="SourceProposals">The individual proposals that merged into it.</param>
     public sealed record CategorySummary(
         Guid Id,
         string Name,
@@ -30,7 +36,44 @@ namespace Jellyfin.Plugin.Curator.Api
         int PlaylistCount,
         int HandedOffCount,
         DateTime UpdatedAt,
-        string ModelId);
+        string ModelId,
+        DateTime CreatedAt,
+        int SourceProposalCount,
+        IReadOnlyList<CategoryUserLink> Users,
+        IReadOnlyList<CategorySourceProposal> SourceProposals);
+
+    /// <summary>One user's playlist link for a category, for the config page.</summary>
+    /// <param name="UserId">The Jellyfin user.</param>
+    /// <param name="UserName">That user's name, or null if the account no longer exists.</param>
+    /// <param name="PlaylistId">The playlist GUID, or null while the category is empty for them.</param>
+    /// <param name="HandedOff">Whether the user took ownership, making the playlist permanently theirs.</param>
+    public sealed record CategoryUserLink(
+        Guid UserId,
+        string? UserName,
+        Guid? PlaylistId,
+        bool HandedOff);
+
+    /// <summary>One member item of a category, resolved against the library.</summary>
+    /// <param name="ItemId">The Jellyfin item ID.</param>
+    /// <param name="Name">The item's name, or null if it is no longer in the library.</param>
+    /// <param name="Year">Production year, when known.</param>
+    /// <param name="Kind">Item type, e.g. Movie or Series.</param>
+    /// <param name="Position">1-based position in the category's confidence ordering.</param>
+    public sealed record CategoryMember(
+        Guid ItemId,
+        string? Name,
+        int? Year,
+        string? Kind,
+        int Position);
+
+    /// <summary>Categories to delete in one call.</summary>
+    /// <param name="CategoryIds">The category IDs.</param>
+    public sealed record DeleteCategoriesRequest(IReadOnlyList<Guid> CategoryIds);
+
+    /// <summary>The outcome of a bulk delete.</summary>
+    /// <param name="Deleted">How many definitions were removed.</param>
+    /// <param name="NotFound">How many IDs matched nothing.</param>
+    public sealed record DeleteCategoriesResult(int Deleted, int NotFound);
 
     /// <summary>Current run state for the configuration page.</summary>
     /// <param name="IsRunning">Whether a run is in progress.</param>
@@ -48,15 +91,21 @@ namespace Jellyfin.Plugin.Curator.Api
     {
         private readonly CuratorRunService _runService;
         private readonly ICategoryStore _categoryStore;
+        private readonly IUserManager _userManager;
+        private readonly ILibraryManager _libraryManager;
         private readonly ILogger<CuratorController> _logger;
 
         public CuratorController(
             CuratorRunService runService,
             ICategoryStore categoryStore,
+            IUserManager userManager,
+            ILibraryManager libraryManager,
             ILogger<CuratorController> logger)
         {
             _runService = runService;
             _categoryStore = categoryStore;
+            _userManager = userManager;
+            _libraryManager = libraryManager;
             _logger = logger;
         }
 
@@ -69,6 +118,10 @@ namespace Jellyfin.Plugin.Curator.Api
         [ProducesResponseType(StatusCodes.Status200OK)]
         public ActionResult<CuratorStatus> GetStatus()
         {
+            // Resolve names once rather than per link; a category can carry a link
+            // for a user who has since been deleted, which surfaces as a null name.
+            var userNames = _userManager.GetUsers().ToDictionary(u => u.Id, u => u.Username);
+
             var categories = _categoryStore.GetAll()
                 .Select(category => new CategorySummary(
                     category.Id,
@@ -78,7 +131,17 @@ namespace Jellyfin.Plugin.Curator.Api
                     category.UserPlaylists.Count(link => link.PlaylistId is not null),
                     category.UserPlaylists.Count(link => link.HandedOff),
                     category.UpdatedAt,
-                    category.ModelId))
+                    category.ModelId,
+                    category.CreatedAt,
+                    category.SourceProposalCount,
+                    category.UserPlaylists
+                        .Select(link => new CategoryUserLink(
+                            link.UserId,
+                            userNames.GetValueOrDefault(link.UserId),
+                            link.PlaylistId,
+                            link.HandedOff))
+                        .ToArray(),
+                    category.SourceProposals))
                 .ToArray();
 
             return new CuratorStatus(_runService.IsRunning, categories);
@@ -103,19 +166,72 @@ namespace Jellyfin.Plugin.Curator.Api
 
             // Fire and forget: a run can take many minutes, far past any sane
             // HTTP timeout. The run service enforces single-flight itself.
-            _ = Task.Run(async () =>
+            //
+            // SuppressFlow stops the request's ExecutionContext — and with it the
+            // ambient HttpContext and its scoped IServiceProvider — from flowing into
+            // the background task. Without it the task outlives the request that
+            // started it, and dies part-way through with ObjectDisposedException
+            // ('IServiceProvider') the next time Jellyfin resolves a pooled DbContext,
+            // leaving categories written but their playlists never built.
+            using (ExecutionContext.SuppressFlow())
             {
-                try
+                _ = Task.Run(async () =>
                 {
-                    await _runService.RunAsync(null, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Curator: manual run failed — {Message}", ex.Message);
-                }
-            });
+                    try
+                    {
+                        await _runService.RunAsync(null, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Curator: manual run failed — {Message}", ex.Message);
+                    }
+                });
+            }
 
             return Accepted();
+        }
+
+        /// <summary>
+        /// Lists one category's member items, in the stored confidence order.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately separate from Status: resolving every member of every
+        /// category would be hundreds of library lookups on a poll that runs every
+        /// five seconds during a run. The config page calls this only when a member
+        /// list is actually expanded.
+        /// </remarks>
+        /// <param name="categoryId">The category ID.</param>
+        /// <response code="200">Members listed.</response>
+        /// <response code="404">No such category.</response>
+        /// <returns>The members.</returns>
+        [HttpGet("Categories/{categoryId}/Members")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public ActionResult<IReadOnlyList<CategoryMember>> GetCategoryMembers([FromRoute] Guid categoryId)
+        {
+            if (_categoryStore.Get(categoryId) is not { } category)
+            {
+                return NotFound();
+            }
+
+            var members = new List<CategoryMember>(category.Members.Count);
+            for (var i = 0; i < category.Members.Count; i++)
+            {
+                var itemId = category.Members[i];
+
+                // A member can outlive the library item it points at; surface that
+                // as a null name rather than dropping the row, so the ordering the
+                // model produced stays legible.
+                var item = _libraryManager.GetItemById(itemId);
+                members.Add(new CategoryMember(
+                    itemId,
+                    item?.Name,
+                    item?.ProductionYear,
+                    item?.GetBaseItemKind().ToString(),
+                    i + 1));
+            }
+
+            return members;
         }
 
         /// <summary>
@@ -132,6 +248,42 @@ namespace Jellyfin.Plugin.Curator.Api
         public ActionResult DeleteCategory([FromRoute] Guid categoryId)
         {
             return _categoryStore.Delete(categoryId) ? NoContent() : NotFound();
+        }
+
+        /// <summary>
+        /// Deletes several category definitions in one call. Playlists are left
+        /// alone, exactly as for a single delete. Unknown IDs are counted rather
+        /// than failing the request, so a stale page cannot block the whole batch.
+        /// </summary>
+        /// <param name="request">The category IDs.</param>
+        /// <response code="200">Deleted; the body reports what happened.</response>
+        /// <returns>An action result.</returns>
+        [HttpPost("Categories/Delete")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<DeleteCategoriesResult> DeleteCategories([FromBody] DeleteCategoriesRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var deleted = 0;
+            var missing = 0;
+            foreach (var id in request.CategoryIds)
+            {
+                if (_categoryStore.Delete(id))
+                {
+                    deleted++;
+                }
+                else
+                {
+                    missing++;
+                }
+            }
+
+            _logger.LogInformation(
+                "Curator: deleted {Deleted} category definition(s) from the config page ({Missing} not found)",
+                deleted,
+                missing);
+
+            return new DeleteCategoriesResult(deleted, missing);
         }
     }
 }

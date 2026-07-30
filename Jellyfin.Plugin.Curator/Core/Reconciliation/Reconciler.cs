@@ -169,6 +169,12 @@ namespace Jellyfin.Plugin.Curator.Core.Reconciliation
                 Description = founder.Description,
                 Members = members,
                 SourceProposalCount = cluster.Count,
+                SourceProposals = [.. cluster.Select(entry => new CategorySourceProposal
+                {
+                    Name = entry.Proposal.Name,
+                    Description = entry.Proposal.Description,
+                    MemberCount = entry.Proposal.Members.Count,
+                })],
             };
         }
 

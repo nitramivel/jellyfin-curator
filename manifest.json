@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.3.0.0",
+        "changelog": "Fixes the 10.11.11 ABI break that made every run fail, plus the two model-response bugs that discarded results. Adds prompt caching, an optional batch API path, a tabbed configuration page with category management, and a tag limit. Requires Jellyfin 10.11.11 or newer.",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.3.0.0/curator_0.3.0.0.zip",
+        "checksum": "e2ac5597d99d720649e234a3f1406bc0",
+        "timestamp": "2026-07-30T00:20:52Z"
+      },
+      {
         "version": "0.2.0.0",
         "changelog": "Feature-complete pipeline: library scan, LLM providers (Anthropic / OpenAI / OpenAI-compatible), category reconciliation, playlist building with ownership tagging, home screen rows via Collection Sections, a weekly scheduled task, and a full configuration page with a manual run button. Not yet exercised against a live server - please report issues.",
         "targetAbi": "10.11.0.0",

@@ -48,6 +48,12 @@ namespace Jellyfin.Plugin.Curator.Core.Models
         /// <summary>Gets or sets how many batch proposals produced this category in the latest run.</summary>
         public int SourceProposalCount { get; set; }
 
+        /// <summary>
+        /// Gets or sets the individual proposals that merged into this category in
+        /// the latest run. Empty on definitions written before this was recorded.
+        /// </summary>
+        public List<CategorySourceProposal> SourceProposals { get; set; } = [];
+
         /// <summary>Gets or sets when the definition was first created (UTC).</summary>
         public DateTime CreatedAt { get; set; }
 

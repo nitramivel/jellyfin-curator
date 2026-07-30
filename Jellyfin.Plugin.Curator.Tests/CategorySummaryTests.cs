@@ -15,6 +15,9 @@ namespace Jellyfin.Plugin.Curator.Tests
     /// </summary>
     public class CategorySummaryTests
     {
+        /// <summary>Names the config page resolves for the per-user detail rows.</summary>
+        private static readonly Dictionary<Guid, string> UserNames = [];
+
         private static CategorySummary Summarize(CategoryDefinition category) => new(
             category.Id,
             category.Name,
@@ -23,7 +26,17 @@ namespace Jellyfin.Plugin.Curator.Tests
             category.UserPlaylists.Count(link => link.PlaylistId is not null),
             category.UserPlaylists.Count(link => link.HandedOff),
             category.UpdatedAt,
-            category.ModelId);
+            category.ModelId,
+            category.CreatedAt,
+            category.SourceProposalCount,
+            category.UserPlaylists
+                .Select(link => new CategoryUserLink(
+                    link.UserId,
+                    UserNames.GetValueOrDefault(link.UserId),
+                    link.PlaylistId,
+                    link.HandedOff))
+                .ToArray(),
+            category.SourceProposals);
 
         private static CategoryDefinition Category(params UserPlaylistLink[] links) => new()
         {
@@ -35,6 +48,52 @@ namespace Jellyfin.Plugin.Curator.Tests
             ModelId = "claude-opus-5",
             UserPlaylists = [.. links],
         };
+
+        /// <summary>
+        /// The expanded detail panel lists one row per link, including links whose
+        /// playlist is absent — that is exactly the state worth being able to see.
+        /// </summary>
+        [Fact]
+        public void Summary_ExposesEveryUserLinkIncludingPlaylistlessOnes()
+        {
+            var withPlaylist = Guid.NewGuid();
+            var withoutPlaylist = Guid.NewGuid();
+
+            var summary = Summarize(Category(
+                new UserPlaylistLink { UserId = withPlaylist, PlaylistId = Guid.NewGuid() },
+                new UserPlaylistLink { UserId = withoutPlaylist, PlaylistId = null }));
+
+            Assert.Equal(2, summary.Users.Count);
+            Assert.Equal(1, summary.PlaylistCount);
+
+            var empty = Assert.Single(summary.Users, link => link.UserId == withoutPlaylist);
+            Assert.Null(empty.PlaylistId);
+            Assert.False(empty.HandedOff);
+        }
+
+        [Fact]
+        public void Summary_UnknownUser_HasNullName()
+        {
+            var summary = Summarize(Category(
+                new UserPlaylistLink { UserId = Guid.NewGuid(), PlaylistId = Guid.NewGuid() }));
+
+            // A category can outlive the account it was built for; the page renders
+            // this as "deleted user" rather than dropping the row.
+            Assert.Null(Assert.Single(summary.Users).UserName);
+        }
+
+        [Fact]
+        public void Summary_CarriesCreatedAtAndProposalCount()
+        {
+            var category = Category();
+            category.CreatedAt = new DateTime(2026, 7, 1, 9, 0, 0, DateTimeKind.Utc);
+            category.SourceProposalCount = 4;
+
+            var summary = Summarize(category);
+
+            Assert.Equal(category.CreatedAt, summary.CreatedAt);
+            Assert.Equal(4, summary.SourceProposalCount);
+        }
 
         [Fact]
         public void Summary_CountsLivePlaylistsOnly()

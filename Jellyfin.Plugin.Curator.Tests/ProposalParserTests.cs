@@ -111,6 +111,81 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Single(result.Proposals);
         }
 
+        /// <summary>
+        /// The shape that cost two users their playlists on the first working run:
+        /// a fenced object followed by commentary. Taking the last '}' in the buffer
+        /// swallowed the trailing text and failed mid-parse.
+        /// </summary>
+        [Fact]
+        public void Parse_TrailingProseAfterJson_IsIgnored()
+        {
+            var batch = Batch(3);
+            const string response =
+                """
+                ```json
+                {"categories":[{"name":"Quietly Devastating","description":"Grief that sneaks up.","members":[0,1,2]}]}
+                ```
+
+                I focused on emotional register rather than genre. Let me know if you'd
+                like these regrouped -> perhaps by decade instead?
+                """;
+
+            var result = ProposalParser.Parse(response, batch);
+
+            var proposal = Assert.Single(result.Proposals);
+            Assert.Equal("Quietly Devastating", proposal.Name);
+            Assert.Equal([batch[0].Id, batch[1].Id, batch[2].Id], proposal.Members);
+        }
+
+        [Fact]
+        public void Parse_TrailingObjectAfterJson_IsIgnored()
+        {
+            var result = ProposalParser.Parse(
+                """
+                {"categories":[{"name":"Vibes","members":[0]}]}
+                Some notes: {"unrelated": true}
+                """,
+                Batch(1));
+
+            Assert.Single(result.Proposals);
+        }
+
+        /// <summary>
+        /// A brace inside a description must not terminate the scan early.
+        /// </summary>
+        [Fact]
+        public void Parse_BraceInsideStringLiteral_DoesNotTruncateTheObject()
+        {
+            var result = ProposalParser.Parse(
+                """{"categories":[{"name":"Curly","description":"Uses } and { in prose","members":[0]}]}""",
+                Batch(1));
+
+            var proposal = Assert.Single(result.Proposals);
+            Assert.Equal("Uses } and { in prose", proposal.Description);
+        }
+
+        [Fact]
+        public void Parse_EscapedQuoteBeforeBrace_IsHandled()
+        {
+            var result = ProposalParser.Parse(
+                """{"categories":[{"name":"Quote","description":"He said \"stop\" }","members":[0]}]}""",
+                Batch(1));
+
+            Assert.Equal("""He said "stop" }""", Assert.Single(result.Proposals).Description);
+        }
+
+        /// <summary>
+        /// An object cut off by the output-token cap has an opening brace but never
+        /// closes; that must be a clean FormatException, not a silent partial parse.
+        /// </summary>
+        [Fact]
+        public void Parse_UnterminatedObject_Throws()
+        {
+            Assert.Throws<FormatException>(() => ProposalParser.Parse(
+                """{"categories":[{"name":"Cut off here","members":[0,1""",
+                Batch(2)));
+        }
+
         [Fact]
         public void Parse_MissingDescription_DefaultsToEmpty()
         {

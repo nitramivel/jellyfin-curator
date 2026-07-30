@@ -116,6 +116,18 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public bool IncludeEpisodes { get; set; } = false;
 
         /// <summary>
+        /// Gets or sets how many tags per item are sent to the model. 0 sends none.
+        /// <para>
+        /// Note this reads the opposite way to <see cref="MaxCategories"/>, where 0
+        /// means "no cap": here 0 means "no tags". Scraped tag lists are dominated by
+        /// production trivia (aftercreditsstinger, duringcreditsstinger) that pushes
+        /// the model toward the metadata-shaped categories the system prompt tells it
+        /// to avoid, so off is the better default. Raise it to feed a few back in.
+        /// </para>
+        /// </summary>
+        public int MaxTagsPerItem { get; set; } = 0;
+
+        /// <summary>
         /// Gets or sets the users playlists are generated for. Empty means all users.
         /// </summary>
         public Guid[] TargetUsers { get; set; } = Array.Empty<Guid>();
@@ -125,5 +137,19 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// are enabled for target users automatically.
         /// </summary>
         public bool AutoEnableSections { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether batches are submitted through the
+        /// provider's asynchronous batch endpoint (Anthropic only) at half the token
+        /// price, instead of one blocking request each.
+        /// <para>
+        /// This trades against prompt caching rather than adding to it. Batch requests
+        /// are processed in parallel, so the per-user passes over a batch race each
+        /// other and none can read a cache entry the others are still writing — the
+        /// discount is reliable, the cache hits are not. It also removes the mid-run
+        /// token-budget brake, since every request is committed up front.
+        /// </para>
+        /// </summary>
+        public bool UseBatchApi { get; set; } = false;
     }
 }

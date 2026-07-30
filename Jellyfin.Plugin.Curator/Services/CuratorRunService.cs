@@ -117,7 +117,9 @@ namespace Jellyfin.Plugin.Curator.Services
                 config.MaxOutputTokens,
                 config.TokenBudget,
                 config.InputCostPerMillion,
-                config.OutputCostPerMillion);
+                config.OutputCostPerMillion,
+                config.UseBatchApi,
+                config.MaxTagsPerItem);
 
             // Personalized playlist runs go once per user, with that user's watch
             // activity attached; everything else is a single shared run.
@@ -226,6 +228,7 @@ namespace Jellyfin.Plugin.Curator.Services
             definition.Description = category.Description;
             definition.Members = [.. category.Members];
             definition.SourceProposalCount = category.SourceProposalCount;
+                    definition.SourceProposals = [.. category.SourceProposals];
             definition.UpdatedAt = now;
             definition.ModelId = modelId;
 
@@ -265,7 +268,7 @@ namespace Jellyfin.Plugin.Curator.Services
                     .ToArray();
             }
 
-            return _userManager.Users.Select(user => user.Id).ToArray();
+            return _userManager.GetUsers().Select(user => user.Id).ToArray();
         }
     }
 }

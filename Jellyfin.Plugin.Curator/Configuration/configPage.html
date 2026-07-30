@@ -8,187 +8,287 @@
      data-require="emby-input,emby-button,emby-select,emby-checkbox">
     <div data-role="content">
         <div class="content-primary">
+
+            <style>
+                .curatorTabBar { display: flex; flex-wrap: wrap; gap: 0.4em; margin: 1em 0 1.5em 0; }
+                .curatorTabBar .curatorTabButton { margin: 0; }
+                .curatorTabButton.curatorTabActive { background: #00a4dc; color: #fff; }
+                .curatorCatRow { display: flex; align-items: flex-start; gap: 0.6em; width: 100%; }
+                .curatorCatRow .curatorCatBody { flex: 1 1 auto; min-width: 0; }
+                .curatorCatDetail { padding: 0.4em 0 1em 2.6em; }
+                .curatorUserTable { width: 100%; border-collapse: collapse; margin-top: 0.5em; }
+                .curatorUserTable th, .curatorUserTable td {
+                    text-align: left; padding: 0.35em 0.6em; border-bottom: 1px solid rgba(255,255,255,0.12);
+                    font-size: 0.92em; vertical-align: top;
+                }
+                .curatorUserTable th { font-weight: 600; opacity: 0.75; }
+                .curatorMono { font-family: monospace; font-size: 0.88em; opacity: 0.8; word-break: break-all; }
+                .curatorBulkBar {
+                    display: flex; align-items: center; gap: 1em; flex-wrap: wrap;
+                    padding: 0.6em 0; margin-bottom: 0.5em;
+                }
+                .curatorBulkBar .curatorBulkCount { opacity: 0.75; }
+                .curatorTableScroll { overflow-x: auto; }
+                /* Plain inputs rather than is="emby-checkbox": customized built-in
+                   elements upgrade unreliably inside innerHTML, which left the first
+                   generated row styled-but-unwired and the rest bare. */
+                .curatorCheck {
+                    width: 1.15em; height: 1.15em; margin: 0; flex: 0 0 auto;
+                    cursor: pointer; accent-color: #00a4dc;
+                }
+                .curatorCatRow > .curatorCheck { margin-top: 0.35em; }
+                .curatorCheckLabel { display: inline-flex; align-items: center; gap: 0.5em; cursor: pointer; }
+            </style>
+
+            <div class="verticalSection">
+                <h2 class="sectionTitle">Curator</h2>
+                <p class="fieldDescription">
+                    Sends your library to an LLM, asks what threads run through it, and builds the answers
+                    into ordered playlists surfaced as home screen rows.
+                </p>
+            </div>
+
+            <div class="curatorTabBar">
+                <button is="emby-button" type="button" class="raised curatorTabButton curatorTabActive"
+                        data-target="model"><span>Model</span></button>
+                <button is="emby-button" type="button" class="raised curatorTabButton"
+                        data-target="limits"><span>Run limits</span></button>
+                <button is="emby-button" type="button" class="raised curatorTabButton"
+                        data-target="output"><span>Output</span></button>
+                <button is="emby-button" type="button" class="raised curatorTabButton"
+                        data-target="categories"><span>Categories</span></button>
+            </div>
+
             <form id="CuratorConfigForm">
 
-                <div class="verticalSection">
-                    <h2 class="sectionTitle">Curator</h2>
-                    <p class="fieldDescription">
-                        Sends your library to an LLM, asks what threads run through it, and builds the answers
-                        into ordered playlists surfaced as home screen rows.
-                    </p>
-                </div>
+                <div class="curatorTabPanel" data-panel="model">
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Model</h3>
 
-                <div class="verticalSection">
-                    <h3 class="sectionTitle">Model</h3>
-
-                    <div class="selectContainer">
-                        <label class="selectLabel" for="Provider">Provider</label>
-                        <select is="emby-select" id="Provider" name="Provider" class="emby-select-withcolor emby-select">
-                            <option value="0">Anthropic</option>
-                            <option value="1">OpenAI</option>
-                            <option value="2">OpenAI-compatible (Ollama, LM Studio, vLLM, OpenRouter)</option>
-                        </select>
-                        <div class="fieldDescription">
-                            Gemini works through the OpenAI-compatible option using Google's compatibility endpoint.
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="Provider">Provider</label>
+                            <select is="emby-select" id="Provider" name="Provider" class="emby-select-withcolor emby-select">
+                                <option value="Anthropic">Anthropic</option>
+                                <option value="OpenAi">OpenAI</option>
+                                <option value="OpenAiCompatible">OpenAI-compatible (Ollama, LM Studio, vLLM, OpenRouter)</option>
+                            </select>
+                            <div class="fieldDescription">
+                                Gemini works through the OpenAI-compatible option using Google's compatibility endpoint.
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="Model">Model</label>
-                        <input id="Model" name="Model" type="text" class="emby-input" />
-                        <div class="fieldDescription">
-                            The model identifier, for example <code>claude-opus-5</code>, <code>gpt-5</code>,
-                            or <code>llama3.3</code>.
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="Model">Model</label>
+                            <input id="Model" name="Model" type="text" class="emby-input" />
+                            <div class="fieldDescription">
+                                The model identifier, for example <code>claude-sonnet-4-6</code>, <code>gpt-5</code>,
+                                or <code>llama3.3</code>.
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="ApiKey">API key</label>
-                        <input id="ApiKey" name="ApiKey" type="password" class="emby-input" autocomplete="off" />
-                        <div class="fieldDescription">Optional for local OpenAI-compatible servers that need no key.</div>
-                    </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="ApiKey">API key</label>
+                            <input id="ApiKey" name="ApiKey" type="password" class="emby-input" autocomplete="off" />
+                            <div class="fieldDescription">Optional for local OpenAI-compatible servers that need no key.</div>
+                        </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="BaseUrl">Base URL</label>
-                        <input id="BaseUrl" name="BaseUrl" type="text" class="emby-input"
-                               placeholder="http://localhost:11434/v1" />
-                        <div class="fieldDescription">
-                            Leave empty to use the provider's default endpoint. Required for the OpenAI-compatible
-                            provider — include the version segment.
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="BaseUrl">Base URL</label>
+                            <input id="BaseUrl" name="BaseUrl" type="text" class="emby-input"
+                                   placeholder="http://localhost:11434/v1" />
+                            <div class="fieldDescription">
+                                Leave empty to use the provider's default endpoint. Required for the OpenAI-compatible
+                                provider — include the version segment.
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="verticalSection">
-                    <h3 class="sectionTitle">Run limits</h3>
+                <div class="curatorTabPanel hide" data-panel="limits">
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Run limits</h3>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="BatchSize">Batch size</label>
-                        <input id="BatchSize" name="BatchSize" type="number" min="10" max="1000" class="emby-input" />
-                        <div class="fieldDescription">Items per request. Lower this if you hit context limits.</div>
-                    </div>
-
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="MaxOutputTokens">Max output tokens</label>
-                        <input id="MaxOutputTokens" name="MaxOutputTokens" type="number" min="512" max="128000" class="emby-input" />
-                        <div class="fieldDescription">Raise this if the log reports truncated batch responses.</div>
-                    </div>
-
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="TokenBudget">Token budget per run</label>
-                        <input id="TokenBudget" name="TokenBudget" type="number" min="0" class="emby-input" />
-                        <div class="fieldDescription">
-                            Hard cap on input plus output tokens for a whole run. 0 disables the cap.
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="BatchSize">Batch size</label>
+                            <input id="BatchSize" name="BatchSize" type="number" min="10" max="1000" class="emby-input" />
+                            <div class="fieldDescription">Items per request. Lower this if you hit context limits.</div>
                         </div>
-                    </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="MaxCategories">Max categories</label>
-                        <input id="MaxCategories" name="MaxCategories" type="number" min="0" max="200" class="emby-input" />
-                        <div class="fieldDescription">Ceiling on categories per run. 0 means no cap.</div>
-                    </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxOutputTokens">Max output tokens</label>
+                            <input id="MaxOutputTokens" name="MaxOutputTokens" type="number" min="512" max="128000" class="emby-input" />
+                            <div class="fieldDescription">Raise this if the log reports truncated batch responses.</div>
+                        </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="MinCategorySize">Minimum category size</label>
-                        <input id="MinCategorySize" name="MinCategorySize" type="number" min="1" max="100" class="emby-input" />
-                        <div class="fieldDescription">Categories with fewer members than this are discarded.</div>
-                    </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="TokenBudget">Token budget per run</label>
+                            <input id="TokenBudget" name="TokenBudget" type="number" min="0" class="emby-input" />
+                            <div class="fieldDescription">
+                                Hard cap on input plus output tokens for a whole run. 0 disables the cap.
+                            </div>
+                        </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="InputCostPerMillion">Input cost per million tokens (USD)</label>
-                        <input id="InputCostPerMillion" name="InputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
-                    </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxCategories">Max categories</label>
+                            <input id="MaxCategories" name="MaxCategories" type="number" min="0" max="200" class="emby-input" />
+                            <div class="fieldDescription">Ceiling on categories per run. 0 means no cap.</div>
+                        </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="OutputCostPerMillion">Output cost per million tokens (USD)</label>
-                        <input id="OutputCostPerMillion" name="OutputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
-                        <div class="fieldDescription">
-                            Used only for the estimated-cost line each run logs. Leave both at 0 to log token counts alone.
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MinCategorySize">Minimum category size</label>
+                            <input id="MinCategorySize" name="MinCategorySize" type="number" min="1" max="100" class="emby-input" />
+                            <div class="fieldDescription">Categories with fewer members than this are discarded.</div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxTagsPerItem">Tags per item</label>
+                            <input id="MaxTagsPerItem" name="MaxTagsPerItem" type="number" min="0" max="100" class="emby-input" />
+                            <div class="fieldDescription">
+                                How many tags to send the model for each item. 0 sends none, which is the default.
+                                Scraped tag lists average around 18 values an item and are mostly production trivia
+                                ("aftercreditsstinger", "duringcreditsstinger"); they make up roughly 43% of the prompt
+                                and pull the model toward the metadata-shaped categories it is told to avoid. Raise this
+                                to feed a few of the most relevant ones back in.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="InputCostPerMillion">Input cost per million tokens (USD)</label>
+                            <input id="InputCostPerMillion" name="InputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="OutputCostPerMillion">Output cost per million tokens (USD)</label>
+                            <input id="OutputCostPerMillion" name="OutputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
+                            <div class="fieldDescription">
+                                Used only for the estimated-cost line each run logs. Leave both at 0 to log token counts alone.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="UseBatchApi" name="UseBatchApi" />
+                                <span>Use the batch API (Anthropic only)</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Halves the token price by submitting every batch as one asynchronous job, which
+                                usually finishes within an hour but is allowed up to 24. This trades against prompt
+                                caching rather than adding to it: batched requests run in parallel, so the per-user
+                                passes cannot reuse each other's cached prefixes. It also removes the mid-run token
+                                budget cutoff, since the whole run is committed up front.
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="verticalSection">
-                    <h3 class="sectionTitle">Output</h3>
+                <div class="curatorTabPanel hide" data-panel="output">
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Output</h3>
 
-                    <div class="selectContainer">
-                        <label class="selectLabel" for="OutputType">Output type</label>
-                        <select is="emby-select" id="OutputType" name="OutputType" class="emby-select-withcolor emby-select">
-                            <option value="0">Playlists (recommended)</option>
-                            <option value="1">Collections</option>
-                        </select>
-                        <div class="fieldDescription">
-                            Collection Sections renders collection rows without any ordering control, so playlists
-                            are the better choice unless you have a specific reason.
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="OutputType">Output type</label>
+                            <select is="emby-select" id="OutputType" name="OutputType" class="emby-select-withcolor emby-select">
+                                <option value="Playlist">Playlists (recommended)</option>
+                                <option value="Collection">Collections</option>
+                            </select>
+                            <div class="fieldDescription">
+                                Collection Sections renders collection rows without any ordering control, so playlists
+                                are the better choice unless you have a specific reason.
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label>
-                            <input is="emby-checkbox" type="checkbox" id="PersonalizedPlaylists" name="PersonalizedPlaylists" />
-                            <span>Personalized playlists</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">
-                            Send each target user's watch activity so their playlists reflect their taste. Playlist
-                            output only. This runs the model once per user, so cost scales with user count, and it
-                            means viewing behaviour reaches your configured provider.
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="PersonalizedPlaylists" name="PersonalizedPlaylists" />
+                                <span>Personalized playlists</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Sends the library to the model once per user with that user's watch activity, so each
+                                person gets their own rows. Costs one full pass per user. Turn this off for a single
+                                shared set of rows, with no watch data sent at all.
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label>
-                            <input is="emby-checkbox" type="checkbox" id="IncludeEpisodes" name="IncludeEpisodes" />
-                            <span>Include individual episodes</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">
-                            Lets the model build episode-level categories such as "Bottle Episodes". Increases the
-                            item count considerably on large libraries.
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="IncludeEpisodes" name="IncludeEpisodes" />
+                                <span>Include individual episodes</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Lets the model build episode-level categories. Greatly increases library size and cost.
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label>
-                            <input is="emby-checkbox" type="checkbox" id="AutoEnableSections" name="AutoEnableSections" />
-                            <span>Enable new sections automatically</span>
-                        </label>
-                        <div class="fieldDescription checkboxFieldDescription">
-                            Turn new rows on for target users without them visiting home screen settings. Leave off
-                            to have rows appear as available-but-disabled.
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="AutoEnableSections" name="AutoEnableSections" />
+                                <span>Enable new sections automatically</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Turn new rows on for target users without them visiting home screen settings. Leave off
+                                to have rows appear as available-but-disabled.
+                            </div>
                         </div>
-                    </div>
 
-                    <div class="selectContainer">
-                        <label class="selectLabel" for="TargetUsers">Target users</label>
-                        <select is="emby-select" id="TargetUsers" name="TargetUsers" multiple
-                                class="emby-select-withcolor emby-select" size="6"></select>
-                        <div class="fieldDescription">Select none to build for every user.</div>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="TargetUsers">Target users</label>
+                            <select is="emby-select" id="TargetUsers" name="TargetUsers" multiple
+                                    class="emby-select-withcolor emby-select" size="6"></select>
+                            <div class="fieldDescription">
+                                Select none to target every user.
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="verticalSection">
+                <div id="CuratorSaveRow">
                     <button is="emby-button" type="submit" class="raised button-submit block">
                         <span>Save</span>
                     </button>
                 </div>
             </form>
 
-            <div class="verticalSection">
-                <h3 class="sectionTitle">Run now</h3>
-                <p class="fieldDescription" id="CuratorRunState">Checking status&hellip;</p>
-                <button is="emby-button" type="button" id="CuratorRunButton" class="raised block">
-                    <span>Generate categories now</span>
-                </button>
-                <div class="fieldDescription" style="margin-top:0.5em;">
-                    Save your settings first. A run can take several minutes and costs money — watch the server
-                    log for token counts and estimated cost. The same run happens on schedule via the
-                    <em>Curator: Generate Categories</em> scheduled task.
+            <div class="curatorTabPanel hide" data-panel="categories">
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Run now</h3>
+                    <p class="fieldDescription" id="CuratorRunState">Checking status&hellip;</p>
+                    <button is="emby-button" type="button" id="CuratorRunButton" class="raised block">
+                        <span>Generate categories now</span>
+                    </button>
+                    <div class="fieldDescription" style="margin-top:0.5em;">
+                        Save your settings first. A run can take several minutes and costs money — watch the server
+                        log for token counts and estimated cost. The same run happens on schedule via the
+                        <em>Curator: Generate Categories</em> scheduled task.
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Categories</h3>
+
+                    <div class="curatorBulkBar">
+                        <label class="curatorCheckLabel">
+                            <input type="checkbox" class="curatorCheck" id="CuratorSelectAll" />
+                            <span>Select all</span>
+                        </label>
+                        <span class="curatorBulkCount" id="CuratorSelectionCount">0 selected</span>
+                        <button is="emby-button" type="button" id="CuratorDeleteSelected" class="raised" disabled>
+                            <span>Delete selected</span>
+                        </button>
+                        <button is="emby-button" type="button" id="CuratorExpandAll" class="raised">
+                            <span>Expand all</span>
+                        </button>
+                    </div>
+
+                    <div class="fieldDescription" style="margin-bottom:0.75em;">
+                        Deleting a definition does not delete its Jellyfin playlists — remove those from the Playlists
+                        library if you want them gone. A deleted category can reappear under the same name on the next
+                        run, with a new identity.
+                    </div>
+
+                    <div id="CuratorCategories"><p class="fieldDescription">Loading&hellip;</p></div>
                 </div>
             </div>
 
-            <div class="verticalSection">
-                <h3 class="sectionTitle">Categories</h3>
-                <div id="CuratorCategories"><p class="fieldDescription">Loading&hellip;</p></div>
-            </div>
         </div>
     </div>
 
@@ -196,16 +296,12 @@
         (function () {
             var pluginId = 'de2b72e7-90f9-47e8-aeef-0436d71d01ac';
             var page;
-
-            function fillUsers(selectedIds) {
-                return ApiClient.getUsers().then(function (users) {
-                    var select = page.querySelector('#TargetUsers');
-                    select.innerHTML = users.map(function (user) {
-                        var selected = selectedIds.indexOf(user.Id) !== -1 ? ' selected' : '';
-                        return '<option value="' + user.Id + '"' + selected + '>' + escapeHtml(user.Name) + '</option>';
-                    }).join('');
-                });
-            }
+            var currentCategories = [];
+            var selectedIds = {};
+            var expandedIds = {};
+            var expandedMembers = {};
+            var memberCache = {};
+            var expandedProposals = {};
 
             function escapeHtml(value) {
                 return String(value === null || value === undefined ? '' : value)
@@ -213,28 +309,398 @@
                     .replace(/"/g, '&quot;');
             }
 
-            function renderCategories(categories) {
+            function fillUsers(chosenIds) {
+                return ApiClient.getUsers().then(function (users) {
+                    var select = page.querySelector('#TargetUsers');
+                    select.innerHTML = users.map(function (user) {
+                        var selected = chosenIds.indexOf(user.Id) !== -1 ? ' selected' : '';
+                        return '<option value="' + user.Id + '"' + selected + '>' + escapeHtml(user.Name) + '</option>';
+                    }).join('');
+                });
+            }
+
+            // Enum-valued config lands here as the member name ("Anthropic") because the
+            // server serializes enums as strings over HTTP, but older saved configs and
+            // some clients send the numeric value. Accept both; option values are names.
+            function setEnumSelect(select, value) {
+                var options = select.options;
+                var wanted = String(value === null || value === undefined ? '' : value);
+
+                for (var i = 0; i < options.length; i++) {
+                    if (options[i].value === wanted || String(i) === wanted) {
+                        select.selectedIndex = i;
+                        return;
+                    }
+                }
+
+                select.selectedIndex = 0;
+            }
+
+            // ---- tabs ----
+
+            function showTab(name) {
+                var panels = page.querySelectorAll('.curatorTabPanel');
+                for (var i = 0; i < panels.length; i++) {
+                    panels[i].classList.toggle('hide', panels[i].getAttribute('data-panel') !== name);
+                }
+
+                var buttons = page.querySelectorAll('.curatorTabButton');
+                for (var j = 0; j < buttons.length; j++) {
+                    buttons[j].classList.toggle('curatorTabActive', buttons[j].getAttribute('data-target') === name);
+                }
+
+                // Save applies to the settings form only; Categories has its own actions.
+                page.querySelector('#CuratorSaveRow').classList.toggle('hide', name === 'categories');
+            }
+
+            // ---- categories ----
+
+            function formatDate(value) {
+                if (!value) {
+                    return 'unknown';
+                }
+
+                var parsed = new Date(value);
+                return isNaN(parsed.getTime()) ? escapeHtml(value) : escapeHtml(parsed.toLocaleString());
+            }
+
+            function userRows(category) {
+                var links = category.Users || [];
+                if (!links.length) {
+                    return '<p class="fieldDescription">No users linked yet — this category has never been built '
+                        + 'into a playlist.</p>';
+                }
+
+                var body = links.map(function (link) {
+                    var name = link.UserName
+                        ? escapeHtml(link.UserName)
+                        : '<em>deleted user</em>';
+                    var playlist = link.PlaylistId
+                        ? '<span class="curatorMono">' + escapeHtml(link.PlaylistId) + '</span>'
+                        : '<em>none — category empty for this user</em>';
+                    var owner = link.HandedOff
+                        ? 'Handed off (theirs permanently)'
+                        : 'Curator-managed';
+                    return '<tr><td>' + name + '</td><td>' + playlist + '</td><td>' + owner + '</td>'
+                        + '<td class="curatorMono">' + escapeHtml(link.UserId) + '</td></tr>';
+                }).join('');
+
+                return '<div class="curatorTableScroll"><table class="curatorUserTable">'
+                    + '<thead><tr><th>User</th><th>Playlist</th><th>Ownership</th><th>User ID</th></tr></thead>'
+                    + '<tbody>' + body + '</tbody></table></div>';
+            }
+
+            function detailPanel(category) {
+                return '<div class="curatorCatDetail' + (expandedIds[category.Id] ? '' : ' hide') + '">'
+                    + '<div class="curatorTableScroll"><table class="curatorUserTable"><tbody>'
+                    + '<tr><th>Description</th><td>' + escapeHtml(category.Description) + '</td></tr>'
+                    + '<tr><th>Members</th><td>' + category.MemberCount + '</td></tr>'
+                    + '<tr><th>Playlists</th><td>' + category.PlaylistCount + ' live, '
+                    + category.HandedOffCount + ' handed off</td></tr>'
+                    + '<tr><th>Model</th><td>' + escapeHtml(category.ModelId) + '</td></tr>'
+                    + '<tr><th>Source proposals</th><td>' + category.SourceProposalCount + '</td></tr>'
+                    + '<tr><th>Created</th><td>' + formatDate(category.CreatedAt) + '</td></tr>'
+                    + '<tr><th>Updated</th><td>' + formatDate(category.UpdatedAt) + '</td></tr>'
+                    + '<tr><th>Category ID</th><td class="curatorMono">' + escapeHtml(category.Id) + '</td></tr>'
+                    + '</tbody></table></div>'
+                    + '<h4 style="margin:1em 0 0 0;">Users</h4>'
+                    + userRows(category)
+                    + proposalSection(category)
+                    + '<h4 style="margin:1em 0 0.4em 0;">Items</h4>'
+                    + memberSection(category)
+                    + '</div>';
+            }
+
+            function proposalSection(category) {
+                var count = category.SourceProposalCount;
+
+                // A single proposal has nothing to compare against — the merge is
+                // the whole story here, so only offer the panel when one happened.
+                if (count <= 1) {
+                    return '';
+                }
+
+                var id = escapeHtml(category.Id);
+                var open = expandedProposals[category.Id];
+                var label = open
+                    ? 'Hide proposals'
+                    : 'Show ' + count + ' proposal' + (count === 1 ? '' : 's');
+
+                var body = '';
+                if (open) {
+                    var proposals = category.SourceProposals || [];
+                    if (!proposals.length) {
+                        body = '<p class="fieldDescription">Not recorded. Definitions written before this '
+                            + 'was tracked only kept the count — re-run Curator to populate it.</p>';
+                    } else {
+                        body = proposalRows(proposals, category.Name);
+                    }
+                }
+
+                return '<h4 style="margin:1em 0 0.4em 0;">Source proposals</h4>'
+                    + '<button is="emby-button" type="button" class="raised curatorProposalToggle" '
+                    + 'data-id="' + id + '"><span>' + label + '</span></button>'
+                    + '<div class="curatorProposalBody">' + body + '</div>';
+            }
+
+            function proposalRows(proposals, categoryName) {
+                var body = proposals.map(function (proposal, index) {
+                    var role = index === 0 ? 'Founder' : 'Merged in';
+                    var name = escapeHtml(proposal.Name);
+                    if (proposal.Name === categoryName) {
+                        name = '<strong>' + name + '</strong>';
+                    }
+
+                    return '<tr><td>' + role + '</td><td>' + name + '</td>'
+                        + '<td>' + escapeHtml(proposal.Description) + '</td>'
+                        + '<td>' + proposal.MemberCount + '</td></tr>';
+                }).join('');
+
+                return '<div class="curatorTableScroll"><table class="curatorUserTable">'
+                    + '<thead><tr><th>Role</th><th>Proposed name</th><th>Proposed description</th>'
+                    + '<th>Members</th></tr></thead>'
+                    + '<tbody>' + body + '</tbody></table></div>'
+                    + '<p class="fieldDescription" style="margin-top:0.4em;">'
+                    + 'Each row is one batch — or, with personalization on, one user pass — that proposed '
+                    + 'this thread independently. The founder\'s name and description are the ones kept; '
+                    + 'members were merged round-robin across all of them.</p>';
+            }
+
+            function memberSection(category) {
+                var id = escapeHtml(category.Id);
+                var open = expandedMembers[category.Id];
+                var label = open
+                    ? 'Hide items'
+                    : 'Show ' + category.MemberCount + ' item' + (category.MemberCount === 1 ? '' : 's');
+
+                var body = '';
+                if (open) {
+                    var loaded = memberCache[category.Id];
+                    if (loaded === 'loading') {
+                        body = '<p class="fieldDescription">Loading items&hellip;</p>';
+                    } else if (loaded === 'error') {
+                        body = '<p class="fieldDescription">Could not load items — check the server log.</p>';
+                    } else if (loaded && loaded.length) {
+                        body = memberRows(loaded);
+                    } else if (loaded) {
+                        body = '<p class="fieldDescription">This category has no members.</p>';
+                    }
+                }
+
+                return '<button is="emby-button" type="button" class="raised curatorMemberToggle" '
+                    + 'data-id="' + id + '"><span>' + label + '</span></button>'
+                    + '<div class="curatorMemberBody">' + body + '</div>';
+            }
+
+            function memberRows(members) {
+                var body = members.map(function (member) {
+                    var name = member.Name
+                        ? escapeHtml(member.Name)
+                        : '<em>no longer in the library</em>';
+                    var year = member.Year ? escapeHtml(member.Year) : '';
+                    var kind = member.Kind ? escapeHtml(member.Kind) : '';
+                    return '<tr><td>' + member.Position + '</td><td>' + name + '</td><td>' + year + '</td>'
+                        + '<td>' + kind + '</td>'
+                        + '<td class="curatorMono">' + escapeHtml(member.ItemId) + '</td></tr>';
+                }).join('');
+
+                return '<div class="curatorTableScroll"><table class="curatorUserTable">'
+                    + '<thead><tr><th>#</th><th>Title</th><th>Year</th><th>Type</th><th>Item ID</th></tr></thead>'
+                    + '<tbody>' + body + '</tbody></table></div>'
+                    + '<p class="fieldDescription" style="margin-top:0.4em;">'
+                    + 'Ordered by how strongly the model felt each item belonged, strongest first — '
+                    + 'this is the playlist order.</p>';
+            }
+
+            function loadMembers(categoryId) {
+                memberCache[categoryId] = 'loading';
+                renderCategories();
+
+                ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Categories/' + categoryId + '/Members'),
+                    dataType: 'json'
+                }).then(function (members) {
+                    memberCache[categoryId] = members || [];
+                    renderCategories();
+                }, function () {
+                    memberCache[categoryId] = 'error';
+                    renderCategories();
+                });
+            }
+
+            function renderCategories() {
                 var container = page.querySelector('#CuratorCategories');
-                if (!categories.length) {
-                    container.innerHTML = '<p class="fieldDescription">No categories yet. Run Curator to generate some.</p>';
+                if (!currentCategories.length) {
+                    container.innerHTML =
+                        '<p class="fieldDescription">No categories yet. Run Curator to generate some.</p>';
+                    updateSelectionUi();
                     return;
                 }
 
-                var rows = categories.map(function (category) {
+                var rows = currentCategories.map(function (category) {
+                    var id = escapeHtml(category.Id);
                     var meta = category.MemberCount + ' items · ' + category.PlaylistCount + ' playlist(s)';
                     if (category.HandedOffCount) {
                         meta += ' · ' + category.HandedOffCount + ' handed off';
                     }
                     meta += ' · ' + escapeHtml(category.ModelId);
+
+                    var checked = selectedIds[category.Id] ? ' checked' : '';
+                    var toggleLabel = expandedIds[category.Id] ? 'Hide details' : 'Details';
+
                     return '<div class="listItem listItem-border">'
-                        + '<div class="listItemBody two-line">'
+                        + '<div class="curatorCatRow">'
+                        + '<input type="checkbox" class="curatorCheck curatorCatCheck" '
+                        + 'data-id="' + id + '"' + checked + ' />'
+                        + '<div class="listItemBody curatorCatBody">'
                         + '<div class="listItemBodyText">' + escapeHtml(category.Name) + '</div>'
                         + '<div class="listItemBodyText secondary">' + escapeHtml(category.Description) + '</div>'
                         + '<div class="listItemBodyText secondary">' + meta + '</div>'
-                        + '</div></div>';
+                        + '</div>'
+                        + '<button is="emby-button" type="button" class="raised curatorCatToggle" '
+                        + 'data-id="' + id + '"><span>' + toggleLabel + '</span></button>'
+                        + '</div>'
+                        + detailPanel(category)
+                        + '</div>';
                 }).join('');
 
                 container.innerHTML = '<div class="paperList">' + rows + '</div>';
+                updateSelectionUi();
+            }
+
+            function selectionCount() {
+                var n = 0;
+                for (var key in selectedIds) {
+                    if (selectedIds[key]) {
+                        n++;
+                    }
+                }
+
+                return n;
+            }
+
+            function updateSelectionUi() {
+                var count = selectionCount();
+                page.querySelector('#CuratorSelectionCount').innerHTML =
+                    count + ' selected' + (currentCategories.length ? ' of ' + currentCategories.length : '');
+                page.querySelector('#CuratorDeleteSelected').disabled = count === 0;
+                page.querySelector('#CuratorSelectAll').checked =
+                    currentCategories.length > 0 && count === currentCategories.length;
+            }
+
+            function onCategoriesClick(e) {
+                if (!e.target.closest) {
+                    return;
+                }
+
+                var proposalToggle = e.target.closest('.curatorProposalToggle');
+                if (proposalToggle) {
+                    var proposalId = proposalToggle.getAttribute('data-id');
+                    expandedProposals[proposalId] = !expandedProposals[proposalId];
+                    renderCategories();
+                    return;
+                }
+
+                var memberToggle = e.target.closest('.curatorMemberToggle');
+                if (memberToggle) {
+                    var memberId = memberToggle.getAttribute('data-id');
+                    expandedMembers[memberId] = !expandedMembers[memberId];
+
+                    // Fetch on first expand only; the list is stable between runs.
+                    if (expandedMembers[memberId] && !memberCache[memberId]) {
+                        loadMembers(memberId);
+                    } else {
+                        renderCategories();
+                    }
+
+                    return;
+                }
+
+                var toggle = e.target.closest('.curatorCatToggle');
+                if (!toggle) {
+                    return;
+                }
+
+                var toggleId = toggle.getAttribute('data-id');
+                expandedIds[toggleId] = !expandedIds[toggleId];
+                renderCategories();
+            }
+
+            function onCategoriesChange(e) {
+                if (!e.target.classList || !e.target.classList.contains('curatorCatCheck')) {
+                    return;
+                }
+
+                selectedIds[e.target.getAttribute('data-id')] = e.target.checked;
+                updateSelectionUi();
+            }
+
+            function onSelectAll() {
+                var checked = page.querySelector('#CuratorSelectAll').checked;
+                selectedIds = {};
+                if (checked) {
+                    currentCategories.forEach(function (category) {
+                        selectedIds[category.Id] = true;
+                    });
+                }
+
+                renderCategories();
+            }
+
+            function onExpandAll() {
+                // Collapse everything if anything is open, otherwise open everything.
+                var anyOpen = currentCategories.some(function (category) {
+                    return expandedIds[category.Id];
+                });
+
+                expandedIds = {};
+                if (!anyOpen) {
+                    currentCategories.forEach(function (category) {
+                        expandedIds[category.Id] = true;
+                    });
+                }
+
+                page.querySelector('#CuratorExpandAll').querySelector('span').innerHTML =
+                    anyOpen ? 'Expand all' : 'Collapse all';
+                renderCategories();
+            }
+
+            function onDeleteSelected() {
+                var ids = currentCategories
+                    .filter(function (category) { return selectedIds[category.Id]; })
+                    .map(function (category) { return category.Id; });
+
+                if (!ids.length) {
+                    return;
+                }
+
+                var message = ids.length === 1
+                    ? 'Delete this category definition? Its playlists are left in place.'
+                    : 'Delete these ' + ids.length + ' category definitions? Their playlists are left in place.';
+
+                if (!window.confirm(message)) {
+                    return;
+                }
+
+                Dashboard.showLoadingMsg();
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Categories/Delete'),
+                    data: JSON.stringify({ CategoryIds: ids }),
+                    contentType: 'application/json',
+                    dataType: 'json'
+                }).then(function () {
+                    selectedIds = {};
+                    return refreshStatus();
+                }, function () {
+                    page.querySelector('#CuratorRunState').innerHTML =
+                        'Could not delete — check the server log.';
+                }).then(function () {
+                    Dashboard.hideLoadingMsg();
+                }, function () {
+                    Dashboard.hideLoadingMsg();
+                });
             }
 
             function refreshStatus() {
@@ -253,16 +719,52 @@
                         stateText.innerHTML = 'Idle.';
                         runButton.disabled = false;
                     }
-                    renderCategories(status.Categories || []);
+
+                    currentCategories = status.Categories || [];
+
+                    // Drop selection and expansion state for categories that no longer
+                    // exist, so a stale tick cannot delete something the user never saw.
+                    var live = {};
+                    currentCategories.forEach(function (category) {
+                        live[category.Id] = true;
+                    });
+                    Object.keys(selectedIds).forEach(function (id) {
+                        if (!live[id]) {
+                            delete selectedIds[id];
+                        }
+                    });
+                    Object.keys(expandedIds).forEach(function (id) {
+                        if (!live[id]) {
+                            delete expandedIds[id];
+                        }
+                    });
+                    Object.keys(expandedMembers).forEach(function (id) {
+                        if (!live[id]) {
+                            delete expandedMembers[id];
+                        }
+                    });
+                    Object.keys(memberCache).forEach(function (id) {
+                        if (!live[id]) {
+                            delete memberCache[id];
+                        }
+                    });
+                    Object.keys(expandedProposals).forEach(function (id) {
+                        if (!live[id]) {
+                            delete expandedProposals[id];
+                        }
+                    });
+
+                    renderCategories();
                 }, function () {
-                    page.querySelector('#CuratorRunState').innerHTML = 'Status unavailable.';
+                    page.querySelector('#CuratorRunState').innerHTML =
+                        'Could not read status — check the server log.';
                 });
             }
 
             function loadConfiguration() {
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    page.querySelector('#Provider').value = config.Provider;
+                    setEnumSelect(page.querySelector('#Provider'), config.Provider);
                     page.querySelector('#Model').value = config.Model || '';
                     page.querySelector('#ApiKey').value = config.ApiKey || '';
                     page.querySelector('#BaseUrl').value = config.BaseUrl || '';
@@ -271,12 +773,14 @@
                     page.querySelector('#TokenBudget').value = config.TokenBudget;
                     page.querySelector('#MaxCategories').value = config.MaxCategories;
                     page.querySelector('#MinCategorySize').value = config.MinCategorySize;
+                    page.querySelector('#MaxTagsPerItem').value = config.MaxTagsPerItem;
                     page.querySelector('#InputCostPerMillion').value = config.InputCostPerMillion;
                     page.querySelector('#OutputCostPerMillion').value = config.OutputCostPerMillion;
-                    page.querySelector('#OutputType').value = config.OutputType;
+                    setEnumSelect(page.querySelector('#OutputType'), config.OutputType);
                     page.querySelector('#PersonalizedPlaylists').checked = config.PersonalizedPlaylists;
                     page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
                     page.querySelector('#AutoEnableSections').checked = config.AutoEnableSections;
+                    page.querySelector('#UseBatchApi').checked = config.UseBatchApi;
 
                     return fillUsers(config.TargetUsers || []);
                 }).then(function () {
@@ -290,7 +794,7 @@
                 Dashboard.showLoadingMsg();
 
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    config.Provider = parseInt(page.querySelector('#Provider').value, 10);
+                    config.Provider = page.querySelector('#Provider').value;
                     config.Model = page.querySelector('#Model').value.trim();
                     config.ApiKey = page.querySelector('#ApiKey').value;
                     config.BaseUrl = page.querySelector('#BaseUrl').value.trim();
@@ -299,12 +803,14 @@
                     config.TokenBudget = parseInt(page.querySelector('#TokenBudget').value, 10);
                     config.MaxCategories = parseInt(page.querySelector('#MaxCategories').value, 10);
                     config.MinCategorySize = parseInt(page.querySelector('#MinCategorySize').value, 10);
+                    config.MaxTagsPerItem = parseInt(page.querySelector('#MaxTagsPerItem').value, 10);
                     config.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value);
                     config.OutputCostPerMillion = parseFloat(page.querySelector('#OutputCostPerMillion').value);
-                    config.OutputType = parseInt(page.querySelector('#OutputType').value, 10);
+                    config.OutputType = page.querySelector('#OutputType').value;
                     config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;
                     config.AutoEnableSections = page.querySelector('#AutoEnableSections').checked;
+                    config.UseBatchApi = page.querySelector('#UseBatchApi').checked;
 
                     config.TargetUsers = Array.prototype.filter.call(
                         page.querySelector('#TargetUsers').options,
@@ -338,6 +844,22 @@
                 page = this;
                 page.querySelector('#CuratorConfigForm').addEventListener('submit', saveConfiguration);
                 page.querySelector('#CuratorRunButton').addEventListener('click', startRun);
+                page.querySelector('#CuratorSelectAll').addEventListener('change', onSelectAll);
+                page.querySelector('#CuratorDeleteSelected').addEventListener('click', onDeleteSelected);
+                page.querySelector('#CuratorExpandAll').addEventListener('click', onExpandAll);
+
+                var categories = page.querySelector('#CuratorCategories');
+                categories.addEventListener('click', onCategoriesClick);
+                categories.addEventListener('change', onCategoriesChange);
+
+                var tabButtons = page.querySelectorAll('.curatorTabButton');
+                for (var i = 0; i < tabButtons.length; i++) {
+                    tabButtons[i].addEventListener('click', function () {
+                        showTab(this.getAttribute('data-target'));
+                    });
+                }
+
+                showTab('model');
                 loadConfiguration();
             });
         })();

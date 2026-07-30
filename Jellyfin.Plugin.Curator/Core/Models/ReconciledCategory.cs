@@ -24,5 +24,11 @@ namespace Jellyfin.Plugin.Curator.Core.Models
         /// and rank above single-batch ones when the cap applies.
         /// </summary>
         public required int SourceProposalCount { get; init; }
+
+        /// <summary>
+        /// Gets the individual proposals that merged into this category, founder
+        /// first. Always <see cref="SourceProposalCount"/> entries long.
+        /// </summary>
+        public IReadOnlyList<CategorySourceProposal> SourceProposals { get; init; } = [];
     }
 }
