@@ -19,6 +19,17 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Curator.Services
 {
     /// <summary>
+    /// What a playlist reconcile changed.
+    /// </summary>
+    /// <param name="CategoriesRebuilt">Categories that regained a missing playlist.</param>
+    /// <param name="CategoriesRemoved">Definitions deleted for holding no playlist.</param>
+    /// <param name="PlaylistsRemoved">Curator-owned playlists no definition claimed.</param>
+    public sealed record PlaylistSyncResult(
+        int CategoriesRebuilt,
+        int CategoriesRemoved,
+        int PlaylistsRemoved);
+
+    /// <summary>
     /// The end-to-end run: scan → propose → reconcile → build playlists →
     /// publish home screen rows. Shared by the scheduled task and the manual
     /// trigger so both take exactly the same path.
@@ -221,7 +232,7 @@ namespace Jellyfin.Plugin.Curator.Services
             Report(progress, runLog, 2);
 
             // 1. Scan.
-            var records = _libraryScanner.ScanLibrary(config.IncludeEpisodes);
+            var records = _libraryScanner.ScanLibrary(config.IncludeEpisodes, config.SurfacedCollections);
             if (records.Count == 0)
             {
                 _logger.LogWarning("Curator: library scan produced no items; nothing to categorize");
@@ -545,6 +556,7 @@ namespace Jellyfin.Plugin.Curator.Services
                 ["maxCategoryMembers"] = config.MaxCategoryMembers,
                 ["minPersonalCategorySize"] = config.MinPersonalCategorySize,
                 ["minWatchedForPersonalization"] = config.MinWatchedForPersonalization,
+                ["surfacedCollections"] = config.SurfacedCollections,
                 ["maxTagsPerItem"] = config.MaxTagsPerItem,
                 ["personalizedPlaylists"] = config.PersonalizedPlaylists,
                 ["outputType"] = config.OutputType.ToString(),
@@ -712,6 +724,110 @@ namespace Jellyfin.Plugin.Curator.Services
                         ["name"] = stale.Name,
                     });
             }
+        }
+
+        /// <summary>
+        /// Reconciles stored categories against the playlists that actually exist,
+        /// without an LLM call.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Drift is real and has several sources: playlists deleted by hand, a
+        /// definition left pointing at a playlist that is gone, a run interrupted
+        /// part-way. Until now the only reconciliation was a full run, which costs
+        /// money.
+        /// </para>
+        /// <para>
+        /// Three passes, in this order. First re-sync every category that still holds
+        /// members, which recreates a missing playlist and repairs a stale link
+        /// through the category tether. Then delete definitions that end up holding
+        /// no playlist at all, along with any playlist they still own. Then delete
+        /// Curator-owned playlists no surviving definition claims.
+        /// </para>
+        /// <para>
+        /// Deleting a definition discards its identity: if the model proposes that
+        /// thread again it returns as a new row rather than reusing the old one. That
+        /// is the trade the owner asked for — a category showing nobody anything is
+        /// not worth the row it is holding.
+        /// </para>
+        /// </remarks>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>What changed.</returns>
+        public async Task<PlaylistSyncResult> SyncPlaylistsAsync(CancellationToken cancellationToken)
+        {
+            var config = Plugin.Instance?.Configuration
+                ?? throw new InvalidOperationException("Curator: plugin configuration unavailable.");
+
+            var targetUsers = ResolveTargetUsers(config);
+            if (targetUsers.Count == 0)
+            {
+                _logger.LogWarning("Curator: no target users resolved; nothing to sync");
+                return new PlaylistSyncResult(0, 0, 0);
+            }
+
+            var rebuilt = 0;
+            foreach (var category in _categoryStore.GetAll())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (category.Members.Count == 0)
+                {
+                    continue;
+                }
+
+                var before = category.UserPlaylists.Count(link => link.PlaylistId is not null);
+                await _playlistService
+                    .SyncCategoryAsync(category, targetUsers, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (category.UserPlaylists.Count(link => link.PlaylistId is not null) > before)
+                {
+                    rebuilt++;
+                }
+            }
+
+            var removedCategories = 0;
+            foreach (var category in _categoryStore.GetAll())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!CategoryRetention.IsEmpty(category))
+                {
+                    continue;
+                }
+
+                await _playlistService
+                    .RemoveCategoryPlaylistsAsync(category, cancellationToken)
+                    .ConfigureAwait(false);
+                _categoryStore.Delete(category.Id);
+                removedCategories++;
+
+                _logger.LogInformation(
+                    "Curator: removed category '{Category}' — it holds no playlist", category.Name);
+            }
+
+            var claimed = _categoryStore.GetAll()
+                .SelectMany(c => c.UserPlaylists)
+                .Where(link => link.PlaylistId is not null)
+                .Select(link => link.PlaylistId!.Value)
+                .ToHashSet();
+
+            var removedPlaylists = await _playlistService
+                .RemoveOrphanedPlaylistsAsync(claimed, cancellationToken)
+                .ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Curator: playlist sync — {Rebuilt} categor(ies) regained a playlist, "
+                + "{RemovedCategories} empty categor(ies) removed, {RemovedPlaylists} orphaned playlist(s) deleted",
+                rebuilt,
+                removedCategories,
+                removedPlaylists);
+
+            await _homeScreenService
+                .SyncSectionsAsync(_categoryStore.GetAll(), targetUsers, cancellationToken)
+                .ConfigureAwait(false);
+
+            return new PlaylistSyncResult(rebuilt, removedCategories, removedPlaylists);
         }
 
         /// <summary>

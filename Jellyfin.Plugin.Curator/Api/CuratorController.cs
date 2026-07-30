@@ -201,6 +201,24 @@ namespace Jellyfin.Plugin.Curator.Api
         /// <response code="404">No such run.</response>
         /// <returns>The run document.</returns>
         /// <summary>
+        /// Reconciles stored categories against the playlists that actually exist,
+        /// without an LLM call and without spending anything.
+        /// </summary>
+        /// <remarks>
+        /// Rebuilds a playlist a category has lost, deletes definitions left holding
+        /// none, and deletes Curator-owned playlists no definition claims. Playlists
+        /// without the ownership tag are never touched.
+        /// </remarks>
+        /// <response code="200">Sync ran; the body says what changed.</response>
+        /// <returns>What changed.</returns>
+        [HttpPost("Playlists/Sync")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<PlaylistSyncResult>> SyncPlaylists()
+        {
+            return Ok(await _runService.SyncPlaylistsAsync(HttpContext.RequestAborted).ConfigureAwait(false));
+        }
+
+        /// <summary>
         /// Re-publishes the home screen rows from the stored categories, without an
         /// LLM call and without spending anything.
         /// </summary>

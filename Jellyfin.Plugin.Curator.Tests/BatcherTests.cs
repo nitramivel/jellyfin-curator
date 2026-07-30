@@ -57,10 +57,32 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Empty(Batcher.Split(MakeRecords(0), 10));
         }
 
+        /// <summary>
+        /// 0 means "the whole library in one request", which is the setting to prefer
+        /// whenever the model's context can hold it: a thread running through items
+        /// split across two batches is one the model never gets to see, because each
+        /// call only ever sees its own slice.
+        /// </summary>
         [Fact]
-        public void Split_InvalidBatchSize_Throws()
+        public void Split_ZeroBatchSize_SendsEverythingInOneBatch()
         {
-            Assert.Throws<ArgumentOutOfRangeException>(() => Batcher.Split(MakeRecords(3), 0));
+            var records = MakeRecords(297);
+
+            var batches = Batcher.Split(records, 0);
+
+            Assert.Equal(297, Assert.Single(batches).Count);
+        }
+
+        [Fact]
+        public void Split_NegativeBatchSize_IsTreatedAsUnlimited()
+        {
+            Assert.Equal(3, Assert.Single(Batcher.Split(MakeRecords(3), -1)).Count);
+        }
+
+        [Fact]
+        public void Split_ZeroBatchSizeWithNoRecords_ProducesNoBatches()
+        {
+            Assert.Empty(Batcher.Split(MakeRecords(0), 0));
         }
     }
 }

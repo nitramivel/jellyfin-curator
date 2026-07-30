@@ -65,9 +65,16 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public string BaseUrl { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets the number of library items sent per LLM request.
+        /// Gets or sets the number of library items sent per LLM request. 0 sends
+        /// the whole library in a single request.
+        /// <para>
+        /// Prefer 0 whenever the model's context can hold the library. A thread
+        /// running through items split across two batches is one the model never gets
+        /// to see: each call only ever sees its own slice, and the categories it
+        /// proposes can only join up what is in front of it.
+        /// </para>
         /// </summary>
-        public int BatchSize { get; set; } = 150;
+        public int BatchSize { get; set; } = 0;
 
         // ---------------------------------------------------------------------
         // Category size and count.
@@ -185,6 +192,20 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// </para>
         /// </summary>
         public int MaxTagsPerItem { get; set; } = 0;
+
+        /// <summary>
+        /// Gets or sets the collection names whose membership is sent to the model,
+        /// comma-separated. Empty sends none.
+        /// <para>
+        /// An item in one of these is labelled with it in the item list, so the model
+        /// can see that a film won an Oscar and weigh that as evidence about the film.
+        /// Keep the list short and meaningful: naming a franchise collection here
+        /// invites exactly the metadata-shaped categories the system prompt otherwise
+        /// tells the model to avoid, which is why this is a chosen list rather than
+        /// every collection on the server.
+        /// </para>
+        /// </summary>
+        public string SurfacedCollections { get; set; } = "Oscar Nominees, Oscar Winners";
 
         /// <summary>
         /// Gets or sets the smallest personal category kept, in members. Also the

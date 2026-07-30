@@ -15,20 +15,17 @@
                 .curatorTabButton.curatorTabActive { background: #00a4dc; color: #fff; }
                 .curatorCatRow { display: flex; align-items: flex-start; gap: 0.6em; width: 100%; }
                 .curatorCatRow .curatorCatBody { flex: 1 1 auto; min-width: 0; }
-                .curatorCatDetail { padding: 0.4em 0 1em 2.6em; }
-                .curatorUserTable { width: 100%; border-collapse: collapse; margin-top: 0.5em; }
-                .curatorUserTable th, .curatorUserTable td {
-                    text-align: left; padding: 0.35em 0.6em; border-bottom: 1px solid rgba(255,255,255,0.12);
-                    font-size: 0.92em; vertical-align: top;
-                }
-                .curatorUserTable th { font-weight: 600; opacity: 0.75; }
-                .curatorMono { font-family: monospace; font-size: 0.88em; opacity: 0.8; word-break: break-all; }
+                
+                
+                
+                
+                
                 .curatorBulkBar {
                     display: flex; align-items: center; gap: 1em; flex-wrap: wrap;
                     padding: 0.6em 0; margin-bottom: 0.5em;
                 }
                 .curatorBulkBar .curatorBulkCount { opacity: 0.75; }
-                .curatorTableScroll { overflow-x: auto; }
+                
                 .curatorScopeBar { margin: 0.5em 0 1em 0; }
                 .curatorScopeBar .curatorTabButton { font-size: 0.92em; }
                 /* Plain inputs rather than is="emby-checkbox": customized built-in
@@ -102,7 +99,7 @@
                 /* Run history */
                 .curatorRunRow { display: flex; align-items: flex-start; gap: 0.6em; width: 100%; }
                 .curatorRunRow .curatorRunBody { flex: 1 1 auto; min-width: 0; }
-                .curatorRunDetail { padding: 0.2em 0 1.1em 0; }
+                
                 .curatorDot {
                     width: 0.62em; height: 0.62em; border-radius: 50%;
                     flex: 0 0 auto; margin-top: 0.5em;
@@ -111,32 +108,81 @@
                 .curatorDotFailed    { background: #d9534f; }
                 .curatorDotRunning   { background: #00a4dc; }
                 .curatorDotAbandoned { background: #b0883a; }
-                .curatorRunFacts {
-                    display: grid; grid-template-columns: auto 1fr; gap: 0.3em 1em;
-                    font-size: 0.9em; margin: 0.5em 0 0.2em;
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+
+                /* Detail panels — shared by the category list and the run history.
+                   The old panels indented with padding-left, which spent width in an already
+                   narrow dashboard column and still left the panel visually loose from its row.
+                   An accent rail reads as "belongs to the row above" while giving the width back. */
+                .curatorDetail {
+                    margin: 0.25em 0 0.8em;
+                    padding: 1.15em 1.25em 1.35em;
+                    border-left: 3px solid rgba(0, 164, 220, 0.55);
+                    border-radius: 0 8px 8px 0;
+                    background: rgba(255, 255, 255, 0.035);
+                    line-height: 1.55;
                 }
-                .curatorRunFacts dt { opacity: 0.6; white-space: nowrap; }
-                .curatorRunFacts dd { margin: 0; }
-                .curatorRunSub {
-                    font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em;
-                    opacity: 0.55; margin: 1.1em 0 0.4em;
+
+                /* Label/value pairs. A grid, not a table: a table cell will not wrap a long
+                   description sensibly, and the description is the widest thing here. */
+                .curatorFacts {
+                    display: grid;
+                    grid-template-columns: minmax(6.5em, max-content) minmax(0, 1fr);
+                    gap: 0.5em 1.4em;
+                    margin: 0;
                 }
-                .curatorRunTable { width: 100%; border-collapse: collapse; font-size: 0.88em; }
-                .curatorRunTable th, .curatorRunTable td {
-                    text-align: left; padding: 0.3em 0.7em 0.3em 0;
-                    border-bottom: 1px solid rgba(255,255,255,0.08); white-space: nowrap;
+                .curatorFacts dt { opacity: 0.55; }
+                .curatorFacts dd { margin: 0; overflow-wrap: anywhere; }
+
+                .curatorDetailSub {
+                    font-size: 0.78em; font-weight: 600; text-transform: uppercase;
+                    letter-spacing: 0.08em; opacity: 0.5; margin: 1.7em 0 0.6em;
                 }
-                .curatorRunTable th { font-weight: 600; opacity: 0.6; }
-                .curatorRunTable td.curatorNum, .curatorRunTable th.curatorNum {
-                    text-align: right; font-variant-numeric: tabular-nums; padding-right: 0;
+                .curatorDetailSub:first-child { margin-top: 0; }
+
+                .curatorDataTable { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+                .curatorDataTable th, .curatorDataTable td {
+                    text-align: left; padding: 0.5em 0.9em 0.5em 0;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
                 }
-                .curatorRunSkipped { opacity: 0.55; }
+                .curatorDataTable thead th {
+                    font-weight: 600; opacity: 0.5; font-size: 0.92em;
+                    text-transform: uppercase; letter-spacing: 0.05em;
+                }
+                .curatorDataTable tbody tr:last-child th,
+                .curatorDataTable tbody tr:last-child td { border-bottom: 0; }
+                .curatorDataTable th:last-child, .curatorDataTable td:last-child { padding-right: 0; }
+                .curatorDataTable td.curatorNum, .curatorDataTable th.curatorNum {
+                    text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
+                }
+                .curatorDataTable .curatorRunSkipped { opacity: 0.5; }
+
+                .curatorTableScroll { overflow-x: auto; }
+                .curatorMono { font-family: monospace; font-size: 0.88em; opacity: 0.75; word-break: break-all; }
+                .curatorRawLink { display: inline-block; margin-top: 1.4em; font-size: 0.88em; opacity: 0.8; }
                 .curatorRunError {
-                    margin-top: 0.8em; padding: 0.6em 0.8em; border-radius: 6px;
+                    margin-top: 1.1em; padding: 0.7em 0.9em; border-radius: 6px;
                     background: rgba(217,83,79,0.12); border: 1px solid rgba(217,83,79,0.35);
-                    font-size: 0.9em;
                 }
-                .curatorRawLink { display: inline-block; margin-top: 1em; font-size: 0.88em; opacity: 0.8; }
+
+                /* One column under a narrow dashboard: a 6.5em label column beside a value is
+                   the single biggest source of squeeze once the drawer is open. */
+                @media (max-width: 560px) {
+                    .curatorDetail { padding: 1em 0.9em 1.1em; }
+                    .curatorFacts { grid-template-columns: 1fr; gap: 0.1em; }
+                    .curatorFacts dt { margin-top: 0.8em; font-size: 0.86em; }
+                    .curatorFacts dt:first-of-type { margin-top: 0; }
+                }
 
                 @media (max-width: 500px) {
                     .curatorProgressPct { font-size: 1.25em; }
@@ -156,19 +202,21 @@
                 <button is="emby-button" type="button" class="raised curatorTabButton curatorTabActive"
                         data-target="model"><span>Model</span></button>
                 <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="limits"><span>Run limits</span></button>
+                        data-target="library"><span>Library</span></button>
                 <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="output"><span>Output</span></button>
+                        data-target="categories-settings"><span>Categories</span></button>
                 <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="categories"><span>Categories</span></button>
+                        data-target="home"><span>Home screen</span></button>
+                <button is="emby-button" type="button" class="raised curatorTabButton"
+                        data-target="categories"><span>Runs</span></button>
             </div>
 
             <form id="CuratorConfigForm">
 
                 <div class="curatorTabPanel" data-panel="model">
                     <div class="verticalSection">
-                        <h3 class="sectionTitle">Model</h3>
-
+                        <h3 class="sectionTitle">Provider</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Which model answers, and how to reach it.</p>
                         <div class="selectContainer">
                             <label class="selectLabel" for="Provider">Provider</label>
                             <select is="emby-select" id="Provider" name="Provider" class="emby-select-withcolor emby-select">
@@ -185,7 +233,6 @@
                                 entries. Grok needs a model of <code>grok-2-1212</code> or newer for this.
                             </div>
                         </div>
-
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="Model">Model</label>
                             <input id="Model" name="Model" type="text" class="emby-input" />
@@ -194,13 +241,11 @@
                                 <code>gemini-2.5-flash</code>, <code>grok-4</code>, or <code>llama3.3</code>.
                             </div>
                         </div>
-
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="ApiKey">API key</label>
                             <input id="ApiKey" name="ApiKey" type="password" class="emby-input" autocomplete="off" />
                             <div class="fieldDescription">Optional for local OpenAI-compatible servers that need no key.</div>
                         </div>
-
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="BaseUrl">Base URL</label>
                             <input id="BaseUrl" name="BaseUrl" type="text" class="emby-input"
@@ -210,151 +255,9 @@
                                 provider — include the version segment.
                             </div>
                         </div>
-                    </div>
-                </div>
 
-                <div class="curatorTabPanel hide" data-panel="limits">
-                    <div class="verticalSection">
-                        <h3 class="sectionTitle">Run limits</h3>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="BatchSize">Batch size</label>
-                            <input id="BatchSize" name="BatchSize" type="number" min="10" max="1000" class="emby-input" />
-                            <div class="fieldDescription">Items per request. Lower this if you hit context limits.</div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxOutputTokens">Max output tokens</label>
-                            <input id="MaxOutputTokens" name="MaxOutputTokens" type="number" min="512" max="128000" class="emby-input" />
-                            <div class="fieldDescription">Raise this if the log reports truncated batch responses.</div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="TokenBudget">Token budget per run</label>
-                            <input id="TokenBudget" name="TokenBudget" type="number" min="0" class="emby-input" />
-                            <div class="fieldDescription">
-                                Hard cap on input plus output tokens for a whole run. 0 disables the cap.
-                            </div>
-                        </div>
-
-                        <h4 class="sectionTitle">Category size and count</h4>
-                        <div class="fieldDescription" style="margin-bottom:1em;">
-                            Two pools, a floor and a ceiling each. <strong>Shared</strong> categories come from
-                            one library-wide pass; <strong>personal</strong> ones are invented for a single
-                            viewer from their own history, so the same numbers do not suit both — keep the
-                            personal floor at or below the shared one.
-                            <br /><br />
-                            The floors are sent to the model, not just applied to its answer: it is told the
-                            number it will be judged by. A run measured before this was wired up asked for
-                            3-member categories and then discarded everything under 6 — 17 of 22 proposals
-                            binned on size alone.
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MinSharedCategorySize">Minimum shared category size</label>
-                            <input id="MinSharedCategorySize" name="MinSharedCategorySize" type="number" min="2" max="100" class="emby-input" />
-                            <div class="fieldDescription">
-                                Smallest shared category worth keeping, in items, and the size the model is asked
-                                to meet. Raise it for fewer, broader rows; lower it to let the model name narrower
-                                threads. Minimum 2.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxSharedCategories">Max shared categories</label>
-                            <input id="MaxSharedCategories" name="MaxSharedCategories" type="number" min="0" max="200" class="emby-input" />
-                            <div class="fieldDescription">
-                                Ceiling on how many survive the library-wide pass, strongest first, and the number
-                                the model is asked to aim for. Set it generously — the floor above decides what is
-                                worth keeping, this only decides how many. A cap the model is not told is one it
-                                cannot aim at: given no target count, one model returned 23 categories covering 78%
-                                of the library and another returned 5 covering 10%, from an identical prompt.
-                                0 means no cap.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxCategoryMembers">Max items per category</label>
-                            <input id="MaxCategoryMembers" name="MaxCategoryMembers" type="number" min="0" max="500" class="emby-input" />
-                            <div class="fieldDescription">
-                                Applies to both pools — a category is a home screen row either way, and Collection
-                                Sections renders only the first 16 items of one. Members are ranked strongest-first,
-                                so anything past this is trimmed off the tail rather than the category being dropped:
-                                a forty-item thread becomes the best twenty of itself. 0 means no limit.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="PortraitThreshold">Portrait row threshold</label>
-                            <input id="PortraitThreshold" name="PortraitThreshold" type="number" min="0" max="500" class="emby-input" />
-                            <div class="fieldDescription">
-                                Rows with at least this many items render as portrait posters; shorter rows render
-                                as landscape thumbs. Landscape cards are wide, so a short row still fills the
-                                screen, while portrait cards fit more across and suit a row worth scrolling.
-                                0 makes every row portrait; a number above the item cap above makes every row
-                                landscape.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MinPersonalCategorySize">Minimum personal category size</label>
-                            <input id="MinPersonalCategorySize" name="MinPersonalCategorySize" type="number" min="2" max="100" class="emby-input" />
-                            <div class="fieldDescription">
-                                Smallest category invented for one viewer. Defaults to the same value as the
-                                shared floor above. Lower it if invented categories start being discarded on
-                                size — a viewer's history is a smaller pool to draw from than the whole
-                                library. Minimum 2.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxPersonalCategories">Max personal categories per user</label>
-                            <input id="MaxPersonalCategories" name="MaxPersonalCategories" type="number" min="0" max="200" class="emby-input" />
-                            <div class="fieldDescription">
-                                Ceiling on the categories invented for one viewer. Defaults to the same value
-                                as the shared cap above. 0 means no cap.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MinWatchedForPersonalization">Minimum watched items to personalize</label>
-                            <input id="MinWatchedForPersonalization" name="MinWatchedForPersonalization" type="number" min="0" max="1000" class="emby-input" />
-                            <div class="fieldDescription">
-                                A user who has watched fewer items than this is skipped before their pass is sent,
-                                and gets the shared categories instead. Personalization costs a full library prompt
-                                per user whether or not they have any history to shape it, so an account that has
-                                never watched anything is pure spend. 0 personalizes everyone.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxTagsPerItem">Tags per item</label>
-                            <input id="MaxTagsPerItem" name="MaxTagsPerItem" type="number" min="0" max="100" class="emby-input" />
-                            <div class="fieldDescription">
-                                How many tags to send the model for each item. 0 sends none, which is the default.
-                                Scraped tag lists average around 18 values an item and are mostly production trivia
-                                ("aftercreditsstinger", "duringcreditsstinger"); they make up roughly 43% of the prompt
-                                and pull the model toward the metadata-shaped categories it is told to avoid. Raise this
-                                to feed a few of the most relevant ones back in.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="InputCostPerMillion">Input cost per million tokens (USD)</label>
-                            <input id="InputCostPerMillion" name="InputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="OutputCostPerMillion">Output cost per million tokens (USD)</label>
-                            <input id="OutputCostPerMillion" name="OutputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
-                            <div class="fieldDescription">
-                                Used only for the estimated-cost line each run logs. Leave both at 0 to log token counts alone.
-                                These are plain numbers and are never looked up — <strong>change them when you change
-                                provider</strong>, or the cost of a cheap model will be reported at the price of an
-                                expensive one.
-                            </div>
-                        </div>
-
+                        <h3 class="sectionTitle">Request</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">How each call to that model is made.</p>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" id="EnableThinking" name="EnableThinking" />
@@ -369,7 +272,11 @@
                                 <em>Max output tokens</em> rather than turning this off.
                             </div>
                         </div>
-
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxOutputTokens">Max output tokens</label>
+                            <input id="MaxOutputTokens" name="MaxOutputTokens" type="number" min="512" max="128000" class="emby-input" />
+                            <div class="fieldDescription">Raise this if the log reports truncated batch responses.</div>
+                        </div>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" id="UseBatchApi" name="UseBatchApi" />
@@ -383,25 +290,92 @@
                                 budget cutoff, since the whole run is committed up front.
                             </div>
                         </div>
-                    </div>
-                </div>
 
-                <div class="curatorTabPanel hide" data-panel="output">
-                    <div class="verticalSection">
-                        <h3 class="sectionTitle">Output</h3>
-
-                        <div class="selectContainer">
-                            <label class="selectLabel" for="OutputType">Output type</label>
-                            <select is="emby-select" id="OutputType" name="OutputType" class="emby-select-withcolor emby-select">
-                                <option value="Playlist">Playlists (recommended)</option>
-                                <option value="Collection">Collections</option>
-                            </select>
+                        <h3 class="sectionTitle">Spend</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Prices are only used to report cost — they change nothing about the run itself.</p>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="InputCostPerMillion">Input cost per million tokens (USD)</label>
+                            <input id="InputCostPerMillion" name="InputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="OutputCostPerMillion">Output cost per million tokens (USD)</label>
+                            <input id="OutputCostPerMillion" name="OutputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
                             <div class="fieldDescription">
-                                Collection Sections renders collection rows without any ordering control, so playlists
-                                are the better choice unless you have a specific reason.
+                                Used only for the estimated-cost line each run logs. Leave both at 0 to log token counts alone.
+                                These are plain numbers and are never looked up — <strong>change them when you change
+                                provider</strong>, or the cost of a cheap model will be reported at the price of an
+                                expensive one.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="TokenBudget">Token budget per run</label>
+                            <input id="TokenBudget" name="TokenBudget" type="number" min="0" class="emby-input" />
+                            <div class="fieldDescription">
+                                Hard cap on input plus output tokens for a whole run. 0 disables the cap.
                             </div>
                         </div>
 
+                    </div>
+                </div>
+
+                <div class="curatorTabPanel hide" data-panel="library">
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">What is sent</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">The library snapshot the model is asked to find threads in.</p>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="BatchSize">Batch size</label>
+                            <input id="BatchSize" name="BatchSize" type="number" min="0" max="5000" class="emby-input" />
+                            <div class="fieldDescription">
+                                Items per request. <strong>0 sends the whole library in one request</strong>, which is
+                                what you want whenever the model's context can hold it: a thread running through items
+                                split across two batches is one the model never gets to see, because each call only
+                                ever sees its own slice. Raise it off 0 only if you hit context limits.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="IncludeEpisodes" name="IncludeEpisodes" />
+                                <span>Include individual episodes</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Lets the model build episode-level categories. Greatly increases library size and cost.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxTagsPerItem">Tags per item</label>
+                            <input id="MaxTagsPerItem" name="MaxTagsPerItem" type="number" min="0" max="100" class="emby-input" />
+                            <div class="fieldDescription">
+                                How many tags to send the model for each item. 0 sends none, which is the default.
+                                Scraped tag lists average around 18 values an item and are mostly production trivia
+                                ("aftercreditsstinger", "duringcreditsstinger"); they make up roughly 43% of the prompt
+                                and pull the model toward the metadata-shaped categories it is told to avoid. Raise this
+                                to feed a few of the most relevant ones back in.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SurfacedCollections">Collections to tell the model about</label>
+                            <input id="SurfacedCollections" name="SurfacedCollections" type="text" class="emby-input"
+                                   placeholder="Oscar Nominees, Oscar Winners" />
+                            <div class="fieldDescription">
+                                Comma-separated collection names. An item in one of these is labelled with it in the
+                                item list, so the model can see that a film was, say, an Oscar winner and read that
+                                as a signal about the film rather than a fact to file it under. Leave empty to send
+                                no collection membership at all. Keep the list short and meaningful: naming a
+                                franchise collection here invites exactly the metadata-shaped categories the prompt
+                                otherwise tells the model to avoid.
+                            </div>
+                        </div>
+
+                        <h3 class="sectionTitle">Who it is sent for</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Personalization costs one full pass per user.</p>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="TargetUsers">Target users</label>
+                            <select is="emby-select" id="TargetUsers" name="TargetUsers" multiple
+                                    class="emby-select-withcolor emby-select" size="6"></select>
+                            <div class="fieldDescription">
+                                Select none to target every user.
+                            </div>
+                        </div>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" id="PersonalizedPlaylists" name="PersonalizedPlaylists" />
@@ -414,17 +388,97 @@
                                 shared rows only, with no watch data sent at all.
                             </div>
                         </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label>
-                                <input is="emby-checkbox" type="checkbox" id="IncludeEpisodes" name="IncludeEpisodes" />
-                                <span>Include individual episodes</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Lets the model build episode-level categories. Greatly increases library size and cost.
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MinWatchedForPersonalization">Minimum watched items to personalize</label>
+                            <input id="MinWatchedForPersonalization" name="MinWatchedForPersonalization" type="number" min="0" max="1000" class="emby-input" />
+                            <div class="fieldDescription">
+                                A user who has watched fewer items than this is skipped before their pass is sent,
+                                and gets the shared categories instead. Personalization costs a full library prompt
+                                per user whether or not they have any history to shape it, so an account that has
+                                never watched anything is pure spend. 0 personalizes everyone.
                             </div>
                         </div>
 
+                    </div>
+                </div>
+
+                <div class="curatorTabPanel hide" data-panel="categories-settings">
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Shared categories</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Drawn from the whole library. Every user receives all of them.</p>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MinSharedCategorySize">Minimum shared category size</label>
+                            <input id="MinSharedCategorySize" name="MinSharedCategorySize" type="number" min="2" max="100" class="emby-input" />
+                            <div class="fieldDescription">
+                                Smallest shared category worth keeping, in items, and the size the model is asked
+                                to meet. Raise it for fewer, broader rows; lower it to let the model name narrower
+                                threads. Minimum 2.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxSharedCategories">Max shared categories</label>
+                            <input id="MaxSharedCategories" name="MaxSharedCategories" type="number" min="0" max="200" class="emby-input" />
+                            <div class="fieldDescription">
+                                Ceiling on how many survive the library-wide pass, strongest first, and the number
+                                the model is asked to aim for. Set it generously — the floor above decides what is
+                                worth keeping, this only decides how many. A cap the model is not told is one it
+                                cannot aim at: given no target count, one model returned 23 categories covering 78%
+                                of the library and another returned 5 covering 10%, from an identical prompt.
+                                0 means no cap.
+                            </div>
+                        </div>
+
+                        <h3 class="sectionTitle">Personal categories</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Invented for one viewer from their own watch history.</p>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MinPersonalCategorySize">Minimum personal category size</label>
+                            <input id="MinPersonalCategorySize" name="MinPersonalCategorySize" type="number" min="2" max="100" class="emby-input" />
+                            <div class="fieldDescription">
+                                Smallest category invented for one viewer. Defaults to the same value as the
+                                shared floor above. Lower it if invented categories start being discarded on
+                                size — a viewer's history is a smaller pool to draw from than the whole
+                                library. Minimum 2.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxPersonalCategories">Max personal categories per user</label>
+                            <input id="MaxPersonalCategories" name="MaxPersonalCategories" type="number" min="0" max="200" class="emby-input" />
+                            <div class="fieldDescription">
+                                Ceiling on the categories invented for one viewer. Defaults to the same value
+                                as the shared cap above. 0 means no cap.
+                            </div>
+                        </div>
+
+                        <h3 class="sectionTitle">Both pools</h3>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxCategoryMembers">Max items per category</label>
+                            <input id="MaxCategoryMembers" name="MaxCategoryMembers" type="number" min="0" max="500" class="emby-input" />
+                            <div class="fieldDescription">
+                                Applies to both pools — a category is a home screen row either way, and Collection
+                                Sections renders only the first 16 items of one. Members are ranked strongest-first,
+                                so anything past this is trimmed off the tail rather than the category being dropped:
+                                a forty-item thread becomes the best twenty of itself. 0 means no limit.
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <div class="curatorTabPanel hide" data-panel="home">
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Rows</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">How categories appear on the home screen.</p>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="OutputType">Output type</label>
+                            <select is="emby-select" id="OutputType" name="OutputType" class="emby-select-withcolor emby-select">
+                                <option value="Playlist">Playlists (recommended)</option>
+                                <option value="Collection">Collections</option>
+                            </select>
+                            <div class="fieldDescription">
+                                Collection Sections renders collection rows without any ordering control, so playlists
+                                are the better choice unless you have a specific reason.
+                            </div>
+                        </div>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" id="AutoEnableSections" name="AutoEnableSections" />
@@ -435,15 +489,18 @@
                                 to have rows appear as available-but-disabled.
                             </div>
                         </div>
-
-                        <div class="selectContainer">
-                            <label class="selectLabel" for="TargetUsers">Target users</label>
-                            <select is="emby-select" id="TargetUsers" name="TargetUsers" multiple
-                                    class="emby-select-withcolor emby-select" size="6"></select>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="PortraitThreshold">Portrait row threshold</label>
+                            <input id="PortraitThreshold" name="PortraitThreshold" type="number" min="0" max="500" class="emby-input" />
                             <div class="fieldDescription">
-                                Select none to target every user.
+                                Rows with at least this many items render as portrait posters; shorter rows render
+                                as landscape thumbs. Landscape cards are wide, so a short row still fills the
+                                screen, while portrait cards fit more across and suit a row worth scrolling.
+                                0 makes every row portrait; a number above the item cap above makes every row
+                                landscape.
                             </div>
                         </div>
+
                     </div>
                 </div>
 
@@ -474,6 +531,17 @@
                         Rebuilds the home screen rows from the categories already stored, so they match the
                         playlists Curator created. Costs nothing and calls no model. A full run does this at the
                         end anyway; use this when rows have drifted and you do not want to pay for a run.
+                    </div>
+
+                    <button is="emby-button" type="button" id="CuratorSyncPlaylistsButton" class="raised block"
+                            style="margin-top:0.6em;">
+                        <span>Re-sync playlists</span>
+                    </button>
+                    <div class="fieldDescription" style="margin-top:0.5em;">
+                        Reconciles the stored categories against the playlists that actually exist: rebuilds a
+                        playlist a category has lost, deletes categories left holding none, and deletes Curator
+                        playlists no category claims. Playlists you have untagged are never touched. Costs
+                        nothing and calls no model.
                     </div>
 
                     <div id="CuratorProgress" class="curatorProgress hide">
@@ -637,28 +705,30 @@
                         + '<td class="curatorMono">' + escapeHtml(link.UserId) + '</td></tr>';
                 }).join('');
 
-                return '<div class="curatorTableScroll"><table class="curatorUserTable">'
+                return '<div class="curatorTableScroll"><table class="curatorDataTable">'
                     + '<thead><tr><th>User</th><th>Playlist</th><th>Ownership</th><th>User ID</th></tr></thead>'
                     + '<tbody>' + body + '</tbody></table></div>';
             }
 
             function detailPanel(category) {
-                return '<div class="curatorCatDetail' + (expandedIds[category.Id] ? '' : ' hide') + '">'
-                    + '<div class="curatorTableScroll"><table class="curatorUserTable"><tbody>'
-                    + '<tr><th>Description</th><td>' + escapeHtml(category.Description) + '</td></tr>'
-                    + '<tr><th>Members</th><td>' + category.MemberCount + '</td></tr>'
-                    + '<tr><th>Playlists</th><td>' + category.PlaylistCount + ' live, '
-                    + category.HandedOffCount + ' handed off</td></tr>'
-                    + '<tr><th>Model</th><td>' + escapeHtml(category.ModelId) + '</td></tr>'
-                    + '<tr><th>Source proposals</th><td>' + category.SourceProposalCount + '</td></tr>'
-                    + '<tr><th>Created</th><td>' + formatDate(category.CreatedAt) + '</td></tr>'
-                    + '<tr><th>Updated</th><td>' + formatDate(category.UpdatedAt) + '</td></tr>'
-                    + '<tr><th>Category ID</th><td class="curatorMono">' + escapeHtml(category.Id) + '</td></tr>'
-                    + '</tbody></table></div>'
-                    + '<h4 style="margin:1em 0 0 0;">Users</h4>'
+                // A grid rather than a two-column table: the description is the
+                // widest thing here and a table cell will not wrap it sensibly in a
+                // dashboard column with the drawer open.
+                return '<div class="curatorDetail' + (expandedIds[category.Id] ? '' : ' hide') + '">'
+                    + '<dl class="curatorFacts">'
+                    + fact('Description', escapeHtml(category.Description))
+                    + fact('Members', category.MemberCount)
+                    + fact('Playlists', category.PlaylistCount + ' live, ' + category.HandedOffCount + ' handed off')
+                    + fact('Model', escapeHtml(category.ModelId))
+                    + fact('Source proposals', category.SourceProposalCount)
+                    + fact('Created', formatDate(category.CreatedAt))
+                    + fact('Updated', formatDate(category.UpdatedAt))
+                    + '<dt>Category ID</dt><dd class="curatorMono">' + escapeHtml(category.Id) + '</dd>'
+                    + '</dl>'
+                    + '<div class="curatorDetailSub">Users</div>'
                     + userRows(category)
                     + proposalSection(category)
-                    + '<h4 style="margin:1em 0 0.4em 0;">Items</h4>'
+                    + '<div class="curatorDetailSub">Items</div>'
                     + memberSection(category)
                     + '</div>';
             }
@@ -689,7 +759,7 @@
                     }
                 }
 
-                return '<h4 style="margin:1em 0 0.4em 0;">Source proposals</h4>'
+                return '<div class="curatorDetailSub">Source proposals</div>'
                     + '<button is="emby-button" type="button" class="raised curatorProposalToggle" '
                     + 'data-id="' + id + '"><span>' + label + '</span></button>'
                     + '<div class="curatorProposalBody">' + body + '</div>';
@@ -708,7 +778,7 @@
                         + '<td>' + proposal.MemberCount + '</td></tr>';
                 }).join('');
 
-                return '<div class="curatorTableScroll"><table class="curatorUserTable">'
+                return '<div class="curatorTableScroll"><table class="curatorDataTable">'
                     + '<thead><tr><th>Role</th><th>Proposed name</th><th>Proposed description</th>'
                     + '<th>Members</th></tr></thead>'
                     + '<tbody>' + body + '</tbody></table></div>'
@@ -756,7 +826,7 @@
                         + '<td class="curatorMono">' + escapeHtml(member.ItemId) + '</td></tr>';
                 }).join('');
 
-                return '<div class="curatorTableScroll"><table class="curatorUserTable">'
+                return '<div class="curatorTableScroll"><table class="curatorDataTable">'
                     + '<thead><tr><th>#</th><th>Title</th><th>Year</th><th>Type</th><th>Item ID</th></tr></thead>'
                     + '<tbody>' + body + '</tbody></table></div>'
                     + '<p class="fieldDescription" style="margin-top:0.4em;">'
@@ -1281,10 +1351,10 @@
 
                 var detail = runDetails[run.RunId];
                 if (!detail) {
-                    return '<div class="curatorRunDetail"><p class="fieldDescription">Loading…</p></div>';
+                    return '<div class="curatorDetail"><p class="fieldDescription" style="margin:0;">Loading…</p></div>';
                 }
 
-                var html = '<div class="curatorRunDetail"><dl class="curatorRunFacts">';
+                var html = '<div class="curatorDetail"><dl class="curatorFacts">';
 
                 if (detail.Library) {
                     html += fact('Library', escapeHtml(String(detail.Library.ItemCount)) + ' items, episodes '
@@ -1307,8 +1377,8 @@
                 html += '</dl>';
 
                 if (detail.Users && detail.Users.length) {
-                    html += '<div class="curatorRunSub">Per viewer</div>'
-                        + '<div class="curatorTableScroll"><table class="curatorRunTable"><thead><tr>'
+                    html += '<div class="curatorDetailSub">Per viewer</div>'
+                        + '<div class="curatorTableScroll"><table class="curatorDataTable"><thead><tr>'
                         + '<th>Viewer</th><th class="curatorNum">Watched</th>'
                         + '<th class="curatorNum">Series</th><th class="curatorNum">Personal</th>'
                         + '</tr></thead><tbody>';
@@ -1325,8 +1395,8 @@
                 }
 
                 if (detail.Calls && detail.Calls.length) {
-                    html += '<div class="curatorRunSub">Model calls</div>'
-                        + '<div class="curatorTableScroll"><table class="curatorRunTable"><thead><tr>'
+                    html += '<div class="curatorDetailSub">Model calls</div>'
+                        + '<div class="curatorTableScroll"><table class="curatorDataTable"><thead><tr>'
                         + '<th>Pass</th><th class="curatorNum">Time</th><th class="curatorNum">In</th>'
                         + '<th class="curatorNum">Out</th><th class="curatorNum">Cached</th>'
                         + '<th class="curatorNum">Cost</th></tr></thead><tbody>';
@@ -1552,6 +1622,7 @@
                     page.querySelector('#PortraitThreshold').value = config.PortraitThreshold;
                     page.querySelector('#MinWatchedForPersonalization').value = config.MinWatchedForPersonalization;
                     page.querySelector('#MaxTagsPerItem').value = config.MaxTagsPerItem;
+                    page.querySelector('#SurfacedCollections').value = config.SurfacedCollections || '';
                     page.querySelector('#InputCostPerMillion').value = config.InputCostPerMillion;
                     page.querySelector('#OutputCostPerMillion').value = config.OutputCostPerMillion;
                     setEnumSelect(page.querySelector('#OutputType'), config.OutputType);
@@ -1589,6 +1660,7 @@
                     config.PortraitThreshold = parseInt(page.querySelector('#PortraitThreshold').value, 10);
                     config.MinWatchedForPersonalization = parseInt(page.querySelector('#MinWatchedForPersonalization').value, 10);
                     config.MaxTagsPerItem = parseInt(page.querySelector('#MaxTagsPerItem').value, 10);
+                    config.SurfacedCollections = page.querySelector('#SurfacedCollections').value.trim();
                     config.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value);
                     config.OutputCostPerMillion = parseFloat(page.querySelector('#OutputCostPerMillion').value);
                     config.OutputType = page.querySelector('#OutputType').value;
@@ -1633,6 +1705,36 @@
                 });
             }
 
+            function syncPlaylists() {
+                var button = page.querySelector('#CuratorSyncPlaylistsButton');
+                var state = page.querySelector('#CuratorRunState');
+
+                if (!window.confirm('Reconcile playlists with the stored categories?\n\n'
+                        + 'This deletes categories that hold no playlist, and Curator playlists that no '
+                        + 'category claims. Playlists you have untagged are never touched.')) {
+                    return;
+                }
+
+                button.disabled = true;
+                state.innerHTML = 'Reconciling playlists…';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Playlists/Sync'),
+                    dataType: 'json'
+                }).then(function (r) {
+                    state.innerHTML = 'Playlists reconciled — '
+                        + r.CategoriesRebuilt + ' rebuilt, '
+                        + r.CategoriesRemoved + ' categor' + (r.CategoriesRemoved === 1 ? 'y' : 'ies') + ' removed, '
+                        + r.PlaylistsRemoved + ' orphaned playlist' + (r.PlaylistsRemoved === 1 ? '' : 's') + ' deleted.';
+                    button.disabled = false;
+                    refreshStatus();
+                }, function () {
+                    state.innerHTML = 'Could not reconcile — check the server log.';
+                    button.disabled = false;
+                });
+            }
+
             function startRun() {
                 var runButton = page.querySelector('#CuratorRunButton');
                 runButton.disabled = true;
@@ -1660,6 +1762,7 @@
                 page.querySelector('#CuratorConfigForm').addEventListener('submit', saveConfiguration);
                 page.querySelector('#CuratorRunButton').addEventListener('click', startRun);
                 page.querySelector('#CuratorSyncRowsButton').addEventListener('click', syncRows);
+                page.querySelector('#CuratorSyncPlaylistsButton').addEventListener('click', syncPlaylists);
                 page.querySelector('#CuratorSelectAll').addEventListener('change', onSelectAll);
                 page.querySelector('#CuratorDeleteSelected').addEventListener('click', onDeleteSelected);
                 page.querySelector('#CuratorExpandAll').addEventListener('click', onExpandAll);

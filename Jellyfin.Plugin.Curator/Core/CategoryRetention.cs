@@ -46,18 +46,33 @@ namespace Jellyfin.Plugin.Curator.Core
         }
 
         /// <summary>
-        /// Takes the excess from one pool, oldest first.
+        /// Takes the excess from one pool: the ones holding no playlist first, then
+        /// oldest first.
         /// </summary>
         /// <remarks>
-        /// "Oldest" is the least recently <see cref="CategoryDefinition.UpdatedAt"/>,
-        /// not the earliest created. A category the model re-proposes every run has
-        /// an old creation date and is the last thing anyone wants deleted; ordering
-        /// on creation would remove exactly the categories that have proved most
-        /// durable and keep whatever was coined most recently. Ordering on the last
-        /// refresh drops the leftovers — definitions no recent run has produced —
-        /// which is what "oldest" means when you are looking at the list.
-        /// Creation date breaks ties, so two never-refreshed categories still come
-        /// off in the order they arrived.
+        /// <para>
+        /// A category with no playlist anywhere is showing nobody anything. It is the
+        /// cheapest thing in the pool to lose, so the cap spends it before touching a
+        /// category that is currently a row on somebody's home screen — however stale
+        /// that row's definition looks by date. Age alone would happily delete a live
+        /// row and keep an empty one that merely happened to be refreshed more
+        /// recently.
+        /// </para>
+        /// <para>
+        /// "Oldest" within each group is the least recently
+        /// <see cref="CategoryDefinition.UpdatedAt"/>, not the earliest created. A
+        /// category the model re-proposes every run has an old creation date and is
+        /// the last thing anyone wants deleted; ordering on creation would remove
+        /// exactly the categories that have proved most durable and keep whatever was
+        /// coined most recently. Ordering on the last refresh drops the leftovers —
+        /// definitions no recent run has produced — which is what "oldest" means when
+        /// you are looking at the list. Creation date breaks ties, so two
+        /// never-refreshed categories still come off in the order they arrived.
+        /// </para>
+        /// <para>
+        /// A handed-off playlist counts as held. The user owns it now, Curator will
+        /// never touch it again, and deleting the definition would strand it.
+        /// </para>
         /// </remarks>
         private static IEnumerable<CategoryDefinition> Overflow(
             IEnumerable<CategoryDefinition> pool,
@@ -69,11 +84,24 @@ namespace Jellyfin.Plugin.Curator.Core
             }
 
             var ordered = pool
-                .OrderBy(c => c.UpdatedAt)
+                .OrderByDescending(IsEmpty)
+                .ThenBy(c => c.UpdatedAt)
                 .ThenBy(c => c.CreatedAt)
                 .ToList();
 
             return ordered.Count <= cap ? [] : ordered.Take(ordered.Count - cap);
+        }
+
+        /// <summary>
+        /// Whether a definition currently puts a playlist in front of anybody.
+        /// </summary>
+        /// <param name="category">The definition.</param>
+        /// <returns>True when no link holds a playlist.</returns>
+        public static bool IsEmpty(CategoryDefinition category)
+        {
+            ArgumentNullException.ThrowIfNull(category);
+
+            return !category.UserPlaylists.Exists(link => link.PlaylistId is not null);
         }
     }
 }

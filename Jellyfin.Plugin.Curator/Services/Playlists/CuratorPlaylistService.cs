@@ -158,6 +158,50 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
             await Task.CompletedTask.ConfigureAwait(false);
         }
 
+        /// <inheritdoc />
+        public async Task<int> RemoveOrphanedPlaylistsAsync(
+            IReadOnlySet<Guid> claimed,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(claimed);
+
+            var playlists = _libraryManager.GetItemsResult(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Playlist],
+                Recursive = true,
+            }).Items.OfType<Playlist>().ToList();
+
+            var deleted = 0;
+            foreach (var playlist in playlists)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // The tag is the ownership contract. A playlist without it belongs to
+                // the user permanently — including one Curator made and they later
+                // untagged to keep. Never delete it, whatever the definitions say.
+                if (!HasOwnershipTag(playlist))
+                {
+                    continue;
+                }
+
+                if (claimed.Contains(playlist.Id))
+                {
+                    continue;
+                }
+
+                _logger.LogInformation(
+                    "Curator: deleting orphaned playlist '{Playlist}' ({PlaylistId}); no stored category claims it",
+                    playlist.Name,
+                    playlist.Id);
+
+                _libraryManager.DeleteItem(playlist, new DeleteOptions { DeleteFileLocation = true }, true);
+                deleted++;
+            }
+
+            await Task.CompletedTask.ConfigureAwait(false);
+            return deleted;
+        }
+
         /// <summary>
         /// Resolves member IDs to live items, preserving order and dropping items
         /// that have left the library since the run.

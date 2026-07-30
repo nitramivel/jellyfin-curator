@@ -54,6 +54,18 @@ namespace Jellyfin.Plugin.Curator.Core.Models
         /// <summary>Gets the overview, truncated to the reducer's limit.</summary>
         public string? Overview { get; init; }
 
+        /// <summary>
+        /// Gets the names of surfaced collections this item belongs to, e.g.
+        /// "Oscar Winners". Empty for an item in none of them.
+        /// </summary>
+        /// <remarks>
+        /// Only collections the owner has named in configuration appear here. The
+        /// point is to hand the model a judgement about a film — that it won an
+        /// Oscar — not to hand it a franchise to file things under, which is exactly
+        /// the metadata-shaped category the system prompt tells it to avoid.
+        /// </remarks>
+        public IReadOnlyList<string> Collections { get; init; } = [];
+
         /// <summary>Gets the parent series name. Episodes only.</summary>
         public string? SeriesName { get; init; }
 

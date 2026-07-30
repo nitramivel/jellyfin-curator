@@ -107,12 +107,24 @@ silently misbehaves.
    containing it.
    The single exception is `CategoryRetention` enforcing a configured cap, where
    the user has asked for a bounded list and something must actually go; a pruned
-   category loses its identity and returns as a new one.
+   category loses its identity and returns as a new one. Retention spends
+   **empty categories first** — one holding no playlist is showing nobody
+   anything, so it goes before a live row however stale its date looks — then
+   oldest-first within each group. A handed-off playlist counts as held.
+   `POST /Curator/Playlists/Sync` applies the same judgement on demand: it
+   rebuilds a playlist a category has lost, then deletes definitions still
+   holding none, then deletes Curator-owned playlists no definition claims.
+   Untagged playlists are never touched by any of it — see rule 3.
 5. **No live LLM calls in tests.** Providers are tested through a stub
    `HttpMessageHandler`; the run pipeline through a stub `ILlmProvider`.
 6. **Log token count and estimated cost at INFO every run.** Runs cost money; the
    user must be able to see what a run spent.
-7. **Every category limit is told to the model, not only applied to its answer.**
+7. **`BatchSize = 0` means the whole library in one request, and is the default.**
+   A thread running through items split across two batches is one the model
+   never gets to see: each call only sees its own slice, so the categories it
+   proposes can only join up what is in front of it. Raise it off 0 only for a
+   model whose context cannot hold the library.
+8. **Every category limit is told to the model, not only applied to its answer.**
    `CategoryLimits` is the single value both `PromptBuilder` and `Reconciler`
    take — build one per pool and pass the *same instance* to both. Do not unpack
    it into loose ints on the way, and do not add a limit that only one side sees.
@@ -122,11 +134,11 @@ silently misbehaves.
    other model gave 23 covering 78%. `CategoryLimitsTests` reads the numbers back
    out of the generated prompt and checks them against what the Reconciler
    actually does — a new limit belongs in that theory.
-8. **A run log must never break the run it describes.** Every write in
+9. **A run log must never break the run it describes.** Every write in
    `Services/Runs/` swallows its own IO failures with a warning. The same applies
    to the prompt pool and the atomic temp-file rename — diagnostics are strictly
    subordinate to the run.
-9. **Ask before adding dependencies** beyond the Jellyfin packages and an
+10. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 
@@ -253,6 +265,11 @@ Playlists are still built. Never throw out of home screen integration.
   `innerHTML`, customized built-in elements upgrade unreliably — one row rendered
   styled-but-unwired and the rest bare. Dynamic rows use plain
   `<input type="checkbox" class="curatorCheck">`.
+- **Settings live on four tabs**: Model (provider, request, spend), Library
+  (what is sent and who for), Categories (the two pools' size and count), Home
+  screen (rows). A fifth tab, Runs, is not part of the settings form — the save
+  row hides on it. Put a new setting where its *subject* is, not where it is
+  technically enforced.
 - **Option order in a `<select>` is load-bearing.** `setEnumSelect` falls back to
   matching by index when a stored config carries the numeric enum value, so
   provider options must stay in enum order. Change labels freely; never reorder.

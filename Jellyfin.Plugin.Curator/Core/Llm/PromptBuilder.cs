@@ -92,6 +92,10 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
             "Movies That Look Better Than They Are". Do NOT propose categories that are just metadata
             filters (a genre, a decade, a franchise, a director) — those are what this tool exists to avoid.
 
+            An "in" field on an item lists collections it belongs to that the library owner thought
+            worth pointing out — awards and the like. Treat it as a judgement somebody already made
+            about that title, and weigh it as evidence; do not turn it into a category of its own.
+
             Rules:
             - Reference items ONLY by their integer index from the input. Never invent items.
             - Episodes may be grouped into episode-level categories (e.g. "Bottle Episodes"); do not mix
@@ -155,6 +159,10 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
             "rewatched" or "watched once". Read watch depth as intensity: someone who has played 140 of 201
             episodes of a sitcom is telling you far more about their taste than someone who finished one
             film. Weigh a deeply watched show accordingly.
+
+            An "in" field on an item lists collections the library owner thought worth pointing out —
+            awards and the like. Treat it as a judgement somebody already made about that title, and
+            weigh it as evidence; do not turn it into a category of its own.
 
             Rules:
             - Reference items ONLY by their integer index from the item list. Never invent items.
@@ -495,6 +503,11 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
                 }
 
                 WriteStringArray(writer, "genres", item.Genres);
+
+                // Named collections the owner chose to surface, e.g. "Oscar Winners".
+                // Written under "in" rather than "collections" so it reads as a fact
+                // about the item, not a folder it lives in.
+                WriteStringArray(writer, "in", item.Collections);
 
                 // Scraped tag lists run to ~18 values an item and are mostly production
                 // trivia. Take from the front rather than sampling: the scraper orders
