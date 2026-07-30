@@ -201,6 +201,19 @@ namespace Jellyfin.Plugin.Curator.Api
         /// <response code="404">No such run.</response>
         /// <returns>The run document.</returns>
         /// <summary>
+        /// Re-publishes the home screen rows from the stored categories, without an
+        /// LLM call and without spending anything.
+        /// </summary>
+        /// <response code="200">Sync ran; the body says whether it succeeded.</response>
+        /// <returns>Whether the integration reported success.</returns>
+        [HttpPost("HomeScreen/Sync")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<bool>> SyncHomeScreen()
+        {
+            return Ok(await _runService.SyncHomeScreenAsync(HttpContext.RequestAborted).ConfigureAwait(false));
+        }
+
+        /// <summary>
         /// One run reduced to what the configuration page shows when its row is
         /// expanded.
         /// </summary>

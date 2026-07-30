@@ -466,6 +466,16 @@
                         happens on schedule via the <em>Curator: Generate Categories</em> scheduled task.
                     </div>
 
+                    <button is="emby-button" type="button" id="CuratorSyncRowsButton" class="raised block"
+                            style="margin-top:0.6em;">
+                        <span>Re-sync home screen rows</span>
+                    </button>
+                    <div class="fieldDescription" style="margin-top:0.5em;">
+                        Rebuilds the home screen rows from the categories already stored, so they match the
+                        playlists Curator created. Costs nothing and calls no model. A full run does this at the
+                        end anyway; use this when rows have drifted and you do not want to pay for a run.
+                    </div>
+
                     <div id="CuratorProgress" class="curatorProgress hide">
                         <div class="curatorProgressHead">
                             <div>
@@ -1601,6 +1611,28 @@
                 return false;
             }
 
+            function syncRows() {
+                var button = page.querySelector('#CuratorSyncRowsButton');
+                var state = page.querySelector('#CuratorRunState');
+                button.disabled = true;
+                state.innerHTML = 'Re-syncing home screen rows…';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/HomeScreen/Sync'),
+                    dataType: 'json'
+                }).then(function (ok) {
+                    state.innerHTML = ok
+                        ? 'Home screen rows re-synced.'
+                        : 'Nothing was synced — check the server log. Both Collection Sections and '
+                          + 'Home Screen Sections must be installed.';
+                    button.disabled = false;
+                }, function () {
+                    state.innerHTML = 'Could not re-sync — check the server log.';
+                    button.disabled = false;
+                });
+            }
+
             function startRun() {
                 var runButton = page.querySelector('#CuratorRunButton');
                 runButton.disabled = true;
@@ -1627,6 +1659,7 @@
                 page = this;
                 page.querySelector('#CuratorConfigForm').addEventListener('submit', saveConfiguration);
                 page.querySelector('#CuratorRunButton').addEventListener('click', startRun);
+                page.querySelector('#CuratorSyncRowsButton').addEventListener('click', syncRows);
                 page.querySelector('#CuratorSelectAll').addEventListener('change', onSelectAll);
                 page.querySelector('#CuratorDeleteSelected').addEventListener('click', onDeleteSelected);
                 page.querySelector('#CuratorExpandAll').addEventListener('click', onExpandAll);
