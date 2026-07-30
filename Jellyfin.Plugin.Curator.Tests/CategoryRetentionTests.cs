@@ -30,6 +30,29 @@ namespace Jellyfin.Plugin.Curator.Tests
         private static string[] Names(IEnumerable<CategoryDefinition> categories)
             => categories.Select(c => c.Name).ToArray();
 
+        /// <summary>
+        /// A category holding a live playlist — a row somebody can actually see.
+        /// </summary>
+        private static CategoryDefinition Live(string name, int createdDay, int updatedDay, Guid? owner = null)
+        {
+            var category = Category(name, createdDay, updatedDay, owner);
+            category.GetOrAddLink(Alice).PlaylistId = Guid.NewGuid();
+            return category;
+        }
+
+        /// <summary>
+        /// A category whose playlist was handed off. The user owns it now, so the
+        /// definition is still doing something and must not be treated as empty.
+        /// </summary>
+        private static CategoryDefinition HandedOff(string name, int createdDay, int updatedDay)
+        {
+            var category = Category(name, createdDay, updatedDay);
+            var link = category.GetOrAddLink(Alice);
+            link.PlaylistId = Guid.NewGuid();
+            link.HandedOff = true;
+            return category;
+        }
+
         [Fact]
         public void UnderTheCap_NothingIsRemoved()
         {
@@ -182,6 +205,108 @@ namespace Jellyfin.Plugin.Curator.Tests
         public void EmptyStore_IsHandled()
         {
             Assert.Empty(CategoryRetention.SelectForRemoval([], maxShared: 5, maxPersonal: 5));
+        }
+
+        // ---- empty categories go first ----
+
+        /// <summary>
+        /// A category with no playlist is showing nobody anything, so the cap spends
+        /// it before a category that is currently a row on someone's home screen —
+        /// however stale that row's definition looks by date.
+        /// </summary>
+        [Fact]
+        public void EmptyCategoriesAreRemovedBeforeLiveOnes()
+        {
+            var stored = new[]
+            {
+                Live("live but stale", 1, 1),
+                Live("live and fresh", 2, 90),
+                Category("empty but freshly refreshed", 3, 99),
+            };
+
+            var removed = CategoryRetention.SelectForRemoval(stored, maxShared: 2, maxPersonal: 6);
+
+            Assert.Equal(["empty but freshly refreshed"], Names(removed));
+        }
+
+        /// <summary>
+        /// Among the empty ones, the existing rule still applies: least recently
+        /// refreshed first.
+        /// </summary>
+        [Fact]
+        public void AmongEmptyCategoriesTheOldestStillGoesFirst()
+        {
+            var stored = new[]
+            {
+                Live("live", 1, 1),
+                Category("empty, refreshed later", 2, 40),
+                Category("empty, refreshed earlier", 3, 20),
+            };
+
+            var removed = CategoryRetention.SelectForRemoval(stored, maxShared: 1, maxPersonal: 6);
+
+            Assert.Equal(["empty, refreshed earlier", "empty, refreshed later"], Names(removed));
+        }
+
+        /// <summary>
+        /// Once every empty category is gone the cap keeps going into the live ones,
+        /// oldest first — the rule is an ordering, not an exemption.
+        /// </summary>
+        [Fact]
+        public void WhenEmptiesAreNotEnoughLiveCategoriesFollowOldestFirst()
+        {
+            var stored = new[]
+            {
+                Live("live newest", 1, 90),
+                Live("live oldest", 2, 10),
+                Category("empty", 3, 50),
+            };
+
+            var removed = CategoryRetention.SelectForRemoval(stored, maxShared: 1, maxPersonal: 6);
+
+            Assert.Equal(["empty", "live oldest"], Names(removed));
+        }
+
+        /// <summary>
+        /// A handed-off playlist belongs to the user permanently. The definition is
+        /// still doing something, so it must not be first out of the door.
+        /// </summary>
+        [Fact]
+        public void AHandedOffPlaylistCountsAsHeld()
+        {
+            var stored = new[]
+            {
+                HandedOff("handed off", 1, 1),
+                Category("empty", 2, 99),
+            };
+
+            var removed = CategoryRetention.SelectForRemoval(stored, maxShared: 1, maxPersonal: 6);
+
+            Assert.Equal(["empty"], Names(removed));
+        }
+
+        [Fact]
+        public void IsEmpty_ReadsTheLinks()
+        {
+            Assert.True(CategoryRetention.IsEmpty(Category("none", 1, 1)));
+            Assert.False(CategoryRetention.IsEmpty(Live("live", 1, 1)));
+            Assert.False(CategoryRetention.IsEmpty(HandedOff("handed", 1, 1)));
+        }
+
+        /// <summary>Personal pools order the same way as shared ones.</summary>
+        [Fact]
+        public void ThePersonalPoolAlsoSpendsEmptiesFirst()
+        {
+            var stored = new[]
+            {
+                Live("alice live", 1, 1, Alice),
+                Category("alice empty", 2, 99, Alice),
+                Live("bob live", 3, 1, Bob),
+            };
+
+            var removed = CategoryRetention.SelectForRemoval(stored, maxShared: 8, maxPersonal: 1);
+
+            Assert.Equal(["alice empty"], Names(removed));
         }
     }
 }

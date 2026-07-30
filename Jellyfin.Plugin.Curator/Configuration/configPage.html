@@ -522,6 +522,17 @@
                         end anyway; use this when rows have drifted and you do not want to pay for a run.
                     </div>
 
+                    <button is="emby-button" type="button" id="CuratorSyncPlaylistsButton" class="raised block"
+                            style="margin-top:0.6em;">
+                        <span>Re-sync playlists</span>
+                    </button>
+                    <div class="fieldDescription" style="margin-top:0.5em;">
+                        Reconciles the stored categories against the playlists that actually exist: rebuilds a
+                        playlist a category has lost, deletes categories left holding none, and deletes Curator
+                        playlists no category claims. Playlists you have untagged are never touched. Costs
+                        nothing and calls no model.
+                    </div>
+
                     <div id="CuratorProgress" class="curatorProgress hide">
                         <div class="curatorProgressHead">
                             <div>
@@ -1681,6 +1692,36 @@
                 });
             }
 
+            function syncPlaylists() {
+                var button = page.querySelector('#CuratorSyncPlaylistsButton');
+                var state = page.querySelector('#CuratorRunState');
+
+                if (!window.confirm('Reconcile playlists with the stored categories?\n\n'
+                        + 'This deletes categories that hold no playlist, and Curator playlists that no '
+                        + 'category claims. Playlists you have untagged are never touched.')) {
+                    return;
+                }
+
+                button.disabled = true;
+                state.innerHTML = 'Reconciling playlists…';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Playlists/Sync'),
+                    dataType: 'json'
+                }).then(function (r) {
+                    state.innerHTML = 'Playlists reconciled — '
+                        + r.CategoriesRebuilt + ' rebuilt, '
+                        + r.CategoriesRemoved + ' categor' + (r.CategoriesRemoved === 1 ? 'y' : 'ies') + ' removed, '
+                        + r.PlaylistsRemoved + ' orphaned playlist' + (r.PlaylistsRemoved === 1 ? '' : 's') + ' deleted.';
+                    button.disabled = false;
+                    refreshStatus();
+                }, function () {
+                    state.innerHTML = 'Could not reconcile — check the server log.';
+                    button.disabled = false;
+                });
+            }
+
             function startRun() {
                 var runButton = page.querySelector('#CuratorRunButton');
                 runButton.disabled = true;
@@ -1708,6 +1749,7 @@
                 page.querySelector('#CuratorConfigForm').addEventListener('submit', saveConfiguration);
                 page.querySelector('#CuratorRunButton').addEventListener('click', startRun);
                 page.querySelector('#CuratorSyncRowsButton').addEventListener('click', syncRows);
+                page.querySelector('#CuratorSyncPlaylistsButton').addEventListener('click', syncPlaylists);
                 page.querySelector('#CuratorSelectAll').addEventListener('change', onSelectAll);
                 page.querySelector('#CuratorDeleteSelected').addEventListener('click', onDeleteSelected);
                 page.querySelector('#CuratorExpandAll').addEventListener('click', onExpandAll);

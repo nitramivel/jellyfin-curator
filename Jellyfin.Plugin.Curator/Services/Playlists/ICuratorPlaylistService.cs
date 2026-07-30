@@ -32,5 +32,13 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>A task.</returns>
         Task RemoveCategoryPlaylistsAsync(CategoryDefinition category, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Deletes every Curator-owned playlist that no stored category claims.
+        /// </summary>
+        /// <param name="claimed">Playlist IDs the stored definitions still point at.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>How many playlists were deleted.</returns>
+        Task<int> RemoveOrphanedPlaylistsAsync(IReadOnlySet<Guid> claimed, CancellationToken cancellationToken);
     }
 }

@@ -107,7 +107,14 @@ silently misbehaves.
    containing it.
    The single exception is `CategoryRetention` enforcing a configured cap, where
    the user has asked for a bounded list and something must actually go; a pruned
-   category loses its identity and returns as a new one.
+   category loses its identity and returns as a new one. Retention spends
+   **empty categories first** — one holding no playlist is showing nobody
+   anything, so it goes before a live row however stale its date looks — then
+   oldest-first within each group. A handed-off playlist counts as held.
+   `POST /Curator/Playlists/Sync` applies the same judgement on demand: it
+   rebuilds a playlist a category has lost, then deletes definitions still
+   holding none, then deletes Curator-owned playlists no definition claims.
+   Untagged playlists are never touched by any of it — see rule 3.
 5. **No live LLM calls in tests.** Providers are tested through a stub
    `HttpMessageHandler`; the run pipeline through a stub `ILlmProvider`.
 6. **Log token count and estimated cost at INFO every run.** Runs cost money; the
