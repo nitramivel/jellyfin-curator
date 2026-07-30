@@ -281,6 +281,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
     /// <param name="StepCount">How many steps were recorded.</param>
     /// <param name="Error">The failure message, when it failed.</param>
     /// <param name="LastMessage">The most recent step's summary — what it is doing now.</param>
+    /// <param name="LastStep">The most recent step's machine name, for mapping to a label.</param>
     public sealed record RunLogSummary(
         Guid RunId,
         string Trigger,
@@ -294,5 +295,6 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         RunLogTotals Totals,
         int StepCount,
         string? Error,
-        string? LastMessage);
+        string? LastMessage,
+        string? LastStep = null);
 }

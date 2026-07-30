@@ -40,6 +40,69 @@
                 }
                 .curatorCatRow > .curatorCheck { margin-top: 0.35em; }
                 .curatorCheckLabel { display: inline-flex; align-items: center; gap: 0.5em; cursor: pointer; }
+
+                /* Run progress. Colours are drawn from the Jellyfin accent rather
+                   than hard-coded brand values, so this sits inside whichever
+                   dashboard theme is active instead of fighting it. */
+                .curatorProgress {
+                    margin-top: 1.2em; padding: 1.1em 1.2em 1.2em;
+                    border: 1px solid rgba(255,255,255,0.10); border-radius: 10px;
+                    background: rgba(255,255,255,0.035);
+                }
+                .curatorProgressHead {
+                    display: flex; align-items: flex-start; justify-content: space-between;
+                    gap: 1em; margin-bottom: 0.7em;
+                }
+                .curatorProgressPhase { font-size: 1.02em; font-weight: 600; }
+                .curatorProgressSub {
+                    font-size: 0.86em; opacity: 0.65; margin-top: 0.2em;
+                    overflow-wrap: anywhere;
+                }
+                .curatorProgressPct {
+                    font-size: 1.5em; font-weight: 600; line-height: 1;
+                    font-variant-numeric: tabular-nums; white-space: nowrap;
+                }
+                .curatorTrack {
+                    height: 8px; border-radius: 999px; overflow: hidden;
+                    background: rgba(255,255,255,0.12);
+                }
+                .curatorFill {
+                    height: 100%; width: 0; border-radius: 999px;
+                    background: linear-gradient(90deg, #00a4dc, #56cfe1);
+                    transition: width 400ms cubic-bezier(0.4, 0, 0.2, 1);
+                }
+                /* Indeterminate: progress sits still for a long LLM call, and a bar
+                   that has visibly stopped reads as a hang. */
+                .curatorFill.curatorPulsing { animation: curatorPulse 1.9s ease-in-out infinite; }
+                @keyframes curatorPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+                .curatorCost { margin-top: 1.1em; }
+                .curatorCostHead {
+                    display: flex; align-items: baseline; justify-content: space-between;
+                    margin-bottom: 0.45em;
+                }
+                .curatorCostTitle { font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.6; }
+                .curatorCostTotal { font-size: 1.15em; font-weight: 600; font-variant-numeric: tabular-nums; }
+                .curatorCostBar {
+                    display: flex; height: 20px; border-radius: 6px; overflow: hidden;
+                    background: rgba(255,255,255,0.08);
+                }
+                .curatorCostSeg { transition: width 400ms cubic-bezier(0.4, 0, 0.2, 1); }
+                .curatorCostIn { background: #00a4dc; }
+                .curatorCostOut { background: #aa5cc3; }
+                .curatorCostLegend {
+                    display: flex; flex-wrap: wrap; gap: 0.35em 1.4em; margin-top: 0.6em;
+                    font-size: 0.87em;
+                }
+                .curatorLegendItem { display: flex; align-items: center; gap: 0.45em; }
+                .curatorSwatch { width: 0.72em; height: 0.72em; border-radius: 2px; flex: 0 0 auto; }
+                .curatorLegendValue { font-variant-numeric: tabular-nums; opacity: 0.75; }
+                .curatorCostNote { opacity: 0.6; font-size: 0.87em; margin-top: 0.5em; }
+
+                @media (max-width: 500px) {
+                    .curatorProgressPct { font-size: 1.25em; }
+                    .curatorCostLegend { gap: 0.3em 1em; }
+                }
             </style>
 
             <div class="verticalSection">
@@ -360,9 +423,36 @@
                         <span>Generate categories now</span>
                     </button>
                     <div class="fieldDescription" style="margin-top:0.5em;">
-                        Save your settings first. A run can take several minutes and costs money — watch the server
-                        log for token counts and estimated cost. The same run happens on schedule via the
+                        Save your settings first. A run can take several minutes and costs money. Progress and a
+                        running cost appear below once a run starts. The same run happens on schedule via the
                         <em>Curator: Generate Categories</em> scheduled task.
+                    </div>
+
+                    <div id="CuratorProgress" class="curatorProgress hide">
+                        <div class="curatorProgressHead">
+                            <div>
+                                <div class="curatorProgressPhase" id="CuratorPhase">Starting&hellip;</div>
+                                <div class="curatorProgressSub" id="CuratorProgressSub"></div>
+                            </div>
+                            <div class="curatorProgressPct" id="CuratorPct">0%</div>
+                        </div>
+
+                        <div class="curatorTrack" role="progressbar" id="CuratorTrack"
+                             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                            <div class="curatorFill" id="CuratorFill"></div>
+                        </div>
+
+                        <div class="curatorCost">
+                            <div class="curatorCostHead">
+                                <span class="curatorCostTitle">Estimated cost</span>
+                                <span class="curatorCostTotal" id="CuratorCostTotal">&mdash;</span>
+                            </div>
+                            <div class="curatorCostBar" id="CuratorCostBar">
+                                <div class="curatorCostSeg curatorCostIn" id="CuratorCostIn"></div>
+                                <div class="curatorCostSeg curatorCostOut" id="CuratorCostOut"></div>
+                            </div>
+                            <div class="curatorCostLegend" id="CuratorCostLegend"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -946,6 +1036,142 @@
                 });
             }
 
+            // Step names are stable machine identifiers; these are the human
+            // readings. An unknown step falls back to the run log's own message
+            // rather than to nothing, so a new step never blanks the panel.
+            var PHASE_LABELS = {
+                'users.resolved': 'Resolving users',
+                'library.scanned': 'Scanning the library',
+                'discovery.reconciled': 'Finding shared categories',
+                'discovery.empty': 'No categories found',
+                'user.skipped': 'Skipping a thin history',
+                'user.pass': 'Reading a viewer\u2019s taste',
+                'category.renamed': 'Matching renamed categories',
+                'category.built': 'Building playlists',
+                'category.retired': 'Retiring old categories',
+                'category.pruned': 'Pruning over the cap',
+                'homescreen.synced': 'Publishing home screen rows',
+                'run.complete': 'Finished'
+            };
+
+            function formatUsd(value) {
+                if (value === null || value === undefined) {
+                    return null;
+                }
+                // Sub-cent runs are normal on a cached pass, and "$0.00" reads as
+                // free when it is not.
+                if (value > 0 && value < 0.01) {
+                    return '<$0.01';
+                }
+                return '$' + value.toFixed(2);
+            }
+
+            function formatTokens(value) {
+                if (!value) {
+                    return '0';
+                }
+                if (value >= 1000000) {
+                    return (value / 1000000).toFixed(1) + 'M';
+                }
+                if (value >= 1000) {
+                    return Math.round(value / 1000) + 'k';
+                }
+                return String(value);
+            }
+
+            function legendItem(colour, label, value) {
+                return '<span class="curatorLegendItem">'
+                    + '<span class="curatorSwatch" style="background:' + colour + '"></span>'
+                    + escapeHtml(label)
+                    + ' <span class="curatorLegendValue">' + escapeHtml(value) + '</span>'
+                    + '</span>';
+            }
+
+            function renderCost(totals) {
+                var totalEl = page.querySelector('#CuratorCostTotal');
+                var legend = page.querySelector('#CuratorCostLegend');
+                var inSeg = page.querySelector('#CuratorCostIn');
+                var outSeg = page.querySelector('#CuratorCostOut');
+
+                var inTokens = (totals && totals.InputTokens) || 0;
+                var outTokens = (totals && totals.OutputTokens) || 0;
+                var cached = (totals && totals.CacheReadTokens) || 0;
+                var calls = (totals && totals.LlmCallCount) || 0;
+                var cost = totals && totals.Cost;
+
+                if (!cost) {
+                    // No prices configured. Show the work done rather than implying
+                    // the run was free — null is not zero, here as in the run log.
+                    totalEl.innerHTML = 'not priced';
+                    inSeg.style.width = '50%';
+                    outSeg.style.width = '50%';
+                    legend.innerHTML =
+                        legendItem('#00a4dc', 'Input', formatTokens(inTokens) + ' tokens')
+                        + legendItem('#aa5cc3', 'Output', formatTokens(outTokens) + ' tokens')
+                        + legendItem('rgba(255,255,255,0.25)', 'Calls', String(calls))
+                        + '<div class="curatorCostNote">Set token prices on the Model tab to see cost.</div>';
+                    return;
+                }
+
+                var inUsd = cost.InputUsd || 0;
+                var outUsd = cost.OutputUsd || 0;
+                var sum = inUsd + outUsd;
+                // Before the first call lands there is nothing to divide by.
+                var inPct = sum > 0 ? (inUsd / sum) * 100 : 50;
+
+                totalEl.innerHTML = escapeHtml(formatUsd(cost.TotalUsd) || '$0.00');
+                inSeg.style.width = inPct.toFixed(1) + '%';
+                outSeg.style.width = (100 - inPct).toFixed(1) + '%';
+
+                var items =
+                    legendItem('#00a4dc', 'Input', (formatUsd(inUsd) || '$0.00') + ' \u00b7 ' + formatTokens(inTokens) + ' tok')
+                    + legendItem('#aa5cc3', 'Output', (formatUsd(outUsd) || '$0.00') + ' \u00b7 ' + formatTokens(outTokens) + ' tok')
+                    + legendItem('rgba(255,255,255,0.25)', 'Calls', String(calls));
+
+                if (cached > 0) {
+                    // Worth surfacing: a cache read is the difference between a
+                    // per-user pass costing a few cents and costing nothing much.
+                    items += legendItem('rgba(255,255,255,0.25)', 'Cached', formatTokens(cached) + ' tok');
+                }
+
+                legend.innerHTML = items;
+            }
+
+            function renderProgress(run) {
+                var panel = page.querySelector('#CuratorProgress');
+                if (!run) {
+                    panel.classList.add('hide');
+                    return;
+                }
+
+                panel.classList.remove('hide');
+
+                var pct = Math.max(0, Math.min(100, run.Progress || 0));
+                var fill = page.querySelector('#CuratorFill');
+                var track = page.querySelector('#CuratorTrack');
+
+                fill.style.width = pct + '%';
+                track.setAttribute('aria-valuenow', String(Math.round(pct)));
+                page.querySelector('#CuratorPct').innerHTML = Math.round(pct) + '%';
+
+                // A run sits on one percentage for the whole of an LLM call, which
+                // can be a minute or more. Pulsing says "still working" where a
+                // frozen bar says "hung".
+                fill.classList.add('curatorPulsing');
+
+                var message = run.LastMessage || '';
+                var label = PHASE_LABELS[run.LastStep] || null;
+                if (!label) {
+                    label = message || 'Working\u2026';
+                    message = '';
+                }
+
+                page.querySelector('#CuratorPhase').innerHTML = escapeHtml(label);
+                page.querySelector('#CuratorProgressSub').innerHTML = escapeHtml(message);
+
+                renderCost(run.Totals);
+            }
+
             function refreshStatus() {
                 return ApiClient.ajax({
                     type: 'GET',
@@ -955,12 +1181,16 @@
                     var stateText = page.querySelector('#CuratorRunState');
                     var runButton = page.querySelector('#CuratorRunButton');
                     if (status.IsRunning) {
-                        stateText.innerHTML = 'A run is in progress. Watch the server log for detail.';
+                        stateText.innerHTML = 'A run is in progress.';
                         runButton.disabled = true;
-                        setTimeout(refreshStatus, 5000);
+                        renderProgress(status.CurrentRun);
+                        // Faster while running: the panel is read from memory, so
+                        // the poll costs a dictionary lookup, not a file read.
+                        setTimeout(refreshStatus, 2000);
                     } else {
                         stateText.innerHTML = 'Idle.';
                         runButton.disabled = false;
+                        renderProgress(null);
                     }
 
                     currentCategories = status.Categories || [];
@@ -1087,8 +1317,15 @@
                     type: 'POST',
                     url: ApiClient.getUrl('Curator/Run')
                 }).then(function () {
-                    page.querySelector('#CuratorRunState').innerHTML = 'Run started. Watch the server log for detail.';
-                    setTimeout(refreshStatus, 2000);
+                    page.querySelector('#CuratorRunState').innerHTML = 'A run is in progress.';
+                    page.querySelector('#CuratorProgress').classList.remove('hide');
+                    page.querySelector('#CuratorPhase').innerHTML = 'Starting\u2026';
+                    page.querySelector('#CuratorProgressSub').innerHTML = '';
+                    page.querySelector('#CuratorPct').innerHTML = '0%';
+                    page.querySelector('#CuratorFill').style.width = '0%';
+                    page.querySelector('#CuratorFill').classList.add('curatorPulsing');
+                    renderCost(null);
+                    setTimeout(refreshStatus, 800);
                 }, function () {
                     page.querySelector('#CuratorRunState').innerHTML = 'Could not start a run — check the server log.';
                     runButton.disabled = false;

@@ -45,6 +45,14 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         private readonly string _basePath;
         private readonly ILogger<RunLogStore> _logger;
 
+        /// <summary>
+        /// The run in flight, so the configuration page can follow it without
+        /// re-reading its file. A run log carries every prompt in full and runs to
+        /// hundreds of kilobytes; polling that off disk every couple of seconds to
+        /// move a progress bar would cost more than the bar is worth.
+        /// </summary>
+        private volatile RunLog? _current;
+
         public RunLogStore(IServerApplicationPaths applicationPaths, ILogger<RunLogStore> logger)
             : this(Path.Combine(applicationPaths.DataPath, "curator", "runs"), logger)
         {
@@ -93,8 +101,15 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             // not only once it ends — a run that dies without ever finishing is
             // exactly the one worth having a log of.
             log.Flush();
+            _current = log;
             Prune();
             return log;
+        }
+
+        /// <inheritdoc />
+        public RunLogSummary? Current()
+        {
+            return _current?.Snapshot();
         }
 
         /// <inheritdoc />
@@ -144,7 +159,8 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                     document.Totals,
                     document.Steps.Count,
                     document.Error,
-                    lastStep?.Message));
+                    lastStep?.Message,
+                    lastStep?.Step));
             }
 
             return summaries;
@@ -268,6 +284,39 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             }
 
             public Guid RunId => _document.RunId;
+
+            /// <summary>
+            /// A consistent read of the live document, under the same lock every
+            /// writer takes. Returns null once the run has ended, so a finished run
+            /// is reported from its file like any other rather than lingering here.
+            /// </summary>
+            public RunLogSummary? Snapshot()
+            {
+                lock (_lock)
+                {
+                    if (_document.Status != RunStatus.Running)
+                    {
+                        return null;
+                    }
+
+                    var lastStep = _document.Steps.Count > 0 ? _document.Steps[^1] : null;
+                    return new RunLogSummary(
+                        _document.RunId,
+                        _document.Trigger,
+                        _document.Status,
+                        _document.Progress,
+                        _document.StartedAt,
+                        _document.FinishedAt,
+                        _document.DurationSeconds,
+                        _document.Model,
+                        _document.Provider,
+                        _document.Totals,
+                        _document.Steps.Count,
+                        _document.Error,
+                        lastStep?.Message,
+                        lastStep?.Step);
+                }
+            }
 
             public void Step(string step, string message, IReadOnlyDictionary<string, object?>? detail = null)
             {
