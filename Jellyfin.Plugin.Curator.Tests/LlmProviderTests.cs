@@ -842,6 +842,79 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal(["categories"], required);
         }
 
+        // ---- xAI conversation routing ----
+
+        /// <summary>
+        /// xAI stores cache entries per server. Without a routing hint the calls of
+        /// one run scatter across the fleet and each lands on a machine that has
+        /// never seen the prefix — measured: 16 of 18 calls reported 128 cached
+        /// tokens against a ~28k identical prefix.
+        /// </summary>
+        [Fact]
+        public async Task Grok_SendsTheConversationRoutingHeader()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.Categories, "run-abc123"),
+                CancellationToken.None);
+
+            Assert.Equal("run-abc123", Assert.Single(handler.Request!.Headers.GetValues("x-grok-conv-id")));
+        }
+
+        /// <summary>
+        /// Every call of a run must carry the same ID, or they route to different
+        /// servers and the header buys nothing.
+        /// </summary>
+        [Fact]
+        public async Task Grok_UsesTheSameHeaderForEveryCallOfARun()
+        {
+            var seen = new List<string>();
+            foreach (var shape in new[] { ResponseShape.Categories, ResponseShape.PersonalCategories, ResponseShape.PersonalCategories })
+            {
+                var handler = new StubHandler(GrokResponse);
+                var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+                await provider.CompleteAsync(
+                    new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, shape, "one-run"),
+                    CancellationToken.None);
+                seen.Add(handler.Request!.Headers.GetValues("x-grok-conv-id").Single());
+            }
+
+            Assert.Equal(["one-run", "one-run", "one-run"], seen);
+        }
+
+        [Fact]
+        public async Task Grok_OmitsTheHeaderWhenNoConversationIdIsGiven()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096),
+                CancellationToken.None);
+
+            Assert.False(handler.Request!.Headers.Contains("x-grok-conv-id"));
+        }
+
+        /// <summary>
+        /// The header is xAI's. A local Ollama or LM Studio server has no use for it
+        /// and no reason to be sent one.
+        /// </summary>
+        [Fact]
+        public async Task NonGrokEndpointsDoNotGetTheHeader()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateCompatible(
+                new HttpClient(handler), "llama3.3", "http://localhost:11434/v1");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.Categories, "run-abc123"),
+                CancellationToken.None);
+
+            Assert.False(handler.Request!.Headers.Contains("x-grok-conv-id"));
+        }
+
         [Fact]
         public async Task Grok_SubtractsCachedTokensAndReportsReasoningSeparately()
         {

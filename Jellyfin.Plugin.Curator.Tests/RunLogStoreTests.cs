@@ -98,6 +98,105 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Null(store.Current());
         }
 
+        // ---- cache reads are charged, not free ----
+
+        private void CallWithUsage(IRunLog log, long input, long cached, long output)
+            => log.LlmCall(
+                "discovery", 0, 1, null, TimeSpan.FromSeconds(1),
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096),
+                new LlmResult("{}", input, output, false, CacheReadTokens: cached),
+                "ok", null);
+
+        /// <summary>
+        /// Cache reads used to fall out of the total entirely: providers that report
+        /// cached tokens inside their input count have it subtracted before costing,
+        /// so a run served largely from cache reported far below the real bill.
+        /// </summary>
+        [Fact]
+        public void CacheReadsAreCharged()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+            log.SetProvider("Grok", "grok-4.5", inputCostPerMillion: 2m, outputCostPerMillion: 6m, cachedCostPerMillion: 1m);
+
+            CallWithUsage(log, input: 1_000_000, cached: 1_000_000, output: 0);
+            log.Complete();
+
+            using var doc = ReadOnlyFile();
+            var cost = doc.RootElement.GetProperty("Totals").GetProperty("Cost");
+            Assert.Equal(2m, cost.GetProperty("InputUsd").GetDecimal());
+            Assert.Equal(1m, cost.GetProperty("CachedUsd").GetDecimal());
+            Assert.Equal(3m, cost.GetProperty("TotalUsd").GetDecimal());
+        }
+
+        /// <summary>
+        /// A blank cached price falls back to half the input price — conservative,
+        /// and the right direction to err for a number whose job is telling the owner
+        /// what a run spent.
+        /// </summary>
+        [Fact]
+        public void ABlankCachedPriceIsHalfTheInputPrice()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+            log.SetProvider("Grok", "grok-4.5", inputCostPerMillion: 2m, outputCostPerMillion: 6m);
+
+            CallWithUsage(log, input: 0, cached: 1_000_000, output: 0);
+            log.Complete();
+
+            using var doc = ReadOnlyFile();
+            Assert.Equal(1m, doc.RootElement.GetProperty("Totals").GetProperty("Cost")
+                .GetProperty("CachedUsd").GetDecimal());
+        }
+
+        /// <summary>
+        /// The resolved rate is recorded, not the blank the owner typed, so the
+        /// arithmetic can be redone without knowing the fallback rule.
+        /// </summary>
+        [Fact]
+        public void ThePricingBlockRecordsTheResolvedCachedRate()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+            log.SetProvider("Grok", "grok-4.5", inputCostPerMillion: 3m, outputCostPerMillion: 9m);
+            log.Complete();
+
+            using var doc = ReadOnlyFile();
+            Assert.Equal(1.5m, doc.RootElement.GetProperty("Pricing")
+                .GetProperty("CachedPerMillionUsd").GetDecimal());
+        }
+
+        [Fact]
+        public void AnExplicitCachedPriceBeatsTheFallback()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+            log.SetProvider("Anthropic", "claude-opus-5", inputCostPerMillion: 5m, outputCostPerMillion: 25m, cachedCostPerMillion: 0.5m);
+            log.Complete();
+
+            using var doc = ReadOnlyFile();
+            Assert.Equal(0.5m, doc.RootElement.GetProperty("Pricing")
+                .GetProperty("CachedPerMillionUsd").GetDecimal());
+        }
+
+        /// <summary>
+        /// With no prices at all, cost stays null rather than zero — a run that cost
+        /// real money must never read as free.
+        /// </summary>
+        [Fact]
+        public void WithNoPricesCostIsStillNullNotZero()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+            log.SetProvider("Grok", "grok-4.5");
+
+            CallWithUsage(log, input: 1_000_000, cached: 1_000_000, output: 1_000_000);
+            log.Complete();
+
+            using var doc = ReadOnlyFile();
+            Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("Totals").GetProperty("Cost").ValueKind);
+        }
+
         private JsonDocument ReadOnlyFile()
         {
             var file = Assert.Single(Directory.EnumerateFiles(_root, "run_*.json"));

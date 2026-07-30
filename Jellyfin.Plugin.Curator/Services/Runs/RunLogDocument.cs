@@ -86,18 +86,26 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
     /// What one call, or a whole run, cost at the configured prices.
     /// </summary>
     /// <param name="InputUsd">Uncached input tokens at the input price.</param>
+    /// <param name="CachedUsd">Cache-read tokens at the cached-input price.</param>
     /// <param name="OutputUsd">Output tokens at the output price.</param>
-    /// <param name="TotalUsd">The two added together.</param>
+    /// <param name="TotalUsd">The three added together.</param>
     /// <remarks>
-    /// Cached tokens are counted at the plain input price, because the plugin
-    /// carries one input price and providers bill cache reads and writes at their
-    /// own multipliers — Anthropic reads at a tenth and writes at a premium. A run
-    /// with heavy cache traffic is therefore an estimate, and on the generous side
-    /// for reads. The token counts sit beside these figures precisely so the
+    /// Cache reads are charged, not free. They used to fall out of the total
+    /// entirely: providers that report cached tokens inside their input count have
+    /// it subtracted before costing, so a run served largely from cache reported a
+    /// figure far below the real bill — the worst direction for a number whose whole
+    /// job is telling the owner what a run spent. They are now priced at their own
+    /// rate, which defaults to half the input price when none is configured.
+    /// <para>
+    /// Still an estimate: cache <em>writes</em> carry a premium of their own
+    /// (Anthropic charges 1.25x at five minutes and 2x at an hour) and are not
+    /// priced here. The token counts sit beside these figures precisely so the
     /// arithmetic can be redone by hand when it matters.
+    /// </para>
     /// </remarks>
     public sealed record RunLogCost(
         decimal InputUsd,
+        decimal CachedUsd,
         decimal OutputUsd,
         decimal TotalUsd);
 
@@ -105,6 +113,12 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
     /// The prices a run was costed at, recorded verbatim from configuration.
     /// </summary>
     /// <param name="InputPerMillionUsd">Input price as entered in settings.</param>
+    /// <param name="CachedPerMillionUsd">
+    /// The price cache reads were actually costed at — the configured value, or half
+    /// the input price when the setting was left blank. Recorded resolved rather
+    /// than as entered, so a reader can redo the arithmetic without knowing the
+    /// fallback rule.
+    /// </param>
     /// <param name="OutputPerMillionUsd">Output price as entered in settings.</param>
     /// <param name="Configured">
     /// Whether either price was actually set. When false every cost in the file is
@@ -112,6 +126,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
     /// </param>
     public sealed record RunLogPricing(
         decimal InputPerMillionUsd,
+        decimal CachedPerMillionUsd,
         decimal OutputPerMillionUsd,
         bool Configured);
 

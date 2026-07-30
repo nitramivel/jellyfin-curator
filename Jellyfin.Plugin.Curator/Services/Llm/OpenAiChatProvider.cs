@@ -30,6 +30,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         private readonly bool _useStructuredOutputs;
         private readonly TimeSpan? _initialRetryDelay;
         private readonly string _providerName;
+        private readonly bool _useConversationRouting;
 
         private OpenAiChatProvider(
             HttpClient httpClient,
@@ -39,7 +40,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             bool useLegacyMaxTokens,
             bool useStructuredOutputs,
             string providerName,
-            TimeSpan? initialRetryDelay)
+            TimeSpan? initialRetryDelay,
+            bool useConversationRouting = false)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(model);
             _httpClient = httpClient;
@@ -50,6 +52,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             _useStructuredOutputs = useStructuredOutputs;
             _providerName = providerName;
             _initialRetryDelay = initialRetryDelay;
+            _useConversationRouting = useConversationRouting;
         }
 
         /// <inheritdoc />
@@ -103,7 +106,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 useLegacyMaxTokens: false,
                 useStructuredOutputs: true,
                 providerName: "Grok",
-                initialRetryDelay);
+                initialRetryDelay,
+                useConversationRouting: true);
         }
 
         /// <summary>
@@ -150,6 +154,18 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     if (!string.IsNullOrEmpty(_apiKey))
                     {
                         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+                    }
+
+                    // xAI stores cache entries PER SERVER, so without a routing hint
+                    // the calls of one run scatter across the fleet and each lands on
+                    // a machine that has never seen the prefix. Measured before this
+                    // header: 16 of 18 calls reported 128 cached tokens against a
+                    // ~28k identical prefix; the two that hit cost $0.0033 and
+                    // $0.0002 against $0.077 for the misses. Grouping a run under one
+                    // ID pins its calls to one server.
+                    if (_useConversationRouting && !string.IsNullOrEmpty(request.ConversationId))
+                    {
+                        message.Headers.Add("x-grok-conv-id", request.ConversationId);
                     }
 
                     message.Content = JsonContent.Create(payload);

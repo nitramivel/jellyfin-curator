@@ -297,7 +297,19 @@
                             <label class="inputLabel inputLabelUnfocused" for="InputCostPerMillion">Input cost per million tokens (USD)</label>
                             <input id="InputCostPerMillion" name="InputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
                         </div>
-                        <div class="inputContainer">
+                                                <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="CachedInputCostPerMillion">Cached input cost per million tokens</label>
+                            <input id="CachedInputCostPerMillion" name="CachedInputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
+                            <div class="fieldDescription">
+                                What the provider charges for input served from its prompt cache. <strong>Leave blank
+                                for half the input price</strong> — a deliberately conservative default that errs high
+                                rather than reporting a run as cheaper than it was. Anthropic bills cache reads at a
+                                tenth of the input rate; others are nearer a half. Cache reads used to be left out of
+                                the total entirely, which understated any run served largely from cache.
+                            </div>
+                        </div>
+
+<div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="OutputCostPerMillion">Output cost per million tokens (USD)</label>
                             <input id="OutputCostPerMillion" name="OutputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
                             <div class="fieldDescription">
@@ -1250,9 +1262,15 @@
                     + legendItem('rgba(255,255,255,0.25)', 'Calls', String(calls));
 
                 if (cached > 0) {
-                    // Worth surfacing: a cache read is the difference between a
-                    // per-user pass costing a few cents and costing nothing much.
-                    items += legendItem('rgba(255,255,255,0.25)', 'Cached', formatTokens(cached) + ' tok');
+                    // Cache reads are discounted, not free — show what they cost
+                    // alongside the token count, so the total actually adds up.
+                    var cachedUsd = cost.CachedUsd;
+                    items += legendItem(
+                        'rgba(255,255,255,0.25)',
+                        'Cached',
+                        (cachedUsd === null || cachedUsd === undefined
+                            ? formatTokens(cached) + ' tok'
+                            : (formatUsd(cachedUsd) || '$0.00') + ' \u00b7 ' + formatTokens(cached) + ' tok'));
                 }
 
                 legend.innerHTML = items;
@@ -1625,6 +1643,7 @@
                     page.querySelector('#SurfacedCollections').value = config.SurfacedCollections || '';
                     page.querySelector('#InputCostPerMillion').value = config.InputCostPerMillion;
                     page.querySelector('#OutputCostPerMillion').value = config.OutputCostPerMillion;
+                    page.querySelector('#CachedInputCostPerMillion').value = config.CachedInputCostPerMillion;
                     setEnumSelect(page.querySelector('#OutputType'), config.OutputType);
                     page.querySelector('#PersonalizedPlaylists').checked = config.PersonalizedPlaylists;
                     page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
@@ -1663,6 +1682,7 @@
                     config.SurfacedCollections = page.querySelector('#SurfacedCollections').value.trim();
                     config.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value);
                     config.OutputCostPerMillion = parseFloat(page.querySelector('#OutputCostPerMillion').value);
+                    config.CachedInputCostPerMillion = parseFloat(page.querySelector('#CachedInputCostPerMillion').value) || 0;
                     config.OutputType = page.querySelector('#OutputType').value;
                     config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;

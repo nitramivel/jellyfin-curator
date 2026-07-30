@@ -333,6 +333,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             private int _stepSeq;
             private int _callSeq;
             private decimal _inputCostPerMillion;
+            private decimal _cachedCostPerMillion;
             private decimal _outputCostPerMillion;
 
             public RunLog(RunLogDocument document, string path, ILogger logger)
@@ -431,7 +432,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                             result.CacheWriteTokens,
                             result.Truncated,
                             result.ThinkingTokens,
-                            Cost(result.InputTokens, result.OutputTokens));
+                            Cost(result.InputTokens, result.CacheReadTokens, result.OutputTokens));
 
                         _document.Totals.InputTokens += result.InputTokens;
                         _document.Totals.OutputTokens += result.OutputTokens;
@@ -443,6 +444,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                         // cannot make the parts disagree with the whole.
                         _document.Totals.Cost = Cost(
                             _document.Totals.InputTokens,
+                            _document.Totals.CacheReadTokens,
                             _document.Totals.OutputTokens);
                         _document.Totals.EstimatedCostUsd = _document.Totals.Cost?.TotalUsd;
                     }
@@ -469,7 +471,8 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                 string provider,
                 string model,
                 decimal inputCostPerMillion = 0,
-                decimal outputCostPerMillion = 0)
+                decimal outputCostPerMillion = 0,
+                decimal cachedCostPerMillion = 0)
             {
                 lock (_lock)
                 {
@@ -477,8 +480,16 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                     _document.Model = model;
                     _inputCostPerMillion = inputCostPerMillion;
                     _outputCostPerMillion = outputCostPerMillion;
+
+                    // Blank means "half the input price" — the common shape of a
+                    // cache-read discount, and a far better default than free.
+                    _cachedCostPerMillion = cachedCostPerMillion > 0
+                        ? cachedCostPerMillion
+                        : inputCostPerMillion / 2m;
+
                     _document.Pricing = new RunLogPricing(
                         inputCostPerMillion,
+                        _cachedCostPerMillion,
                         outputCostPerMillion,
                         inputCostPerMillion > 0 || outputCostPerMillion > 0);
                     Write();
@@ -528,7 +539,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             /// Null rather than zero throughout: a run that cost real money must
             /// never be recorded as free because nobody typed the rates in.
             /// </remarks>
-            private RunLogCost? Cost(long inputTokens, long outputTokens)
+            private RunLogCost? Cost(long inputTokens, long cachedTokens, long outputTokens)
             {
                 if (_inputCostPerMillion <= 0 && _outputCostPerMillion <= 0)
                 {
@@ -536,8 +547,9 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                 }
 
                 var input = inputTokens * _inputCostPerMillion / 1_000_000m;
+                var cached = cachedTokens * _cachedCostPerMillion / 1_000_000m;
                 var output = outputTokens * _outputCostPerMillion / 1_000_000m;
-                return new RunLogCost(input, output, input + output);
+                return new RunLogCost(input, cached, output, input + cached + output);
             }
 
             /// <summary>

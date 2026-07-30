@@ -155,6 +155,20 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public decimal InputCostPerMillion { get; set; }
 
         /// <summary>
+        /// Gets or sets the provider's cache-read price in USD per million tokens.
+        /// Blank falls back to half <see cref="InputCostPerMillion"/>.
+        /// <para>
+        /// Cache reads are discounted, not free, and every provider discounts them
+        /// differently — Anthropic bills a tenth of the input rate, others nearer a
+        /// half. Curator used to leave them out of the total entirely, which
+        /// understated any run served largely from cache. Half the input price is a
+        /// deliberately conservative default: it errs high rather than reporting a
+        /// run as cheaper than it was.
+        /// </para>
+        /// </summary>
+        public decimal CachedInputCostPerMillion { get; set; }
+
+        /// <summary>
         /// Gets or sets the provider's output price in USD per million tokens,
         /// used only for the estimated-cost log line. 0 logs token counts without cost.
         /// </summary>

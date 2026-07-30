@@ -54,6 +54,10 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
     /// <param name="MaxOutputTokens">Output cap per LLM request.</param>
     /// <param name="TokenBudget">Hard cap on input+output tokens for the run; 0 disables.</param>
     /// <param name="InputCostPerMillion">Input USD per million tokens for the cost log; 0 omits cost.</param>
+    /// <param name="CachedCostPerMillion">
+    /// Cache-read USD per million tokens. 0 falls back to half the input price —
+    /// cache reads are discounted, not free.
+    /// </param>
     /// <param name="OutputCostPerMillion">Output USD per million tokens for the cost log; 0 omits cost.</param>
     /// <param name="UseBatchApi">Submit through the provider's async batch endpoint when it has one.</param>
     /// <param name="MaxTagsPerItem">Tags per item sent to the model; 0 omits them.</param>
@@ -68,6 +72,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         long TokenBudget,
         decimal InputCostPerMillion = 0,
         decimal OutputCostPerMillion = 0,
+        decimal CachedCostPerMillion = 0,
         bool UseBatchApi = false,
         int MaxTagsPerItem = 0,
         CategoryLimits? SharedLimits = null,
@@ -155,7 +160,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     PromptBuilder.BuildItemList(batch, settings.MaxTagsPerItem),
                     PromptBuilder.BuildActivitySection(batch, activity),
                     settings.MaxOutputTokens,
-                    ResponseShape.Categories);
+                    ResponseShape.Categories,
+                    log.RunId.ToString("N"));
 
                 // One retry on a malformed response. The model occasionally emits
                 // invalid JSON — an unescaped quote inside a description is the usual
@@ -234,7 +240,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 }
             }
 
-            LogRunTotals(provider, settings, inputTokens, outputTokens, proposals.Count, completed, skipped);
+            LogRunTotals(provider, settings, inputTokens, cacheReadTokens, outputTokens, proposals.Count, completed, skipped);
 
             if (cacheWriteTokens > 0 || cacheReadTokens > 0)
             {
@@ -305,7 +311,11 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     PromptBuilder.BuildItemList(batch, settings.MaxTagsPerItem),
                     PromptBuilder.BuildPersonalSuffix(batch, candidates, activity),
                     settings.MaxOutputTokens,
-                    ResponseShape.PersonalCategories);
+                    ResponseShape.PersonalCategories,
+
+                    // The run's ID, not the user's: every pass over this batch shares
+                    // one item list, so they must all route to the same cache.
+                    log.RunId.ToString("N"));
 
                 PersonalParseResult? parsed = null;
                 for (var attempt = 0; attempt < 2 && parsed is null; attempt++)
@@ -406,7 +416,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                         PromptBuilder.BuildItemList(batch, settings.MaxTagsPerItem),
                         PromptBuilder.BuildActivitySection(batch, activity),
                         settings.MaxOutputTokens,
-                        ResponseShape.Categories)));
+                        ResponseShape.Categories,
+                        log.RunId.ToString("N"))));
             }
 
             _logger.LogInformation(
@@ -492,7 +503,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     requests[i].Request, result, outcome, parseError);
             }
 
-            LogRunTotals(provider, settings, inputTokens, outputTokens, proposals.Count, completed, skipped);
+            LogRunTotals(provider, settings, inputTokens, cacheReadTokens, outputTokens, proposals.Count, completed, skipped);
 
             return new ProposalRunResult(
                 proposals,
@@ -555,6 +566,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             ILlmProvider provider,
             ProposalRunSettings settings,
             long inputTokens,
+            long cachedTokens,
             long outputTokens,
             int proposalCount,
             int completed,
@@ -562,7 +574,14 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         {
             if (settings.InputCostPerMillion > 0 || settings.OutputCostPerMillion > 0)
             {
+                // Blank cached price means half the input price. Leaving cache
+                // reads out entirely understated any run served largely from cache.
+                var cachedPrice = settings.CachedCostPerMillion > 0
+                    ? settings.CachedCostPerMillion
+                    : settings.InputCostPerMillion / 2m;
+
                 var cost = (inputTokens * settings.InputCostPerMillion
+                    + cachedTokens * cachedPrice
                     + outputTokens * settings.OutputCostPerMillion) / 1_000_000m;
                 _logger.LogInformation(
                     "Curator run: model {Model}, {Input} input + {Output} output tokens (~${Cost:F2}), {Proposals} proposals from {Completed} batches ({Skipped} skipped)",

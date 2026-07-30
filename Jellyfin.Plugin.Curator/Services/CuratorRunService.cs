@@ -210,7 +210,8 @@ namespace Jellyfin.Plugin.Curator.Services
                 config.Provider.ToString(),
                 provider.ModelId,
                 config.InputCostPerMillion,
-                config.OutputCostPerMillion);
+                config.OutputCostPerMillion,
+                config.CachedInputCostPerMillion);
 
             var targetUsers = ResolveTargetUsers(config);
             if (targetUsers.Count == 0)
@@ -269,6 +270,7 @@ namespace Jellyfin.Plugin.Curator.Services
                 config.TokenBudget,
                 config.InputCostPerMillion,
                 config.OutputCostPerMillion,
+                config.CachedInputCostPerMillion,
                 config.UseBatchApi,
                 config.MaxTagsPerItem,
                 sharedLimits,
@@ -565,6 +567,7 @@ namespace Jellyfin.Plugin.Curator.Services
                 ["useBatchApi"] = config.UseBatchApi,
                 ["autoEnableSections"] = config.AutoEnableSections,
                 ["inputCostPerMillion"] = config.InputCostPerMillion,
+                ["cachedInputCostPerMillion"] = config.CachedInputCostPerMillion,
                 ["outputCostPerMillion"] = config.OutputCostPerMillion,
                 ["targetUsers"] = config.TargetUsers.Select(id => id.ToString()).ToArray(),
             };
