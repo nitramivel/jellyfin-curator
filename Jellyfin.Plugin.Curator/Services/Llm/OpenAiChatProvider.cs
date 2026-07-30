@@ -255,7 +255,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                             ? "curator_personal_categories"
                             : "curator_categories",
                         strict = true,
-                        schema = BuildResponseSchema(request.Shape),
+                        schema = BuildResponseSchema(),
                     },
                 },
             };
@@ -277,7 +277,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// the shapes the prompts describe.
         /// </para>
         /// </remarks>
-        private static object BuildResponseSchema(ResponseShape shape)
+        private static object BuildResponseSchema()
         {
             var category = new
             {
@@ -303,25 +303,10 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 items = category,
             };
 
-            if (shape == ResponseShape.PersonalCategories)
-            {
-                return new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        selected = new
-                        {
-                            type = "array",
-                            description = "Exact names of existing categories that suit this viewer.",
-                            items = new { type = "string" },
-                        },
-                        categories,
-                    },
-                    required = new[] { "selected", "categories" },
-                    additionalProperties = false,
-                };
-            }
+            // A viewer's pass and the shared pass now ask for the same object. The
+            // viewer's pass used to also return a "selected" list of existing category
+            // names to put on that viewer's home screen; shared categories now go to
+            // every viewer, so there is nothing left to select.
 
             return new
             {

@@ -227,6 +227,15 @@ namespace Jellyfin.Plugin.Curator.Api
             // started it, and dies part-way through with ObjectDisposedException
             // ('IServiceProvider') the next time Jellyfin resolves a pooled DbContext,
             // leaving categories written but their playlists never built.
+            //
+            // What it does NOT cover is the host itself going away. Installing or
+            // updating any plugin makes Jellyfin dispose CoreAppHost and rebuild it
+            // in the same process, and a run started beforehand keeps executing
+            // against disposed services until it touches one. That produces the same
+            // ObjectDisposedException from a completely different cause, and this
+            // comment previously claimed immunity from it — which cost an
+            // investigation. CuratorRunService handles that case: it cancels on
+            // dispose, and RunFailure.IsHostTeardown names what slips through.
             using (ExecutionContext.SuppressFlow())
             {
                 _ = Task.Run(async () =>

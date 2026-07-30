@@ -218,76 +218,45 @@ namespace Jellyfin.Plugin.Curator.Tests
         // ---- viewer pass ----
 
         [Fact]
-        public void ParsePersonal_ReturnsSelectionsAndNewCategories()
+        public void ParsePersonal_ReturnsNewCategories()
         {
             var batch = Batch(3);
             const string response =
                 """
-                {"selected":["Cerebral Sci-Fi"],
-                 "categories":[{"name":"Sunday Afternoon Rewatch","description":"Worn smooth.","members":[0,1,2]}]}
+                {"categories":[{"name":"Sunday Afternoon Rewatch","description":"Worn smooth.","members":[0,1,2]}]}
                 """;
 
-            var result = ProposalParser.ParsePersonal(response, batch, ["Cerebral Sci-Fi", "Comfort Rewatch"]);
+            var result = ProposalParser.ParsePersonal(response, batch);
 
-            Assert.Equal(["Cerebral Sci-Fi"], result.SelectedNames);
             Assert.Equal("Sunday Afternoon Rewatch", Assert.Single(result.Proposals).Name);
         }
 
         /// <summary>
-        /// The selected name is the join key back to a shared definition, and
-        /// Collection Sections resolves rows by exact name — so a differently-cased
-        /// selection must resolve to the STORED spelling, not the model's.
+        /// Shared categories go to every viewer, so the viewer pass no longer asks
+        /// which ones they want. A model that volunteers a "selected" array anyway —
+        /// an older prompt cached upstream, or a model padding to a shape it has seen
+        /// before — must be ignored rather than throwing the batch away.
         /// </summary>
         [Fact]
-        public void ParsePersonal_SelectionIsCanonicalisedToTheStoredSpelling()
+        public void ParsePersonal_IgnoresAnUnsolicitedSelectedArray()
         {
             var result = ProposalParser.ParsePersonal(
-                """{"selected":["cerebral SCI-FI"],"categories":[]}""",
-                Batch(1),
-                ["Cerebral Sci-Fi"]);
+                """{"selected":["Cerebral Sci-Fi"],"categories":[{"name":"Invented","members":[0]}]}""",
+                Batch(1));
 
-            Assert.Equal(["Cerebral Sci-Fi"], result.SelectedNames);
-        }
-
-        [Fact]
-        public void ParsePersonal_UnknownSelection_IsDiscardedAndCounted()
-        {
-            var result = ProposalParser.ParsePersonal(
-                """{"selected":["Cerebral Sci-Fi","A Category Nobody Proposed"],"categories":[]}""",
-                Batch(1),
-                ["Cerebral Sci-Fi"]);
-
-            Assert.Equal(["Cerebral Sci-Fi"], result.SelectedNames);
-            Assert.Equal(1, result.DiscardedSelectionCount);
-        }
-
-        [Fact]
-        public void ParsePersonal_DuplicateSelections_AreCollapsed()
-        {
-            var result = ProposalParser.ParsePersonal(
-                """{"selected":["Cerebral Sci-Fi","cerebral sci-fi"],"categories":[]}""",
-                Batch(1),
-                ["Cerebral Sci-Fi"]);
-
-            Assert.Single(result.SelectedNames);
+            Assert.Equal("Invented", Assert.Single(result.Proposals).Name);
         }
 
         /// <summary>
-        /// A viewer with thin history is told to invent nothing rather than pad, so
-        /// an absent or empty categories array is a valid answer — not a parse error.
+        /// A viewer with no recorded history at all is told to return an empty list,
+        /// so an absent or empty categories array is a valid answer — not a parse
+        /// error.
         /// </summary>
         [Fact]
         public void ParsePersonal_NoNewCategories_IsValid()
         {
-            var noArray = ProposalParser.ParsePersonal(
-                """{"selected":["Cerebral Sci-Fi"]}""", Batch(1), ["Cerebral Sci-Fi"]);
-            Assert.Empty(noArray.Proposals);
-            Assert.Single(noArray.SelectedNames);
-
-            var emptyArray = ProposalParser.ParsePersonal(
-                """{"selected":[],"categories":[]}""", Batch(1), ["Cerebral Sci-Fi"]);
-            Assert.Empty(emptyArray.Proposals);
-            Assert.Empty(emptyArray.SelectedNames);
+            Assert.Empty(ProposalParser.ParsePersonal("""{}""", Batch(1)).Proposals);
+            Assert.Empty(ProposalParser.ParsePersonal("""{"categories":[]}""", Batch(1)).Proposals);
         }
 
         [Fact]
@@ -296,9 +265,8 @@ namespace Jellyfin.Plugin.Curator.Tests
             var batch = Batch(2);
 
             var result = ProposalParser.ParsePersonal(
-                """{"selected":[],"categories":[{"name":"Invented","members":[0,1,99]}]}""",
-                batch,
-                []);
+                """{"categories":[{"name":"Invented","members":[0,1,99]}]}""",
+                batch);
 
             var proposal = Assert.Single(result.Proposals);
             Assert.Equal([batch[0].Id, batch[1].Id], proposal.Members);
@@ -309,7 +277,9 @@ namespace Jellyfin.Plugin.Curator.Tests
         public void ParsePersonal_MalformedResponse_Throws()
         {
             Assert.Throws<FormatException>(() =>
-                ProposalParser.ParsePersonal("no json here", Batch(1), ["Cerebral Sci-Fi"]));
+                ProposalParser.ParsePersonal("no json here", Batch(1)));
+            Assert.Throws<FormatException>(() =>
+                ProposalParser.ParsePersonal("[1,2,3]", Batch(1)));
         }
 
         [Fact]

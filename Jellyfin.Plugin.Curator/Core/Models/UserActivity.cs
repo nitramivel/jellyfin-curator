@@ -21,5 +21,21 @@ namespace Jellyfin.Plugin.Curator.Core.Models
 
         /// <summary>Gets whole days since the user last played the item, when known.</summary>
         public int? DaysSinceLastPlayed { get; init; }
+
+        /// <summary>
+        /// Gets how many of the series' episodes the user has played. Series only;
+        /// null for movies and episodes.
+        /// </summary>
+        /// <remarks>
+        /// Set by <see cref="Core.SeriesActivityRollup"/>, never read straight off a
+        /// series' user data — Jellyfin does not keep watch depth there.
+        /// </remarks>
+        public int? EpisodesPlayed { get; init; }
+
+        /// <summary>
+        /// Gets how many episodes of the series the library holds. Series only; null
+        /// for movies and episodes.
+        /// </summary>
+        public int? EpisodeCount { get; init; }
     }
 }

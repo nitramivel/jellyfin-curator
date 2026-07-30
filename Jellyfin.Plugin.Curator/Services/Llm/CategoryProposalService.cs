@@ -33,7 +33,6 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
     /// <summary>
     /// The outcome of one viewer's pass.
     /// </summary>
-    /// <param name="SelectedNames">Shared category names this viewer should receive.</param>
     /// <param name="NewProposals">Categories invented for this viewer alone.</param>
     /// <param name="InputTokens">Uncached input tokens consumed.</param>
     /// <param name="OutputTokens">Output tokens consumed.</param>
@@ -41,7 +40,6 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
     /// <param name="CacheWriteTokens">Input tokens written to the prompt cache.</param>
     /// <param name="CacheReadTokens">Input tokens served from the prompt cache.</param>
     public sealed record PersonalRunResult(
-        IReadOnlyList<string> SelectedNames,
         IReadOnlyList<CategoryProposal> NewProposals,
         long InputTokens,
         long OutputTokens,
@@ -270,7 +268,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <param name="runLog">Recorder for this run; defaults to recording nothing.</param>
         /// <param name="userId">The viewer, recorded against this pass's calls in the run log.</param>
-        /// <returns>Selected names, invented categories, and token usage.</returns>
+        /// <returns>The invented categories and token usage.</returns>
         public async Task<PersonalRunResult> ProposePersonalAsync(
             ILlmProvider provider,
             IReadOnlyList<MediaItemRecord> records,
@@ -288,10 +286,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
 
             var log = runLog ?? NullRunLog.Instance;
             var batches = Batcher.Split(records, settings.BatchSize);
-            var candidateNames = candidates.Select(c => c.Name).ToArray();
 
-            var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var selectedOrdered = new List<string>();
             var proposals = new List<CategoryProposal>();
             long inputTokens = 0;
             long outputTokens = 0;
@@ -339,7 +334,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     string? parseError = null;
                     try
                     {
-                        parsed = ProposalParser.ParsePersonal(result.Text, batch, candidateNames);
+                        parsed = ProposalParser.ParsePersonal(result.Text, batch);
                         outcome = "ok";
                     }
                     catch (FormatException ex)
@@ -365,36 +360,18 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     continue;
                 }
 
-                foreach (var name in parsed.SelectedNames)
-                {
-                    if (selected.Add(name))
-                    {
-                        selectedOrdered.Add(name);
-                    }
-                }
-
                 proposals.AddRange(parsed.Proposals);
-
-                if (parsed.DiscardedSelectionCount > 0)
-                {
-                    _logger.LogInformation(
-                        "Curator: viewer batch {Batch} named {Count} categor(ies) that do not exist; ignored",
-                        i,
-                        parsed.DiscardedSelectionCount);
-                }
             }
 
             _logger.LogInformation(
-                "Curator viewer pass: {Selected} of {Candidates} shared categories chosen, {New} new proposed, {Input} input + {Output} output tokens ({Read} cached)",
-                selectedOrdered.Count,
-                candidates.Count,
+                "Curator viewer pass: {New} new categories proposed alongside {Candidates} shared, {Input} input + {Output} output tokens ({Read} cached)",
                 proposals.Count,
+                candidates.Count,
                 inputTokens,
                 outputTokens,
                 cacheReadTokens);
 
             return new PersonalRunResult(
-                selectedOrdered,
                 proposals,
                 inputTokens,
                 outputTokens,

@@ -183,12 +183,25 @@
                         </div>
 
                         <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="PortraitThreshold">Portrait row threshold</label>
+                            <input id="PortraitThreshold" name="PortraitThreshold" type="number" min="0" max="500" class="emby-input" />
+                            <div class="fieldDescription">
+                                Rows with at least this many items render as portrait posters; shorter rows render
+                                as landscape thumbs. Landscape cards are wide, so a short row still fills the
+                                screen, while portrait cards fit more across and suit a row worth scrolling.
+                                0 makes every row portrait; a number above the item cap above makes every row
+                                landscape.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="MinPersonalCategorySize">Minimum personal category size</label>
                             <input id="MinPersonalCategorySize" name="MinPersonalCategorySize" type="number" min="2" max="100" class="emby-input" />
                             <div class="fieldDescription">
-                                Smallest category invented for one viewer. A viewer with a handful of watched
-                                items cannot support a category as large as one drawn from the whole library,
-                                so this belongs below the shared floor. Minimum 2.
+                                Smallest category invented for one viewer. Defaults to the same value as the
+                                shared floor above. Lower it if invented categories start being discarded on
+                                size — a viewer's history is a smaller pool to draw from than the whole
+                                library. Minimum 2.
                             </div>
                         </div>
 
@@ -196,7 +209,8 @@
                             <label class="inputLabel inputLabelUnfocused" for="MaxPersonalCategories">Max personal categories per user</label>
                             <input id="MaxPersonalCategories" name="MaxPersonalCategories" type="number" min="0" max="200" class="emby-input" />
                             <div class="fieldDescription">
-                                Ceiling on the categories invented for one viewer. 0 means no cap.
+                                Ceiling on the categories invented for one viewer. Defaults to the same value
+                                as the shared cap above. 0 means no cap.
                             </div>
                         </div>
 
@@ -293,8 +307,9 @@
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
                                 Sends the library to the model once per user with that user's watch activity, so each
-                                person gets their own rows. Costs one full pass per user. Turn this off for a single
-                                shared set of rows, with no watch data sent at all.
+                                person gets rows invented for them alone on top of the shared ones. Everyone receives
+                                every shared category either way. Costs one full pass per user. Turn this off for the
+                                shared rows only, with no watch data sent at all.
                             </div>
                         </div>
 
@@ -1004,6 +1019,7 @@
                     page.querySelector('#MaxPersonalCategories').value = config.MaxPersonalCategories;
                     page.querySelector('#MinPersonalCategorySize').value = config.MinPersonalCategorySize;
                     page.querySelector('#MaxCategoryMembers').value = config.MaxCategoryMembers;
+                    page.querySelector('#PortraitThreshold').value = config.PortraitThreshold;
                     page.querySelector('#MinWatchedForPersonalization').value = config.MinWatchedForPersonalization;
                     page.querySelector('#MaxTagsPerItem').value = config.MaxTagsPerItem;
                     page.querySelector('#InputCostPerMillion').value = config.InputCostPerMillion;
@@ -1039,6 +1055,7 @@
                     config.MaxPersonalCategories = parseInt(page.querySelector('#MaxPersonalCategories').value, 10);
                     config.MinPersonalCategorySize = parseInt(page.querySelector('#MinPersonalCategorySize').value, 10);
                     config.MaxCategoryMembers = parseInt(page.querySelector('#MaxCategoryMembers').value, 10);
+                    config.PortraitThreshold = parseInt(page.querySelector('#PortraitThreshold').value, 10);
                     config.MinWatchedForPersonalization = parseInt(page.querySelector('#MinWatchedForPersonalization').value, 10);
                     config.MaxTagsPerItem = parseInt(page.querySelector('#MaxTagsPerItem').value, 10);
                     config.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value);

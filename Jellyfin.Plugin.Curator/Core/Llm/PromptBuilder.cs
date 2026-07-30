@@ -126,32 +126,35 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
             list of items from a shared media library, a list of categories already drawn from that library,
             and one specific viewer's watch history.
 
-            Before either job, get to know this viewer. Read their history as evidence about a person, not as
-            a list of titles: what do they return to, what did they finish once and never touch again, what do
-            they rate highly versus merely complete, what have they owned for months without playing? Look for
+            First, get to know this viewer. Read their history as evidence about a person, not as a list of
+            titles: what do they return to, what did they finish once and never touch again, what do they
+            rate highly versus merely complete, what have they owned for months without playing? Look for
             the sensibility underneath — the tone, pace, era, and kind of story they keep choosing, and the
             kinds they visibly avoid. Hold that picture of them in mind for everything below; the better you
-            understand this particular person, the better every match you make will be. Someone with a thin
-            history tells you little, and guessing past the evidence serves them worse than restraint does.
+            understand this particular person, the better every match you make will be.
 
-            You have two jobs.
+            Your job is to invent NEW categories that only make sense for this viewer. The categories listed
+            below already exist and this viewer already has them, so yours must be genuinely different: not a
+            rename of one, not a rewording of one, and not the same set of items under a different title.
+            They should be threads you can only see by looking at what this person actually watches — what
+            they return to, what they abandoned, what they rate highly, what sits unwatched.
 
-            FIRST, choose which of the existing categories belong on this viewer's home screen. Pick the ones
-            their history suggests they would actually want. Leave out ones that plainly are not for them.
-            Reference these by their exact name, unchanged.
-
-            SECOND — and this matters more — invent NEW categories that only make sense for this viewer.
-            These must be genuinely new: not a rename of an existing category, not a rewording of one, and
-            not the same set of items under a different title. They should be threads you can only see by
-            looking at what this person actually watches — what they return to, what they abandoned, what
-            they rate highly, what sits unwatched. Ground them in the history you are given. If their history
-            is too thin to support a real observation, propose nothing rather than padding.
+            Work from the evidence rather than around it. A history of ten titles is still a person with a
+            taste, and the honest response to a short history is fewer and broader categories, not none:
+            reach for the widest thread the evidence genuinely supports. What you must not do is invent a
+            thread the history does not show at all, or pad a real one with items that merely share a genre.
+            Return an empty list only when there is no recorded history whatsoever.
 
             A "Watch activity:" section describes this viewer. Each line groups item indexes by one kind of
             history: "favourites", "rated 0-10" as index=rating, "rewatched, times played" as index=count,
-            "watched once", and "watched recently, days ago" as index=days. An item can appear on more than
-            one line. Any index missing from every line has no recorded activity — they own it but have never
-            played it, which is itself a signal.
+            "series, episodes watched of total" as index=played/total, "watched once", and "watched recently,
+            days ago" as index=days. An item can appear on more than one line. Any index missing from every
+            line has no recorded activity — they own it but have never played it, which is itself a signal.
+
+            Television is watched by the episode, so a series shows up on the "series" line and never on
+            "rewatched" or "watched once". Read watch depth as intensity: someone who has played 140 of 201
+            episodes of a sitcom is telling you far more about their taste than someone who finished one
+            film. Weigh a deeply watched show accordingly.
 
             Rules:
             - Reference items ONLY by their integer index from the item list. Never invent items.
@@ -171,8 +174,7 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
               curation, not surveillance.
 
             Respond with a single JSON object and nothing else — no prose, no code fences:
-            {"selected":["Exact Existing Name","Another Existing Name"],
-             "categories":[{"name":"...","description":"...","members":[0,17,4]}]}
+            {"categories":[{"name":"...","description":"...","members":[0,17,4]}]}
             """;
 
         /// <summary>Days beyond which "when" stops adding anything to a play count.</summary>
@@ -271,6 +273,7 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
             var rewatched = new List<(int Index, int Count)>();
             var watchedOnce = new List<int>();
             var recent = new List<(int Index, int Days)>();
+            var series = new List<(int Index, int Played, int Total)>();
 
             for (var i = 0; i < batch.Count; i++)
             {
@@ -289,7 +292,17 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
                     rated.Add((i, rating));
                 }
 
-                if (w.PlayCount >= 2)
+                // A series carries watch depth instead of a play count. Its rolled-up
+                // PlayCount is a sum over episodes, so feeding it to the "rewatched"
+                // line would read a show watched once end to end as sixty rewatches.
+                if (w.EpisodesPlayed is { } played && w.EpisodeCount is { } total)
+                {
+                    if (played > 0)
+                    {
+                        series.Add((i, played, total));
+                    }
+                }
+                else if (w.PlayCount >= 2)
                 {
                     rewatched.Add((i, w.PlayCount));
                 }
@@ -307,7 +320,7 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
             }
 
             if (favourites.Count == 0 && rated.Count == 0 && rewatched.Count == 0
-                && watchedOnce.Count == 0 && recent.Count == 0)
+                && watchedOnce.Count == 0 && recent.Count == 0 && series.Count == 0)
             {
                 return;
             }
@@ -340,6 +353,18 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
                         $"{r.Index}x{r.Count}"))));
             }
 
+            if (series.Count > 0)
+            {
+                // Deepest-watched first: for a television viewer this line is the
+                // strongest evidence of taste in the whole section.
+                series.Sort((a, b) => b.Played.CompareTo(a.Played));
+                sb.Append("series, episodes watched of total: ").AppendLine(string.Join(
+                    ',',
+                    series.Select(s => string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"{s.Index}={s.Played}/{s.Total}"))));
+            }
+
             if (watchedOnce.Count > 0)
             {
                 sb.Append("watched once: ").AppendLine(JoinIndexes(watchedOnce));
@@ -357,9 +382,9 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
         }
 
         /// <summary>
-        /// Lists the categories the shared pass found, for a viewer's pass to choose
-        /// from. Names must round-trip exactly — they are the join key back to the
-        /// shared definitions.
+        /// Lists the categories the shared pass found. Every viewer receives all of
+        /// them, so this is not a menu to choose from — it is there to stop a viewer's
+        /// pass reinventing a thread they already have under a new name.
         /// </summary>
         /// <param name="candidates">The shared categories, name and description.</param>
         /// <returns>The candidate section, ending in a newline; empty when there are none.</returns>
@@ -411,7 +436,7 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
                 AppendActivityGroups(sb, batch, activity);
             }
 
-            sb.Append("Choose the existing categories that suit this viewer, then propose new ones of your own, as the single JSON object described.");
+            sb.Append("Propose this viewer's own categories now, as the single JSON object described.");
             return sb.ToString();
         }
 

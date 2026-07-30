@@ -46,6 +46,8 @@ as a plugin repository.
 Jellyfin.Plugin.Curator/
 ├── Core/                     # Pure logic — no Jellyfin services, fully unit-tested
 │   ├── ItemReducer.cs        # BaseItem -> MediaItemRecord
+│   ├── SeriesActivityRollup.cs   # Episode watch data -> series watch depth
+│   ├── RunFailure.cs         # Host teardown vs. a real fault
 │   ├── CategoryIdentity.cs   # Matches a reconciled category to a stored definition
 │   ├── CategoryRetention.cs  # Which stored categories to prune when over a cap
 │   ├── Models/CategoryLimits.cs  # The one value the prompt AND the Reconciler read
@@ -185,8 +187,32 @@ Playlists are still built. Never throw out of home screen integration.
 - `Episode.SeriesName`/`SeriesId` are persisted properties — safe to read.
   `Episode.Series` walks parent folders through server statics and cannot run
   outside a live server (it will break tests).
+- **A `Series` row's user data does not carry watch history.** Playback is
+  recorded against `Episode` rows; `GetUserData(user, series)` returns the
+  favorite flag and a manual rating, but `PlayCount` is 0 and `LastPlayedDate`
+  is null however much of the show has been watched — "played" for a series is
+  derived at DTO-build time from child counts and never persisted where
+  `IUserDataManager` can see it. Anything asking "has this user watched this
+  show" must aggregate the episodes itself. `Core/SeriesActivityRollup` does
+  this; `UserActivityProvider` feeds it. Measured cost of not doing it: a
+  library of 211 movies and 86 series produced an activity map holding 210
+  movie entries and **3** series entries across six users, so every viewer who
+  watches television read as a viewer who had watched nothing.
 - Library scan query shape: `Recursive = true`, `IsVirtualItem = false` (excludes
   missing-episode stubs).
+- **Installing or updating any plugin restarts the host in the same process.**
+  Jellyfin sends shutdown notifications, logs `Disposing "CoreAppHost"`, then
+  rebuilds and reports `Startup complete` a second or two later — same PID, same
+  log file. A background task started beforehand is *not* killed: it keeps
+  running against a disposed container and fails at whatever service it touches
+  next. Measured 30 Jul 2026: a run started 09:29:22, host disposed 09:31:37 on
+  a 0.3.16.0 install, run died 09:31:57 at 53% in `GetUserById` with
+  `ObjectDisposedException: 'IServiceProvider'`. It reads exactly like a defect
+  in this plugin. `CuratorRunService` cancels on dispose and
+  `Core/RunFailure.IsHostTeardown` names what slips through the gap — disposal
+  order across singletons is undefined, so cancellation alone cannot close it.
+  Do not "fix" a report of this by hunting for a scope leak; check the server
+  log for a restart first.
 
 ## Config page conventions
 
@@ -223,11 +249,16 @@ round-trip — are confirmed working. What remains:
    survived to the next run (0 of 16, then 0 of 33). Identity now falls back to
    member similarity so a rename keeps its row, but that fix has not yet been
    observed across two real runs. Check `category.renamed` steps in the run log.
-2. **Shared-category distribution.** A shared category is built only for users
-   whose personal pass selected it, while users skipped for thin watch history
-   get all of them. Measured result: the user who had watched nothing got 5 rows
-   while a user with 3 watched items got 0. The owner has been asked and has not
-   decided. Do not change it unilaterally.
+2. ~~**Shared-category distribution.**~~ **Decided by the owner and implemented:
+   shared means shared.** Every target user receives every shared category, and
+   the viewer pass only invents. The `"selected"` field is gone from the personal
+   prompt, from `PersonalParseResult`, and from both structured-output schemas.
+   Do not reintroduce opt-in without asking. What it looked like when it was
+   opt-in: the model declined 16 of 25 offers, three of eight shared categories
+   were built for exactly one user, and that user was the one who had watched
+   nothing and received all of them through the thin-history fallback. The
+   underlying cause was the series-user-data bug above — it was choosing from
+   histories with all television missing.
 3. **Grok and the batch API.** No live xAI call has been made from the agent
    side. `AnthropicProvider.CompleteBatchAsync` has still never parsed a real
    completed job and is off by default — the least-tested code in the repo.

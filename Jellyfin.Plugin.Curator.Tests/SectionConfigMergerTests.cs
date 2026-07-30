@@ -254,9 +254,46 @@ namespace Jellyfin.Plugin.Curator.Tests
         [InlineData(9, "Landscape")]
         [InlineData(10, "Portrait")]
         [InlineData(40, "Portrait")]
-        public void ViewMode_FlipsAtTheThreshold(int members, string expected)
+        public void ViewMode_FlipsAtTheDefaultThreshold(int members, string expected)
         {
             Assert.Equal(expected, SectionConfigMerger.ViewModeFor(members));
+        }
+
+        [Theory]
+        [InlineData(5, 6, "Landscape")]
+        [InlineData(6, 6, "Portrait")]
+        [InlineData(19, 20, "Landscape")]
+        [InlineData(20, 20, "Portrait")]
+        public void ViewMode_FlipsAtTheConfiguredThreshold(int members, int threshold, string expected)
+        {
+            Assert.Equal(expected, SectionConfigMerger.ViewModeFor(members, threshold));
+        }
+
+        /// <summary>
+        /// The two ends of the range are the way to turn the behaviour off in either
+        /// direction, so they must not need a special case in the caller.
+        /// </summary>
+        [Fact]
+        public void ViewMode_ThresholdOfZeroIsAlwaysPortrait_AndAHugeOneAlwaysLandscape()
+        {
+            Assert.Equal("Portrait", SectionConfigMerger.ViewModeFor(0, 0));
+            Assert.Equal("Portrait", SectionConfigMerger.ViewModeFor(1, 0));
+            Assert.Equal("Landscape", SectionConfigMerger.ViewModeFor(500, 501));
+        }
+
+        [Fact]
+        public void SectionSettings_UseTheConfiguredThreshold()
+        {
+            var config = JsonNode.Parse("""{"SectionSettings":[]}""")!;
+
+            SectionConfigMerger.MergeSectionSettings(
+                config,
+                [new DesiredSection("curator-a", "Small", 6), new DesiredSection("curator-b", "Smaller", 5)],
+                portraitThreshold: 6);
+
+            var settings = config["SectionSettings"]!.AsArray();
+            Assert.Equal("Portrait", settings[0]!["ViewMode"]!.GetValue<string>());
+            Assert.Equal("Landscape", settings[1]!["ViewMode"]!.GetValue<string>());
         }
 
         [Fact]

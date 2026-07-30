@@ -23,7 +23,7 @@ namespace Jellyfin.Plugin.Curator.Services
     /// publish home screen rows. Shared by the scheduled task and the manual
     /// trigger so both take exactly the same path.
     /// </summary>
-    public class CuratorRunService
+    public class CuratorRunService : IDisposable
     {
         private readonly ILibraryScanner _libraryScanner;
         private readonly IUserActivityProvider _userActivityProvider;
@@ -36,6 +36,21 @@ namespace Jellyfin.Plugin.Curator.Services
         private readonly IRunLogStore _runLogStore;
         private readonly ILogger<CuratorRunService> _logger;
         private readonly SemaphoreSlim _runLock = new(1, 1);
+
+        /// <summary>
+        /// Cancelled when the host disposes this service, which is Jellyfin tearing
+        /// down its container — on shutdown, and on every plugin install or update.
+        /// <para>
+        /// This is a best effort, not a guarantee. It lets a run stop at its next
+        /// checkpoint instead of blundering into disposed services, but disposal
+        /// order across singletons is not defined, so a run can still be caught
+        /// mid-call. <see cref="RunFailure.IsHostTeardown"/> catches what this
+        /// misses; the two are a pair.
+        /// </para>
+        /// </summary>
+        private readonly CancellationTokenSource _shutdown = new();
+
+        private bool _disposed;
 
         /// <summary>
         /// Stored definitions already reused by this run. Reset per run; only ever
@@ -103,10 +118,25 @@ namespace Jellyfin.Plugin.Curator.Services
             var runLog = _runLogStore.Begin(trigger, DescribeSettings(config));
             CurrentRunId = runLog.RunId;
 
+            // The manual trigger has no token of its own to give us — an HTTP request
+            // is long gone by the time a run finishes — so without this link a run
+            // started from the config page observes nothing at all when the server
+            // goes down. The scheduled task passes Jellyfin's token and always did.
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, _shutdown.Token);
+
             try
             {
-                await RunCoreAsync(config, progress, runLog, cancellationToken).ConfigureAwait(false);
+                await RunCoreAsync(config, progress, runLog, linked.Token).ConfigureAwait(false);
                 runLog.Complete();
+            }
+            catch (Exception ex) when (_shutdown.IsCancellationRequested || RunFailure.IsHostTeardown(ex))
+            {
+                // Not a fault in this plugin: the container went away underneath the
+                // run. Say so plainly in both places, and do not rethrow — there is
+                // nobody left to handle it, and a stack trace here reads as a defect.
+                _logger.LogWarning("Curator: {Message}", RunFailure.HostTeardownMessage);
+                runLog.Fail(RunFailure.HostTeardownMessage);
             }
             catch (Exception ex)
             {
@@ -120,6 +150,40 @@ namespace Jellyfin.Plugin.Curator.Services
                 CurrentRunId = null;
                 _runLock.Release();
             }
+        }
+
+        /// <summary>
+        /// Signals any run in progress to stop. Jellyfin disposes its container both
+        /// on shutdown and on every plugin install or update.
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Releases resources held by this service.
+        /// </summary>
+        /// <param name="disposing">True when called from <see cref="Dispose()"/>.</param>
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed || !disposing)
+            {
+                return;
+            }
+
+            _disposed = true;
+
+            if (IsRunning)
+            {
+                _logger.LogInformation(
+                    "Curator: the server is shutting down or reloading plugins; asking the run in progress to stop");
+            }
+
+            _shutdown.Cancel();
+            _shutdown.Dispose();
+            _runLock.Dispose();
         }
 
         private async Task RunCoreAsync(
@@ -274,14 +338,9 @@ namespace Jellyfin.Plugin.Curator.Services
             {
                 // Phase B — one pass per viewer. The item list is byte-identical to
                 // phase A, so it is a cache read; what varies is the candidate list
-                // and their history. The model both selects and invents.
-                var sharedSelections = new Dictionary<string, List<Guid>>(StringComparer.OrdinalIgnoreCase);
+                // and their history. The model only invents here: shared categories
+                // go to everyone (see the loop below), so there is nothing to select.
                 var personalByUser = new List<(Guid UserId, IReadOnlyList<ReconciledCategory> Categories)>();
-
-                // Users who watch too little to personalize. They are skipped before
-                // the LLM call — the prompt is the cost and it is paid on send — and
-                // fall back to the shared categories, which are already paid for.
-                var unpersonalizedUsers = new List<Guid>();
                 var userIndex = 0;
 
                 foreach (var userId in targetUsers)
@@ -300,7 +359,6 @@ namespace Jellyfin.Plugin.Curator.Services
                             watched,
                             config.MinWatchedForPersonalization);
 
-                        unpersonalizedUsers.Add(userId);
                         runLog.Step(
                             "user.skipped",
                             $"User {userId} has watched {watched} items, below the minimum of {config.MinWatchedForPersonalization}; skipped",
@@ -322,17 +380,6 @@ namespace Jellyfin.Plugin.Curator.Services
                             provider, records, candidates, settings, activity, cancellationToken, runLog, userId)
                         .ConfigureAwait(false);
 
-                    foreach (var name in personal.SelectedNames)
-                    {
-                        if (!sharedSelections.TryGetValue(name, out var users))
-                        {
-                            users = [];
-                            sharedSelections[name] = users;
-                        }
-
-                        users.Add(userId);
-                    }
-
                     // Invented categories are reconciled on their own so the same
                     // size and cap rules apply to them as to the shared pool.
                     // Personal categories use their own floor and cap. A viewer with a
@@ -346,22 +393,21 @@ namespace Jellyfin.Plugin.Curator.Services
                         : [];
 
                     _logger.LogInformation(
-                        "Curator: user {User} selected {Selected} shared categories and gained {New} of their own",
+                        "Curator: user {User} gained {New} categories of their own",
                         userId,
-                        personal.SelectedNames.Count,
                         invented.Count);
 
                     personalByUser.Add((userId, invented));
 
                     runLog.Step(
                         "user.pass",
-                        $"User {userId} selected {personal.SelectedNames.Count} shared categories and gained {invented.Count} of their own",
+                        $"User {userId} gained {invented.Count} categories of their own",
                         new Dictionary<string, object?>
                         {
                             ["userId"] = userId.ToString(),
                             ["watchedCount"] = watched,
                             ["activityEntries"] = activity.Count,
-                            ["selectedNames"] = personal.SelectedNames.ToArray(),
+                            ["seriesWithHistory"] = activity.Values.Count(a => a.EpisodesPlayed > 0),
                             ["proposedCount"] = personal.NewProposals.Count,
                             ["batchesSkipped"] = personal.BatchesSkipped,
                             ["invented"] = invented
@@ -378,37 +424,27 @@ namespace Jellyfin.Plugin.Curator.Services
                     Report(progress, runLog, 40 + (userIndex * 40.0 / targetUsers.Count));
                 }
 
-                // Shared categories: one definition each, linked to whoever chose it,
-                // plus everyone who never got a pass to choose with.
+                // Shared categories: one definition each, given to every target user.
+                //
+                // These used to be opt-in — a viewer's pass named the ones it wanted,
+                // and a category nobody named went unbuilt. On a real library that
+                // collapsed. The model was choosing from watch histories that were
+                // missing all television (see SeriesActivityRollup), so it declined
+                // 16 of 25 offers; three of eight shared categories ended up built for
+                // exactly one user, and that user was the one who had watched nothing
+                // and so received all of them by the thin-history fallback. A category
+                // drawn from the whole shared library belongs to the whole household;
+                // the viewer's pass earns its keep by inventing, not by vetoing.
                 foreach (var category in candidates)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    sharedSelections.TryGetValue(category.Name, out var chosenBy);
-                    var recipients = new List<Guid>(chosenBy ?? []);
-                    recipients.AddRange(unpersonalizedUsers);
-
-                    if (recipients.Count == 0)
-                    {
-                        // Nobody wanted it. Leave the definition unbuilt rather than
-                        // forcing a row on everyone.
-                        runLog.Step(
-                            "category.unwanted",
-                            $"Shared category '{category.Name}' was chosen by nobody; not built",
-                            new Dictionary<string, object?>
-                            {
-                                ["name"] = category.Name,
-                                ["memberCount"] = category.Members.Count,
-                            });
-                        continue;
-                    }
-
                     var definition = MergeIntoStore(existing, category, provider.ModelId, ownerUserId: null, runLog);
                     allCategoryIds.Add(definition.Id);
                     await _playlistService
-                        .SyncCategoryAsync(definition, recipients, cancellationToken)
+                        .SyncCategoryAsync(definition, targetUsers, cancellationToken)
                         .ConfigureAwait(false);
-                    LogCategoryBuilt(runLog, definition, recipients, "shared");
+                    LogCategoryBuilt(runLog, definition, targetUsers, "shared");
                 }
 
                 // Personal categories: one definition per user, theirs alone.
