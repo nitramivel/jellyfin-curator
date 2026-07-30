@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.4.2.0",
+        "changelog": "Model profiles: save several providers, models and API keys as a list and pick which one runs, instead of one set of fields you overwrite. Each profile carries its own key and its own prices, so switching profile switches the cost reporting with it \u2014 a cheap model is no longer reported at an expensive model's rate. Your existing provider, model and key migrate automatically into a single profile; nothing to re-enter. Also fixes both detail drawers on the Runs tab, which were squeezed into a fraction of the page width \u2014 the run drawer especially, despite carrying the widest tables in the plugin.",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.2.0/curator_0.4.2.0.zip",
+        "checksum": "f12b775236043a9d95505bbf63de11c6",
+        "timestamp": "2026-07-30T23:52:00Z"
+      },
+      {
         "version": "0.4.1.0",
         "changelog": "Fixes prompt caching on xAI Grok and stops under-reporting what a run costs. Grok stores cache entries on the server that wrote them, so the calls of one run were scattering across the fleet and each landing on a machine that had never seen the item list; every call of a run now carries the run's ID so they route together. Separately, cache reads were being dropped from the cost total entirely, understating one measured run by 24 percent. They are now priced at their own rate, configurable and defaulting to half the input price. Requires Jellyfin 10.11.11 or newer.",
         "targetAbi": "10.11.11.0",
