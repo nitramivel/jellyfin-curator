@@ -165,7 +165,10 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             var body = await getResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             var configJson = JsonNode.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body) ?? new JsonObject();
 
-            if (!SectionConfigMerger.MergeSectionSettings(configJson, desired))
+            var portraitThreshold = Plugin.Instance?.Configuration.PortraitThreshold
+                ?? SectionConfigMerger.DefaultPortraitThreshold;
+
+            if (!SectionConfigMerger.MergeSectionSettings(configJson, desired, portraitThreshold))
             {
                 return;
             }
@@ -180,7 +183,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 return;
             }
 
-            var portrait = desired.Count(d => d.MemberCount >= SectionConfigMerger.PortraitThreshold);
+            var portrait = desired.Count(d => d.MemberCount >= portraitThreshold);
             _logger.LogInformation(
                 "Curator: set {Count} section(s) to order {Order} — {Portrait} portrait, {Landscape} landscape",
                 desired.Count,

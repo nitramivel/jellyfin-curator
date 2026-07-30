@@ -169,25 +169,31 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         public const int OrderIndex = 500;
 
         /// <summary>
-        /// Item count at or above which a row renders as portrait posters rather
-        /// than landscape thumbs.
+        /// Default item count at or above which a row renders as portrait posters
+        /// rather than landscape thumbs. Overridable per install.
         /// </summary>
         /// <remarks>
         /// Landscape cards are wide, so a short row of six or seven fills the
         /// screen; portrait cards are narrow and fit more across, which suits a
         /// row with enough in it to be worth scrolling. Ten splits this library's
-        /// categories — they run from six to seventeen items — near the middle.
+        /// categories — they run from six to seventeen items — near the middle,
+        /// but the right number depends on the screen and the taste, so it is a
+        /// setting rather than a rule.
         /// </remarks>
-        public const int PortraitThreshold = 10;
+        public const int DefaultPortraitThreshold = 10;
 
         /// <summary>
         /// Picks the card shape for a category.
         /// </summary>
         /// <param name="memberCount">How many items the category holds.</param>
+        /// <param name="portraitThreshold">
+        /// Member count at or above which the row goes portrait. 0 or less makes
+        /// every row portrait, which is what a threshold of "always" means.
+        /// </param>
         /// <returns>"Portrait" or "Landscape".</returns>
-        public static string ViewModeFor(int memberCount)
+        public static string ViewModeFor(int memberCount, int portraitThreshold = DefaultPortraitThreshold)
         {
-            return memberCount >= PortraitThreshold ? "Portrait" : "Landscape";
+            return memberCount >= portraitThreshold ? "Portrait" : "Landscape";
         }
 
         /// <summary>
@@ -203,8 +209,12 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         /// </remarks>
         /// <param name="config">The configuration JSON from GET /Plugins/{id}/Configuration; mutated in place.</param>
         /// <param name="desired">The sections that should exist.</param>
+        /// <param name="portraitThreshold">Member count at or above which a row goes portrait.</param>
         /// <returns>True when the configuration changed and needs to be written back.</returns>
-        public static bool MergeSectionSettings(JsonNode config, IReadOnlyList<DesiredSection> desired)
+        public static bool MergeSectionSettings(
+            JsonNode config,
+            IReadOnlyList<DesiredSection> desired,
+            int portraitThreshold = DefaultPortraitThreshold)
         {
             ArgumentNullException.ThrowIfNull(config);
             ArgumentNullException.ThrowIfNull(desired);
@@ -242,7 +252,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
                 }
 
                 changed |= SetNumber(entry, "OrderIndex", OrderIndex);
-                changed |= SetString(entry, "ViewMode", ViewModeFor(want.MemberCount));
+                changed |= SetString(entry, "ViewMode", ViewModeFor(want.MemberCount, portraitThreshold));
                 desiredById.Remove(sectionId);
             }
 
@@ -252,7 +262,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
                 {
                     ["SectionId"] = want.SectionId,
                     ["OrderIndex"] = OrderIndex,
-                    ["ViewMode"] = ViewModeFor(want.MemberCount),
+                    ["ViewMode"] = ViewModeFor(want.MemberCount, portraitThreshold),
                 });
                 changed = true;
             }
