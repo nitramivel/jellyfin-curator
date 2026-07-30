@@ -47,6 +47,7 @@ Jellyfin.Plugin.Curator/
 ├── Core/                     # Pure logic — no Jellyfin services, fully unit-tested
 │   ├── ItemReducer.cs        # BaseItem -> MediaItemRecord
 │   ├── SeriesActivityRollup.cs   # Episode watch data -> series watch depth
+│   ├── RunFailure.cs         # Host teardown vs. a real fault
 │   ├── CategoryIdentity.cs   # Matches a reconciled category to a stored definition
 │   ├── CategoryRetention.cs  # Which stored categories to prune when over a cap
 │   ├── Models/CategoryLimits.cs  # The one value the prompt AND the Reconciler read
@@ -199,6 +200,19 @@ Playlists are still built. Never throw out of home screen integration.
   watches television read as a viewer who had watched nothing.
 - Library scan query shape: `Recursive = true`, `IsVirtualItem = false` (excludes
   missing-episode stubs).
+- **Installing or updating any plugin restarts the host in the same process.**
+  Jellyfin sends shutdown notifications, logs `Disposing "CoreAppHost"`, then
+  rebuilds and reports `Startup complete` a second or two later — same PID, same
+  log file. A background task started beforehand is *not* killed: it keeps
+  running against a disposed container and fails at whatever service it touches
+  next. Measured 30 Jul 2026: a run started 09:29:22, host disposed 09:31:37 on
+  a 0.3.16.0 install, run died 09:31:57 at 53% in `GetUserById` with
+  `ObjectDisposedException: 'IServiceProvider'`. It reads exactly like a defect
+  in this plugin. `CuratorRunService` cancels on dispose and
+  `Core/RunFailure.IsHostTeardown` names what slips through the gap — disposal
+  order across singletons is undefined, so cancellation alone cannot close it.
+  Do not "fix" a report of this by hunting for a scope leak; check the server
+  log for a restart first.
 
 ## Config page conventions
 

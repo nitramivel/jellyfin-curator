@@ -23,7 +23,7 @@ namespace Jellyfin.Plugin.Curator.Services
     /// publish home screen rows. Shared by the scheduled task and the manual
     /// trigger so both take exactly the same path.
     /// </summary>
-    public class CuratorRunService
+    public class CuratorRunService : IDisposable
     {
         private readonly ILibraryScanner _libraryScanner;
         private readonly IUserActivityProvider _userActivityProvider;
@@ -36,6 +36,21 @@ namespace Jellyfin.Plugin.Curator.Services
         private readonly IRunLogStore _runLogStore;
         private readonly ILogger<CuratorRunService> _logger;
         private readonly SemaphoreSlim _runLock = new(1, 1);
+
+        /// <summary>
+        /// Cancelled when the host disposes this service, which is Jellyfin tearing
+        /// down its container — on shutdown, and on every plugin install or update.
+        /// <para>
+        /// This is a best effort, not a guarantee. It lets a run stop at its next
+        /// checkpoint instead of blundering into disposed services, but disposal
+        /// order across singletons is not defined, so a run can still be caught
+        /// mid-call. <see cref="RunFailure.IsHostTeardown"/> catches what this
+        /// misses; the two are a pair.
+        /// </para>
+        /// </summary>
+        private readonly CancellationTokenSource _shutdown = new();
+
+        private bool _disposed;
 
         /// <summary>
         /// Stored definitions already reused by this run. Reset per run; only ever
@@ -103,10 +118,25 @@ namespace Jellyfin.Plugin.Curator.Services
             var runLog = _runLogStore.Begin(trigger, DescribeSettings(config));
             CurrentRunId = runLog.RunId;
 
+            // The manual trigger has no token of its own to give us — an HTTP request
+            // is long gone by the time a run finishes — so without this link a run
+            // started from the config page observes nothing at all when the server
+            // goes down. The scheduled task passes Jellyfin's token and always did.
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, _shutdown.Token);
+
             try
             {
-                await RunCoreAsync(config, progress, runLog, cancellationToken).ConfigureAwait(false);
+                await RunCoreAsync(config, progress, runLog, linked.Token).ConfigureAwait(false);
                 runLog.Complete();
+            }
+            catch (Exception ex) when (_shutdown.IsCancellationRequested || RunFailure.IsHostTeardown(ex))
+            {
+                // Not a fault in this plugin: the container went away underneath the
+                // run. Say so plainly in both places, and do not rethrow — there is
+                // nobody left to handle it, and a stack trace here reads as a defect.
+                _logger.LogWarning("Curator: {Message}", RunFailure.HostTeardownMessage);
+                runLog.Fail(RunFailure.HostTeardownMessage);
             }
             catch (Exception ex)
             {
@@ -120,6 +150,40 @@ namespace Jellyfin.Plugin.Curator.Services
                 CurrentRunId = null;
                 _runLock.Release();
             }
+        }
+
+        /// <summary>
+        /// Signals any run in progress to stop. Jellyfin disposes its container both
+        /// on shutdown and on every plugin install or update.
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Releases resources held by this service.
+        /// </summary>
+        /// <param name="disposing">True when called from <see cref="Dispose()"/>.</param>
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed || !disposing)
+            {
+                return;
+            }
+
+            _disposed = true;
+
+            if (IsRunning)
+            {
+                _logger.LogInformation(
+                    "Curator: the server is shutting down or reloading plugins; asking the run in progress to stop");
+            }
+
+            _shutdown.Cancel();
+            _shutdown.Dispose();
+            _runLock.Dispose();
         }
 
         private async Task RunCoreAsync(
