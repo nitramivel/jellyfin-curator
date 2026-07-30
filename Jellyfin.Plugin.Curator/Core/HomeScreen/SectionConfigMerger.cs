@@ -183,6 +183,26 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         public const int DefaultPortraitThreshold = 10;
 
         /// <summary>
+        /// The fields Home Screen Sections sets for itself when it creates a
+        /// section, and which Curator must therefore seed when it creates one on
+        /// that plugin's behalf.
+        /// </summary>
+        /// <remarks>
+        /// "Leave every other field alone" is the right rule for an entry that
+        /// already exists, and the wrong one for an entry being created: an absent
+        /// field is not left alone, it deserializes to the CLR default. Curator wrote
+        /// new entries carrying only SectionId, OrderIndex and ViewMode, so every row
+        /// it created came back Enabled=false with LowerLimit and UpperLimit at 0 —
+        /// a row switched off and asking for no items. Measured on the owner's
+        /// server: 40 of 46 Curator rows in that state, against every
+        /// non-Curator row sitting at Enabled=true, 1 and 1.
+        /// </remarks>
+        public const int DefaultLowerLimit = 1;
+
+        /// <summary>Upper item limit a new section is created with.</summary>
+        public const int DefaultUpperLimit = 1;
+
+        /// <summary>
         /// Picks the card shape for a category.
         /// </summary>
         /// <param name="memberCount">How many items the category holds.</param>
@@ -253,6 +273,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
 
                 changed |= SetNumber(entry, "OrderIndex", OrderIndex);
                 changed |= SetString(entry, "ViewMode", ViewModeFor(want.MemberCount, portraitThreshold));
+                changed |= RepairIncompleteEntry(entry);
                 desiredById.Remove(sectionId);
             }
 
@@ -261,8 +282,13 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
                 settings.Add(new JsonObject
                 {
                     ["SectionId"] = want.SectionId,
+                    ["Enabled"] = true,
+                    ["AllowUserOverride"] = true,
+                    ["LowerLimit"] = DefaultLowerLimit,
+                    ["UpperLimit"] = DefaultUpperLimit,
                     ["OrderIndex"] = OrderIndex,
                     ["ViewMode"] = ViewModeFor(want.MemberCount, portraitThreshold),
+                    ["HideWatchedItems"] = false,
                 });
                 changed = true;
             }
@@ -285,6 +311,54 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
             }
 
             return (null, null);
+        }
+
+        /// <summary>
+        /// Fixes up a Curator row left incomplete by an older version, without
+        /// touching a row the user has deliberately configured.
+        /// </summary>
+        /// <remarks>
+        /// Both limits at zero is Curator's own fingerprint: Home Screen Sections
+        /// never writes that pair, and a section asking for between zero and zero
+        /// items is not something anyone chose. Only in that case are the fields
+        /// seeded — including Enabled, which is equally ours when the limits are
+        /// ours. A row with real limits keeps whatever the user set, Enabled
+        /// included, because switching a row off by hand is a legitimate thing to do
+        /// and must survive the next run.
+        /// </remarks>
+        /// <param name="entry">The section settings entry to inspect.</param>
+        /// <returns>True when the entry was changed.</returns>
+        private static bool RepairIncompleteEntry(JsonObject entry)
+        {
+            if (GetInt(entry, "LowerLimit") is not (null or 0)
+                || GetInt(entry, "UpperLimit") is not (null or 0))
+            {
+                return false;
+            }
+
+            var changed = SetNumber(entry, "LowerLimit", DefaultLowerLimit);
+            changed |= SetNumber(entry, "UpperLimit", DefaultUpperLimit);
+            changed |= SetBool(entry, "Enabled", true);
+            changed |= SetBool(entry, "AllowUserOverride", true);
+            return changed;
+        }
+
+        private static int? GetInt(JsonObject obj, string pascalName)
+        {
+            var (_, node) = FindProperty(obj, pascalName);
+            return node is JsonValue value && value.TryGetValue<int>(out var i) ? i : null;
+        }
+
+        private static bool SetBool(JsonObject obj, string pascalName, bool value)
+        {
+            var (key, node) = FindProperty(obj, pascalName);
+            if (node is JsonValue v && v.TryGetValue<bool>(out var current) && current == value)
+            {
+                return false;
+            }
+
+            obj[key ?? pascalName] = value;
+            return true;
         }
 
         private static string? GetString(JsonObject obj, string pascalName)

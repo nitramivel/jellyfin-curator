@@ -162,9 +162,20 @@ counterintuitive; do not "correct" them from memory.
   AllowUserOverride, LowerLimit, UpperLimit, OrderIndex, ViewMode,
   HideWatchedItems }`, where `ViewMode` is `Landscape` / `Portrait` / `Square`.
   Collection Sections has no fields for either, so a section registered through
-  it lands on whatever default this plugin assigns. Curator writes `OrderIndex`
-  and `ViewMode` only, keyed on `SectionId` (not `UniqueId` as in Collection
-  Sections), and leaves every other field alone.
+  it lands on whatever default this plugin assigns. Curator owns `OrderIndex`
+  and `ViewMode`, keyed on `SectionId` (not `UniqueId` as in Collection
+  Sections), and leaves every other field on an **existing** entry alone.
+- **"Leave every other field alone" does not apply to an entry being created.**
+  An absent field is not left alone — it deserializes to the CLR default, so a
+  new entry carrying only `SectionId`, `OrderIndex` and `ViewMode` arrives
+  `Enabled=false` with `LowerLimit` and `UpperLimit` at 0: a row switched off
+  and asking for no items. Measured on the owner's server, 40 of 46 Curator
+  rows were in that state while every non-Curator row sat at `Enabled=true`,
+  1 and 1. New entries now seed the fields Home Screen Sections sets for
+  itself. Both limits at 0 is Curator's fingerprint — that plugin never writes
+  it — so `RepairIncompleteEntry` heals exactly that shape and nothing else; a
+  row with real limits keeps whatever the user set, `Enabled` included, because
+  switching a row off by hand must survive the next run.
 - Per-user enablement: `GET`/`POST /ModularHomeViews/UserSettings` with
   `{ UserId, EnabledSections, LockedSections, DefaultEnabledSections }`.
 - A section must be **registered before it can be enabled**, or the ID references
