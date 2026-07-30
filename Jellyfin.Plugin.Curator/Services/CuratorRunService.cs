@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Curator.Configuration;
 using Jellyfin.Plugin.Curator.Core;
+using Jellyfin.Plugin.Curator.Core.Llm;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Reconciliation;
 using Jellyfin.Plugin.Curator.Services.Categories;
@@ -205,13 +206,17 @@ namespace Jellyfin.Plugin.Curator.Services
         {
             _claimedDefinitions.Clear();
 
-            var provider = _providerFactory.Create(config);
+            // Resolved once and used for both the call and the costing. Pricing lives
+            // on the profile, so reading it from anywhere else would report this run
+            // at whatever the previously selected profile charged.
+            var modelProfile = ModelProfiles.ResolveDefault(config);
+            var provider = _providerFactory.Create(modelProfile, config.EnableThinking);
             runLog.SetProvider(
-                config.Provider.ToString(),
+                modelProfile.Provider.ToString(),
                 provider.ModelId,
-                config.InputCostPerMillion,
-                config.OutputCostPerMillion,
-                config.CachedInputCostPerMillion);
+                modelProfile.InputCostPerMillion,
+                modelProfile.OutputCostPerMillion,
+                modelProfile.CachedInputCostPerMillion);
 
             var targetUsers = ResolveTargetUsers(config);
             if (targetUsers.Count == 0)
@@ -268,9 +273,9 @@ namespace Jellyfin.Plugin.Curator.Services
                 config.BatchSize,
                 config.MaxOutputTokens,
                 config.TokenBudget,
-                config.InputCostPerMillion,
-                config.OutputCostPerMillion,
-                config.CachedInputCostPerMillion,
+                modelProfile.InputCostPerMillion,
+                modelProfile.OutputCostPerMillion,
+                modelProfile.CachedInputCostPerMillion,
                 config.UseBatchApi,
                 config.MaxTagsPerItem,
                 sharedLimits,
@@ -544,11 +549,21 @@ namespace Jellyfin.Plugin.Curator.Services
         /// </summary>
         private static Dictionary<string, object?> DescribeSettings(PluginConfiguration config)
         {
+            // Normalize rather than ResolveDefault: this snapshot is diagnostics, and
+            // a run that failed *because* nothing was configured is exactly when its
+            // log must still be written. Rule 9 — a log never breaks the run.
+            var normalized = ModelProfiles.Normalize(config);
+            var profile = normalized.Profiles.FirstOrDefault(
+                p => string.Equals(p.Id, normalized.DefaultProfileId, StringComparison.Ordinal));
+
             return new Dictionary<string, object?>
             {
-                ["provider"] = config.Provider.ToString(),
-                ["model"] = config.Model,
-                ["baseUrl"] = config.BaseUrl,
+                ["modelProfile"] = profile?.Name,
+                ["modelProfileId"] = profile?.Id,
+                ["modelProfileCount"] = normalized.Profiles.Count,
+                ["provider"] = profile?.Provider.ToString(),
+                ["model"] = profile?.Model,
+                ["baseUrl"] = profile?.BaseUrl,
                 ["batchSize"] = config.BatchSize,
                 ["maxOutputTokens"] = config.MaxOutputTokens,
                 ["tokenBudget"] = config.TokenBudget,
@@ -566,9 +581,9 @@ namespace Jellyfin.Plugin.Curator.Services
                 ["enableThinking"] = config.EnableThinking,
                 ["useBatchApi"] = config.UseBatchApi,
                 ["autoEnableSections"] = config.AutoEnableSections,
-                ["inputCostPerMillion"] = config.InputCostPerMillion,
-                ["cachedInputCostPerMillion"] = config.CachedInputCostPerMillion,
-                ["outputCostPerMillion"] = config.OutputCostPerMillion,
+                ["inputCostPerMillion"] = profile?.InputCostPerMillion,
+                ["cachedInputCostPerMillion"] = profile?.CachedInputCostPerMillion,
+                ["outputCostPerMillion"] = profile?.OutputCostPerMillion,
                 ["targetUsers"] = config.TargetUsers.Select(id => id.ToString()).ToArray(),
             };
         }

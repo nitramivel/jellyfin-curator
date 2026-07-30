@@ -52,7 +52,8 @@ Jellyfin.Plugin.Curator/
 │   ├── CategoryIdentity.cs   # Matches a reconciled category to a stored definition
 │   ├── CategoryRetention.cs  # Which stored categories to prune when over a cap
 │   ├── Models/CategoryLimits.cs  # The one value the prompt AND the Reconciler read
-│   ├── Llm/                  # Batcher, PromptBuilder, ProposalParser
+│   ├── Llm/                  # Batcher, PromptBuilder, ProposalParser,
+│   │                         #   ModelProfiles (list migration + resolution)
 │   ├── Reconciliation/       # Reconciler, StringSimilarity
 │   ├── Playlists/            # PlaylistSyncDecision (the ownership decision table)
 │   ├── HomeScreen/           # SectionConfigMerger (JSON merge for both integrations)
@@ -83,7 +84,8 @@ test.
 ## Hard rules
 
 These are invariants, not preferences. Breaking one produces a plugin that
-silently misbehaves.
+silently misbehaves. (Rules 1-9 predate the model profile list; rule 10 was
+added with it.)
 
 1. **The model never sees Jellyfin GUIDs.** `PromptBuilder` assigns batch-local
    integer indexes; `ProposalParser` discards any index outside `0..n-1` and maps
@@ -146,7 +148,22 @@ silently misbehaves.
    `Services/Runs/` swallows its own IO failures with a warning. The same applies
    to the prompt pool and the atomic temp-file rename — diagnostics are strictly
    subordinate to the run.
-10. **Ask before adding dependencies** beyond the Jellyfin packages and an
+10. **A model profile is the unit of "how to call a model", and its legacy fields
+   are not dead code.** `ModelProfile` carries provider, model, API key, base URL
+   **and that profile's prices**; `Core/Llm/ModelProfiles` normalizes the list on
+   every read. Pricing lives on the profile because a list you switch between
+   turns "remember to change the prices when you change provider" from an
+   occasional mistake into the normal case — rule 6 says the cost line must be
+   right, and a shared price block cannot be. The pre-profile scalars on
+   `PluginConfiguration` (`Provider`, `Model`, `ApiKey`, `BaseUrl`, the three
+   `*CostPerMillion`) look unused and **must not be deleted**: XmlSerializer
+   silently drops elements it has no property for, so removing them throws away
+   the API key of every install that upgrades before it next opens the config
+   page. `Normalize` folds them into one profile the first time it sees an empty
+   list, and the config page blanks them on the next save so migration happens
+   exactly once. Migration is deliberately *only* for an empty list — re-importing
+   them afterwards would resurrect a deleted profile on every run.
+11. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 
@@ -287,7 +304,13 @@ Playlists are still built. Never throw out of home screen integration.
   `innerHTML`, customized built-in elements upgrade unreliably — one row rendered
   styled-but-unwired and the rest bare. Dynamic rows use plain
   `<input type="checkbox" class="curatorCheck">`.
-- **Settings live on four tabs**: Model (provider, request, spend), Library
+- **The Model tab edits one profile at a time out of an in-memory list.**
+  `modelProfiles` / `activeProfileId` hold the list while the page is open; the
+  editor shows only the selected profile, so anything that changes the selection
+  must call `captureProfileEditor()` first or the outgoing profile's edits are
+  lost. `normalizeProfiles()` is a hand-mirror of
+  `Core/Llm/ModelProfiles.Normalize` — change one, change both.
+- **Settings live on four tabs**: Model (profiles, request, spend), Library
   (what is sent and who for), Categories (the two pools' size and count), Home
   screen (rows). A fifth tab, Runs, is not part of the settings form — the save
   row hides on it. Put a new setting where its *subject* is, not where it is
