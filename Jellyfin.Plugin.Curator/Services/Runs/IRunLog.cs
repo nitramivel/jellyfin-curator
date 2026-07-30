@@ -62,11 +62,16 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         /// <param name="model">The model identifier.</param>
         /// <param name="inputCostPerMillion">Input price, for the running cost estimate; 0 leaves it unknown.</param>
         /// <param name="outputCostPerMillion">Output price, for the running cost estimate; 0 leaves it unknown.</param>
+        /// <param name="cachedCostPerMillion">
+        /// Cache-read price. 0 falls back to half the input price — cache reads are
+        /// discounted, not free, and reporting them as free understated real runs.
+        /// </param>
         void SetProvider(
             string provider,
             string model,
             decimal inputCostPerMillion = 0,
-            decimal outputCostPerMillion = 0);
+            decimal outputCostPerMillion = 0,
+            decimal cachedCostPerMillion = 0);
 
         /// <summary>Marks the run finished and flushes the file.</summary>
         void Complete();
@@ -169,7 +174,8 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             string provider,
             string model,
             decimal inputCostPerMillion = 0,
-            decimal outputCostPerMillion = 0)
+            decimal outputCostPerMillion = 0,
+            decimal cachedCostPerMillion = 0)
         {
         }
 

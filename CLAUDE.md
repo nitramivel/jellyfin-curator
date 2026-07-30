@@ -118,7 +118,15 @@ silently misbehaves.
 5. **No live LLM calls in tests.** Providers are tested through a stub
    `HttpMessageHandler`; the run pipeline through a stub `ILlmProvider`.
 6. **Log token count and estimated cost at INFO every run.** Runs cost money; the
-   user must be able to see what a run spent.
+   user must be able to see what a run spent. **Cache reads are charged, not
+   free.** Providers that report cached tokens inside their input count have it
+   subtracted before costing, so pricing only `InputTokens` silently drops them
+   from the total — measured, that understated one run by 24%, and a fully cached
+   run would report about a third of its bill. `CachedInputCostPerMillion` falls
+   back to half the input price when blank: conservative, and the right direction
+   to err for a number whose only job is telling the owner what a run spent.
+   Cache *writes* carry their own premium and are still unpriced, which the
+   `RunLogCost` doc comment says out loud.
 7. **`BatchSize = 0` means the whole library in one request, and is the default.**
    A thread running through items split across two batches is one the model
    never gets to see: each call only sees its own slice, so the categories it
@@ -195,6 +203,20 @@ counterintuitive; do not "correct" them from memory.
   nothing. Order matters.
 - The `GET` returns defaults *without* a `UserId` when a user has no saved
   settings, and the `POST` routes on that field — set it explicitly before posting.
+
+**xAI caches per server, so a run needs a routing hint.** Grok's prompt caching
+is automatic — there is no `cache_control` — but cache entries live on the
+machine that wrote them, so without `x-grok-conv-id` the calls of one run scatter
+across the fleet and each lands on a server that has never seen the prefix.
+Measured before the header: 16 of 18 calls reported 128 cached tokens against a
+byte-identical ~28k prefix, and the two that did hit cost $0.0033 and $0.0002
+against $0.077 for the misses. `LlmRequest.ConversationId` carries the run ID and
+**every call of a run must use the same value** — a per-user ID would defeat the
+point, since the passes share one item list. The header is xAI's alone; the
+generic OpenAI-compatible path must not send it. Anthropic is the opposite model:
+caching there is explicit, a `cache_control` breakpoint on the item-list block
+with a 1-hour TTL, because a run spans about four minutes and the 5-minute
+default would be racing it.
 
 **Both integrations degrade gracefully.** Assembly probing detects whether each
 plugin is loaded; a missing one logs a clear explanation and returns `false`.

@@ -36,12 +36,17 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
     /// <param name="VariableSuffix">The per-request trailing portion of the user prompt.</param>
     /// <param name="MaxOutputTokens">Maximum output tokens for this call.</param>
     /// <param name="Shape">The JSON object being asked for; used by providers with structured outputs.</param>
+    /// <param name="ConversationId">
+    /// Groups the calls of one run so a provider can route them to the same cache.
+    /// Null omits the routing hint entirely.
+    /// </param>
     public sealed record LlmRequest(
         string SystemPrompt,
         string CacheablePrefix,
         string VariableSuffix,
         int MaxOutputTokens,
-        ResponseShape Shape = ResponseShape.Categories)
+        ResponseShape Shape = ResponseShape.Categories,
+        string? ConversationId = null)
     {
         /// <summary>
         /// Gets the whole user prompt, for providers with no caching support.
