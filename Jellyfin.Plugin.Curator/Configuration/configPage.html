@@ -99,6 +99,45 @@
                 .curatorLegendValue { font-variant-numeric: tabular-nums; opacity: 0.75; }
                 .curatorCostNote { opacity: 0.6; font-size: 0.87em; margin-top: 0.5em; }
 
+                /* Run history */
+                .curatorRunRow { display: flex; align-items: flex-start; gap: 0.6em; width: 100%; }
+                .curatorRunRow .curatorRunBody { flex: 1 1 auto; min-width: 0; }
+                .curatorRunDetail { padding: 0.2em 0 1.1em 0; }
+                .curatorDot {
+                    width: 0.62em; height: 0.62em; border-radius: 50%;
+                    flex: 0 0 auto; margin-top: 0.5em;
+                }
+                .curatorDotCompleted { background: #4caf76; }
+                .curatorDotFailed    { background: #d9534f; }
+                .curatorDotRunning   { background: #00a4dc; }
+                .curatorDotAbandoned { background: #b0883a; }
+                .curatorRunFacts {
+                    display: grid; grid-template-columns: auto 1fr; gap: 0.3em 1em;
+                    font-size: 0.9em; margin: 0.5em 0 0.2em;
+                }
+                .curatorRunFacts dt { opacity: 0.6; white-space: nowrap; }
+                .curatorRunFacts dd { margin: 0; }
+                .curatorRunSub {
+                    font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em;
+                    opacity: 0.55; margin: 1.1em 0 0.4em;
+                }
+                .curatorRunTable { width: 100%; border-collapse: collapse; font-size: 0.88em; }
+                .curatorRunTable th, .curatorRunTable td {
+                    text-align: left; padding: 0.3em 0.7em 0.3em 0;
+                    border-bottom: 1px solid rgba(255,255,255,0.08); white-space: nowrap;
+                }
+                .curatorRunTable th { font-weight: 600; opacity: 0.6; }
+                .curatorRunTable td.curatorNum, .curatorRunTable th.curatorNum {
+                    text-align: right; font-variant-numeric: tabular-nums; padding-right: 0;
+                }
+                .curatorRunSkipped { opacity: 0.55; }
+                .curatorRunError {
+                    margin-top: 0.8em; padding: 0.6em 0.8em; border-radius: 6px;
+                    background: rgba(217,83,79,0.12); border: 1px solid rgba(217,83,79,0.35);
+                    font-size: 0.9em;
+                }
+                .curatorRawLink { display: inline-block; margin-top: 1em; font-size: 0.88em; opacity: 0.8; }
+
                 @media (max-width: 500px) {
                     .curatorProgressPct { font-size: 1.25em; }
                     .curatorCostLegend { gap: 0.3em 1em; }
@@ -423,9 +462,8 @@
                         <span>Generate categories now</span>
                     </button>
                     <div class="fieldDescription" style="margin-top:0.5em;">
-                        Save your settings first. A run can take several minutes and costs money. Progress and a
-                        running cost appear below once a run starts. The same run happens on schedule via the
-                        <em>Curator: Generate Categories</em> scheduled task.
+                        Save your settings first. A run can take several minutes and costs money. The same run
+                        happens on schedule via the <em>Curator: Generate Categories</em> scheduled task.
                     </div>
 
                     <div id="CuratorProgress" class="curatorProgress hide">
@@ -454,6 +492,9 @@
                             <div class="curatorCostLegend" id="CuratorCostLegend"></div>
                         </div>
                     </div>
+
+                    <h3 class="sectionTitle" style="margin-top:1.6em;">Recent runs</h3>
+                    <div id="CuratorRuns"></div>
                 </div>
 
                 <div class="verticalSection">
@@ -1172,6 +1213,245 @@
                 renderCost(run.Totals);
             }
 
+            // ---- run history -------------------------------------------------
+
+            var recentRuns = [];
+            var runDetails = {};       // runId -> detail, fetched once per expand
+            var expandedRunId = null;  // only one open at a time; the newest by default
+            var seenNewestRunId = null;
+            var wasRunning = false;
+
+            function relativeTime(iso) {
+                var then = Date.parse(iso);
+                if (isNaN(then)) {
+                    return '';
+                }
+
+                var mins = Math.round((Date.now() - then) / 60000);
+                if (mins < 1) { return 'just now'; }
+                if (mins < 60) { return mins + (mins === 1 ? ' minute ago' : ' minutes ago'); }
+                var hours = Math.round(mins / 60);
+                if (hours < 24) { return hours + (hours === 1 ? ' hour ago' : ' hours ago'); }
+                var days = Math.round(hours / 24);
+                return days + (days === 1 ? ' day ago' : ' days ago');
+            }
+
+            function formatDuration(seconds) {
+                if (seconds === null || seconds === undefined) {
+                    return '—';
+                }
+                var whole = Math.round(seconds);
+                if (whole < 60) { return whole + 's'; }
+                return Math.floor(whole / 60) + 'm ' + (whole % 60) + 's';
+            }
+
+            function formatBytes(bytes) {
+                if (!bytes) { return ''; }
+                if (bytes < 1024) { return bytes + ' B'; }
+                if (bytes < 1024 * 1024) { return Math.round(bytes / 1024) + ' KB'; }
+                return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+            }
+
+            function statusWord(status) {
+                if (status === 'Completed' || status === 'completed') { return 'Completed'; }
+                if (status === 'Failed' || status === 'failed') { return 'Failed'; }
+                if (status === 'Running' || status === 'running') { return 'Running'; }
+                if (status === 'Abandoned' || status === 'abandoned') { return 'Abandoned'; }
+                return status || 'Unknown';
+            }
+
+            function fact(term, value) {
+                return '<dt>' + escapeHtml(term) + '</dt><dd>' + value + '</dd>';
+            }
+
+            function runDetailPanel(run) {
+                if (expandedRunId !== run.RunId) {
+                    return '';
+                }
+
+                var detail = runDetails[run.RunId];
+                if (!detail) {
+                    return '<div class="curatorRunDetail"><p class="fieldDescription">Loading…</p></div>';
+                }
+
+                var html = '<div class="curatorRunDetail"><dl class="curatorRunFacts">';
+
+                if (detail.Library) {
+                    html += fact('Library', escapeHtml(String(detail.Library.ItemCount)) + ' items, episodes '
+                        + (detail.Library.IncludeEpisodes ? 'included' : 'excluded'));
+                }
+
+                if (detail.Discovery) {
+                    html += fact('Discovery', escapeHtml(String(detail.Discovery.CandidateCount))
+                        + ' shared categories from ' + escapeHtml(String(detail.Discovery.ProposalCount)) + ' proposals'
+                        + (detail.Discovery.BatchesSkipped
+                            ? ' · ' + escapeHtml(String(detail.Discovery.BatchesSkipped)) + ' batch(es) unparseable'
+                            : ''));
+                }
+
+                var c = detail.Categories || {};
+                html += fact('Categories', escapeHtml(String(c.Built || 0)) + ' built · '
+                    + escapeHtml(String(c.Renamed || 0)) + ' renamed · '
+                    + escapeHtml(String(c.Retired || 0)) + ' retired · '
+                    + escapeHtml(String(c.Pruned || 0)) + ' pruned');
+                html += '</dl>';
+
+                if (detail.Users && detail.Users.length) {
+                    html += '<div class="curatorRunSub">Per viewer</div>'
+                        + '<div class="curatorTableScroll"><table class="curatorRunTable"><thead><tr>'
+                        + '<th>Viewer</th><th class="curatorNum">Watched</th>'
+                        + '<th class="curatorNum">Series</th><th class="curatorNum">Personal</th>'
+                        + '</tr></thead><tbody>';
+                    detail.Users.forEach(function (u) {
+                        var label = u.Name || (String(u.UserId).substring(0, 8));
+                        html += '<tr' + (u.Skipped ? ' class="curatorRunSkipped"' : '') + '>'
+                            + '<td>' + escapeHtml(label) + (u.Skipped ? ' — skipped' : '') + '</td>'
+                            + '<td class="curatorNum">' + escapeHtml(String(u.WatchedCount)) + '</td>'
+                            + '<td class="curatorNum">' + escapeHtml(String(u.SeriesWithHistory)) + '</td>'
+                            + '<td class="curatorNum">' + escapeHtml(String(u.PersonalCount)) + '</td>'
+                            + '</tr>';
+                    });
+                    html += '</tbody></table></div>';
+                }
+
+                if (detail.Calls && detail.Calls.length) {
+                    html += '<div class="curatorRunSub">Model calls</div>'
+                        + '<div class="curatorTableScroll"><table class="curatorRunTable"><thead><tr>'
+                        + '<th>Pass</th><th class="curatorNum">Time</th><th class="curatorNum">In</th>'
+                        + '<th class="curatorNum">Out</th><th class="curatorNum">Cached</th>'
+                        + '<th class="curatorNum">Cost</th></tr></thead><tbody>';
+                    detail.Calls.forEach(function (call) {
+                        var name = call.Phase + (call.UserName ? ' · ' + call.UserName : '');
+                        if (call.Attempt > 1) { name += ' (retry)'; }
+                        if (call.Outcome && call.Outcome !== 'ok') { name += ' — ' + call.Outcome; }
+                        html += '<tr>'
+                            + '<td>' + escapeHtml(name) + '</td>'
+                            + '<td class="curatorNum">' + escapeHtml((call.DurationMs / 1000).toFixed(1)) + 's</td>'
+                            + '<td class="curatorNum">' + escapeHtml(formatTokens(call.InputTokens)) + '</td>'
+                            + '<td class="curatorNum">' + escapeHtml(formatTokens(call.OutputTokens)) + '</td>'
+                            + '<td class="curatorNum">' + escapeHtml(formatTokens(call.CacheReadTokens)) + '</td>'
+                            + '<td class="curatorNum">' + escapeHtml(formatUsd(call.CostUsd) || '—') + '</td>'
+                            + '</tr>';
+                    });
+                    html += '</tbody></table></div>';
+                }
+
+                if (detail.Error) {
+                    html += '<div class="curatorRunError">' + escapeHtml(detail.Error) + '</div>';
+                }
+
+                html += '<a class="curatorRawLink" target="_blank" rel="noopener" href="'
+                    + escapeHtml(ApiClient.getUrl('Curator/Runs/' + detail.RunId))
+                    + '">Download the full run log'
+                    + (detail.FileSizeBytes ? ' (' + escapeHtml(formatBytes(detail.FileSizeBytes)) + ')' : '')
+                    + '</a>';
+
+                return html + '</div>';
+            }
+
+            function renderRuns() {
+                var container = page.querySelector('#CuratorRuns');
+                if (!recentRuns.length) {
+                    container.innerHTML =
+                        '<p class="fieldDescription">No runs recorded yet. Generate categories to see one here.</p>';
+                    return;
+                }
+
+                var rows = recentRuns.map(function (run) {
+                    var id = escapeHtml(run.RunId);
+                    var word = statusWord(run.Status);
+                    var cost = run.Totals && run.Totals.Cost ? formatUsd(run.Totals.Cost.TotalUsd) : null;
+
+                    var meta = escapeHtml(run.Model || 'unknown model')
+                        + ' · ' + escapeHtml(run.Trigger || 'manual')
+                        + ' · ' + escapeHtml(formatDuration(run.DurationSeconds));
+                    if (cost) { meta += ' · ' + escapeHtml(cost); }
+
+                    var title = word + ' · ' + escapeHtml(relativeTime(run.StartedAt));
+                    var toggle = expandedRunId === run.RunId ? 'Hide details' : 'Details';
+
+                    return '<div class="listItem listItem-border">'
+                        + '<div class="curatorRunRow">'
+                        + '<span class="curatorDot curatorDot' + escapeHtml(word) + '"></span>'
+                        + '<div class="listItemBody curatorRunBody">'
+                        + '<div class="listItemBodyText">' + title + '</div>'
+                        + '<div class="listItemBodyText secondary">' + meta + '</div>'
+                        + '</div>'
+                        + '<button is="emby-button" type="button" class="raised curatorRunToggle" '
+                        + 'data-id="' + id + '"><span>' + toggle + '</span></button>'
+                        + '</div>'
+                        + runDetailPanel(run)
+                        + '</div>';
+                }).join('');
+
+                container.innerHTML = '<div class="paperList">' + rows + '</div>';
+            }
+
+            function fetchRunDetail(runId) {
+                if (runDetails[runId]) {
+                    renderRuns();
+                    return;
+                }
+
+                ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Runs/' + runId + '/Detail'),
+                    dataType: 'json'
+                }).then(function (detail) {
+                    runDetails[runId] = detail;
+                    renderRuns();
+                }, function () {
+                    // Leave the row expanded but say so, rather than silently
+                    // collapsing and looking like the click did nothing.
+                    runDetails[runId] = { RunId: runId, Error: 'Could not load this run.', Categories: {} };
+                    renderRuns();
+                });
+            }
+
+            function onRunToggle(e) {
+                var button = e.target.closest ? e.target.closest('.curatorRunToggle') : null;
+                if (!button) {
+                    return;
+                }
+
+                var id = button.getAttribute('data-id');
+                expandedRunId = expandedRunId === id ? null : id;
+                renderRuns();
+                if (expandedRunId) {
+                    fetchRunDetail(expandedRunId);
+                }
+            }
+
+            function loadRuns(expandNewest) {
+                return ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Runs?limit=5'),
+                    dataType: 'json'
+                }).then(function (runs) {
+                    recentRuns = runs || [];
+                    var newest = recentRuns.length ? recentRuns[0] : null;
+
+                    // Newest expanded: on first load, and again whenever a run that
+                    // was not there before appears — which is how a finished run
+                    // shows its details the moment the progress bar goes away.
+                    if (newest && (expandNewest || seenNewestRunId === null)) {
+                        expandedRunId = newest.RunId;
+                    }
+
+                    if (newest) {
+                        seenNewestRunId = newest.RunId;
+                    }
+
+                    renderRuns();
+                    if (expandedRunId) {
+                        fetchRunDetail(expandedRunId);
+                    }
+                }, function () {
+                    page.querySelector('#CuratorRuns').innerHTML =
+                        '<p class="fieldDescription">Could not load run history — check the server log.</p>';
+                });
+            }
+
             function refreshStatus() {
                 return ApiClient.ajax({
                     type: 'GET',
@@ -1183,6 +1463,7 @@
                     if (status.IsRunning) {
                         stateText.innerHTML = 'A run is in progress.';
                         runButton.disabled = true;
+                        wasRunning = true;
                         renderProgress(status.CurrentRun);
                         // Faster while running: the panel is read from memory, so
                         // the poll costs a dictionary lookup, not a file read.
@@ -1191,6 +1472,15 @@
                         stateText.innerHTML = 'Idle.';
                         runButton.disabled = false;
                         renderProgress(null);
+
+                        // The run we were watching has just ended. Its file is
+                        // written by now, so pull the history and open the new run
+                        // straight away — the details replace the progress bar
+                        // rather than making the user go looking for them.
+                        if (wasRunning) {
+                            wasRunning = false;
+                            loadRuns(true);
+                        }
                     }
 
                     currentCategories = status.Categories || [];
@@ -1265,6 +1555,7 @@
                 }).then(function () {
                     Dashboard.hideLoadingMsg();
                     refreshStatus();
+                    loadRuns(false);
                 });
             }
 
@@ -1341,6 +1632,8 @@
                 page.querySelector('#CuratorExpandAll').addEventListener('click', onExpandAll);
 
                 page.querySelector('#CuratorScopeBar').addEventListener('click', onScopeBarClick);
+
+                page.querySelector('#CuratorRuns').addEventListener('click', onRunToggle);
 
                 var categories = page.querySelector('#CuratorCategories');
                 categories.addEventListener('click', onCategoriesClick);

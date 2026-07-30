@@ -167,6 +167,65 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         }
 
         /// <inheritdoc />
+        public RunDetail? Detail(Guid runId, IReadOnlyDictionary<Guid, string>? userNames = null)
+        {
+            var path = FindRunFile(runId);
+            if (path is null)
+            {
+                return null;
+            }
+
+            var document = TryRead(path);
+            if (document is null)
+            {
+                return null;
+            }
+
+            long size = 0;
+            try
+            {
+                size = new FileInfo(path).Length;
+            }
+            catch (IOException)
+            {
+                // Only feeds the "download the full log" link's size hint.
+            }
+
+            return RunDetailProjection.Project(document, userNames, size);
+        }
+
+        /// <summary>
+        /// Locates a run's file. The ID is in the filename, but only its first eight
+        /// characters, so a filename match still has to be confirmed against the
+        /// document itself.
+        /// </summary>
+        private string? FindRunFile(Guid runId)
+        {
+            if (!Directory.Exists(_basePath))
+            {
+                return null;
+            }
+
+            var shortId = runId.ToString("N")[..8];
+            foreach (var file in EnumerateRunFiles().Where(f => Path.GetFileName(f).Contains(shortId, StringComparison.Ordinal)))
+            {
+                try
+                {
+                    if (TryParseRunId(File.ReadAllText(file)) == runId)
+                    {
+                        return file;
+                    }
+                }
+                catch (IOException ex)
+                {
+                    _logger.LogWarning(ex, "Curator: could not read run log {Path}", file);
+                }
+            }
+
+            return null;
+        }
+
+        /// <inheritdoc />
         public string? ReadRaw(Guid runId)
         {
             if (!Directory.Exists(_basePath))
