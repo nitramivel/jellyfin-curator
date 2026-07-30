@@ -18,7 +18,7 @@ The .NET 9 SDK is installed per-user and is **not on `PATH` by default**:
 export PATH="$HOME/.dotnet:$PATH"     # required first, in every shell
 
 dotnet build Jellyfin.Plugin.Curator.sln -c Release
-dotnet test  Jellyfin.Plugin.Curator.sln -c Release    # 133 tests, no network
+dotnet test  Jellyfin.Plugin.Curator.sln -c Release    # 326 tests, no network
 ./build/package.sh                                      # artifacts/Curator_<version>/
 VERSION=0.2.0.0 CHANGELOG="..." ./build/release.sh      # zip + manifest.json entry
 ```
@@ -47,6 +47,8 @@ Jellyfin.Plugin.Curator/
 ├── Core/                     # Pure logic — no Jellyfin services, fully unit-tested
 │   ├── ItemReducer.cs        # BaseItem -> MediaItemRecord
 │   ├── CategoryIdentity.cs   # Matches a reconciled category to a stored definition
+│   ├── CategoryRetention.cs  # Which stored categories to prune when over a cap
+│   ├── Models/CategoryLimits.cs  # The one value the prompt AND the Reconciler read
 │   ├── Llm/                  # Batcher, PromptBuilder, ProposalParser
 │   ├── Reconciliation/       # Reconciler, StringSimilarity
 │   ├── Playlists/            # PlaylistSyncDecision (the ownership decision table)
@@ -57,12 +59,15 @@ Jellyfin.Plugin.Curator/
 │   ├── CuratorRunService.cs  # The end-to-end run; both entry points call this
 │   ├── GenerateCategoriesTask.cs   # IScheduledTask, weekly default
 │   ├── Library/              # LibraryScanner, UserActivityProvider
-│   ├── Llm/                  # ILlmProvider + Anthropic/OpenAI/compatible, factory,
+│   ├── Llm/                  # ILlmProvider + Anthropic/Google/Grok/OpenAI/compatible,
+│   │                         #   TransientHttpRetry (shared 429/5xx backoff), factory,
 │   │                         #   CategoryProposalService (batch loop, token budget)
 │   ├── Categories/           # ICategoryStore — one JSON file per category
+│   ├── Runs/                 # IRunLogStore — one JSON file per run: every step,
+│   │                         #   every prompt and response, written incrementally
 │   ├── Playlists/            # CuratorPlaylistService — create/update/delete, tagging
 │   └── HomeScreen/           # HomeScreenIntegrationService, API key provider
-├── Api/CuratorController.cs  # Admin: Status, Run, delete category
+├── Api/CuratorController.cs  # Admin: Status, Run, runs, delete category + playlists
 └── Configuration/            # PluginConfiguration + configPage.html
 ```
 
@@ -91,11 +96,34 @@ silently misbehaves.
    the category empties.
 4. **Empty category ≠ deleted category.** Remove the Jellyfin playlist, null the
    stored playlist ID, keep the definition so a later run reuses the same identity.
+   Identity is name **or** member similarity, not name alone — the model renames
+   every thread every run (measured: 0 of 16 then 0 of 33 names survived), and a
+   rename must not destroy a row. `CategoryIdentity` uses Jaccard, deliberately
+   not the Reconciler's overlap coefficient: that one divides by the smaller set,
+   so a six-item category would swallow the identity of the twenty-item category
+   containing it.
+   The single exception is `CategoryRetention` enforcing a configured cap, where
+   the user has asked for a bounded list and something must actually go; a pruned
+   category loses its identity and returns as a new one.
 5. **No live LLM calls in tests.** Providers are tested through a stub
    `HttpMessageHandler`; the run pipeline through a stub `ILlmProvider`.
 6. **Log token count and estimated cost at INFO every run.** Runs cost money; the
    user must be able to see what a run spent.
-7. **Ask before adding dependencies** beyond the Jellyfin packages and an
+7. **Every category limit is told to the model, not only applied to its answer.**
+   `CategoryLimits` is the single value both `PromptBuilder` and `Reconciler`
+   take — build one per pool and pass the *same instance* to both. Do not unpack
+   it into loose ints on the way, and do not add a limit that only one side sees.
+   This has broken twice in opposite directions: prompt-3 / filter-6 binned 17 of
+   22 proposals on size alone, and a filter capping at 8 categories with no
+   target in the prompt got 5 categories covering 10% of the library where the
+   other model gave 23 covering 78%. `CategoryLimitsTests` reads the numbers back
+   out of the generated prompt and checks them against what the Reconciler
+   actually does — a new limit belongs in that theory.
+8. **A run log must never break the run it describes.** Every write in
+   `Services/Runs/` swallows its own IO failures with a warning. The same applies
+   to the prompt pool and the atomic temp-file rename — diagnostics are strictly
+   subordinate to the run.
+9. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 
@@ -123,10 +151,18 @@ counterintuitive; do not "correct" them from memory.
   is PascalCase. `SectionConfigMerger` handles both; a naive implementation
   silently creates a second `Sections` array the plugin ignores.
 
-**Home Screen Sections**
+**Home Screen Sections** (GUID `b8298e01-2697-407a-b44d-aa8dc795e850`)
 
 - `PluginInterface.RegisterSection` is **in-memory only and does not persist** —
   anything registered that way vanishes on restart. Never call it directly.
+- **Row order and card shape live here, not in Collection Sections.** Its plugin
+  config carries `SectionSettings[]`, each `{ SectionId, Enabled,
+  AllowUserOverride, LowerLimit, UpperLimit, OrderIndex, ViewMode,
+  HideWatchedItems }`, where `ViewMode` is `Landscape` / `Portrait` / `Square`.
+  Collection Sections has no fields for either, so a section registered through
+  it lands on whatever default this plugin assigns. Curator writes `OrderIndex`
+  and `ViewMode` only, keyed on `SectionId` (not `UniqueId` as in Collection
+  Sections), and leaves every other field alone.
 - Per-user enablement: `GET`/`POST /ModularHomeViews/UserSettings` with
   `{ UserId, EnabledSections, LockedSections, DefaultEnabledSections }`.
 - A section must be **registered before it can be enabled**, or the ID references
@@ -163,25 +199,41 @@ Playlists are still built. Never throw out of home screen integration.
 - Config load/save goes through `ApiClient.getPluginConfiguration` /
   `updatePluginConfiguration`; everything else through `ApiClient.ajax` against
   `Curator/*`.
+- `is="emby-checkbox"` is correct for **static** markup only. In rows built by
+  `innerHTML`, customized built-in elements upgrade unreliably — one row rendered
+  styled-but-unwired and the rest bare. Dynamic rows use plain
+  `<input type="checkbox" class="curatorCheck">`.
+- **Option order in a `<select>` is load-bearing.** `setEnumSelect` falls back to
+  matching by index when a stored config carries the numeric enum value, so
+  provider options must stay in enum order. Change labels freely; never reorder.
+- **The page is cached by the browser.** It is an `<EmbeddedResource>` served at
+  a URL that does not change between versions, so after any deploy touching it
+  you must hard-reload (Ctrl+Shift+R) or you are looking at the old page. This
+  has wasted time in three separate sessions. Confirm the new page is really
+  installed by grepping the DLL: `grep -ac curatorTabPanel .../Jellyfin.Plugin.Curator.dll`.
 
-## Unverified — watch these on first deployment
+## Verified on a live server, and what is still open
 
-Nothing has run against a live Jellyfin server yet. Likely friction points, in
-order of probability:
+The plugin runs end to end against a real 10.11.11 server: scan, propose,
+reconcile, build playlists, publish rows. Items 1 and 2 of the old "unverified"
+list — the loopback API key header and the Collection Sections config
+round-trip — are confirmed working. What remains:
 
-1. **The API key auth header** on loopback calls (`ServerApiKeyProvider` +
-   `MediaBrowser Token="..."`). If Collection Sections' config `GET` returns 401,
-   this is why.
-2. **Collection Sections config round-trip** — whether posting the merged config
-   back is accepted and actually triggers re-registration.
-3. **Model output quality** on a real library, and whether category names stay
-   stable enough between runs that rows do not churn.
+1. **Category name churn.** Measured across three runs, ZERO category names
+   survived to the next run (0 of 16, then 0 of 33). Identity now falls back to
+   member similarity so a rename keeps its row, but that fix has not yet been
+   observed across two real runs. Check `category.renamed` steps in the run log.
+2. **Shared-category distribution.** A shared category is built only for users
+   whose personal pass selected it, while users skipped for thin watch history
+   get all of them. Measured result: the user who had watched nothing got 5 rows
+   while a user with 3 watched items got 0. The owner has been asked and has not
+   decided. Do not change it unilaterally.
+3. **Grok and the batch API.** No live xAI call has been made from the agent
+   side. `AnthropicProvider.CompleteBatchAsync` has still never parsed a real
+   completed job and is off by default — the least-tested code in the repo.
 4. **Whole-series playlist members** — series go in as `Series` LinkedChildren
-   without episode expansion. Home rows should render correctly; in-library
-   playback of such a playlist may behave oddly.
-
-Suggested first run: small batch size, tight token budget, personalization off.
-Get one cheap pass working end to end before turning on expensive options.
+   without episode expansion. Home rows render correctly; in-library playback of
+   such a playlist may behave oddly.
 
 ## Reference
 

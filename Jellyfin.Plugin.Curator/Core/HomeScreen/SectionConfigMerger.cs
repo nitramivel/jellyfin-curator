@@ -10,7 +10,8 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
     /// </summary>
     /// <param name="SectionId">The section's UniqueId ("curator-" + category id).</param>
     /// <param name="Name">Category name — both the display text and the name-based join key.</param>
-    public sealed record DesiredSection(string SectionId, string Name);
+    /// <param name="MemberCount">How many items the category holds; picks the card shape.</param>
+    public sealed record DesiredSection(string SectionId, string Name, int MemberCount = 0);
 
     /// <summary>
     /// Pure JSON merge logic for the two integration writes: Collection Sections'
@@ -157,6 +158,109 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         }
 
         /// <summary>
+        /// The row order Curator claims for every one of its sections.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately uniform. Home Screen Sections orders rows by this number
+        /// and Curator has no basis for ranking one category above another on a
+        /// stranger's home screen — so it takes one lane and leaves the ordering
+        /// within it, and around it, to be arranged by hand.
+        /// </remarks>
+        public const int OrderIndex = 500;
+
+        /// <summary>
+        /// Item count at or above which a row renders as portrait posters rather
+        /// than landscape thumbs.
+        /// </summary>
+        /// <remarks>
+        /// Landscape cards are wide, so a short row of six or seven fills the
+        /// screen; portrait cards are narrow and fit more across, which suits a
+        /// row with enough in it to be worth scrolling. Ten splits this library's
+        /// categories — they run from six to seventeen items — near the middle.
+        /// </remarks>
+        public const int PortraitThreshold = 10;
+
+        /// <summary>
+        /// Picks the card shape for a category.
+        /// </summary>
+        /// <param name="memberCount">How many items the category holds.</param>
+        /// <returns>"Portrait" or "Landscape".</returns>
+        public static string ViewModeFor(int memberCount)
+        {
+            return memberCount >= PortraitThreshold ? "Portrait" : "Landscape";
+        }
+
+        /// <summary>
+        /// Merges Curator's sections into Home Screen Sections' own plugin
+        /// configuration, which is where row order and card shape live — Collection
+        /// Sections has no fields for either, so a section registered through it
+        /// lands on whatever default Home Screen Sections assigns.
+        /// </summary>
+        /// <remarks>
+        /// Entries are keyed by <c>SectionId</c> here rather than <c>UniqueId</c>.
+        /// Only Curator-owned rows are touched; every other section's settings, and
+        /// every field on our own entries that we do not set, round-trip untouched.
+        /// </remarks>
+        /// <param name="config">The configuration JSON from GET /Plugins/{id}/Configuration; mutated in place.</param>
+        /// <param name="desired">The sections that should exist.</param>
+        /// <returns>True when the configuration changed and needs to be written back.</returns>
+        public static bool MergeSectionSettings(JsonNode config, IReadOnlyList<DesiredSection> desired)
+        {
+            ArgumentNullException.ThrowIfNull(config);
+            ArgumentNullException.ThrowIfNull(desired);
+
+            var configObject = config.AsObject();
+            var (settingsKey, settingsNode) = FindProperty(configObject, "SectionSettings");
+            var settings = settingsNode?.AsArray();
+            if (settings is null)
+            {
+                settings = [];
+                configObject[settingsKey ?? "SectionSettings"] = settings;
+            }
+
+            var desiredById = desired.ToDictionary(d => d.SectionId, StringComparer.Ordinal);
+            var changed = false;
+
+            for (var i = settings.Count - 1; i >= 0; i--)
+            {
+                if (settings[i] is not JsonObject entry)
+                {
+                    continue;
+                }
+
+                var sectionId = GetString(entry, "SectionId");
+                if (sectionId is null || !sectionId.StartsWith(SectionIdPrefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!desiredById.TryGetValue(sectionId, out var want))
+                {
+                    settings.RemoveAt(i);
+                    changed = true;
+                    continue;
+                }
+
+                changed |= SetNumber(entry, "OrderIndex", OrderIndex);
+                changed |= SetString(entry, "ViewMode", ViewModeFor(want.MemberCount));
+                desiredById.Remove(sectionId);
+            }
+
+            foreach (var want in desired.Where(d => desiredById.ContainsKey(d.SectionId)))
+            {
+                settings.Add(new JsonObject
+                {
+                    ["SectionId"] = want.SectionId,
+                    ["OrderIndex"] = OrderIndex,
+                    ["ViewMode"] = ViewModeFor(want.MemberCount),
+                });
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        /// <summary>
         /// Finds a property by name, tolerating both the camelCase the server's
         /// JSON options emit and the PascalCase of the underlying C# type.
         /// </summary>
@@ -177,6 +281,18 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         {
             var (_, node) = FindProperty(obj, pascalName);
             return node is JsonValue value && value.TryGetValue<string>(out var s) ? s : null;
+        }
+
+        private static bool SetNumber(JsonObject obj, string pascalName, int value)
+        {
+            var (key, node) = FindProperty(obj, pascalName);
+            if (node is JsonValue v && v.TryGetValue<int>(out var current) && current == value)
+            {
+                return false;
+            }
+
+            obj[key ?? pascalName] = value;
+            return true;
         }
 
         private static bool SetString(JsonObject obj, string pascalName, string value)

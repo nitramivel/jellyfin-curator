@@ -36,7 +36,9 @@ namespace Jellyfin.Plugin.Curator.Tests
                     link.PlaylistId,
                     link.HandedOff))
                 .ToArray(),
-            category.SourceProposals);
+            category.SourceProposals,
+            category.OwnerUserId,
+            category.OwnerUserId is { } o ? UserNames.GetValueOrDefault(o) : null);
 
         private static CategoryDefinition Category(params UserPlaylistLink[] links) => new()
         {

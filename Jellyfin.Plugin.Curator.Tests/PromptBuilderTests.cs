@@ -372,11 +372,140 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.DoesNotContain(": 0", section, StringComparison.Ordinal);
         }
 
+        [Theory]
+        [InlineData(2)]
+        [InlineData(4)]
+        [InlineData(9)]
+        public void SystemPrompts_AskForTheConfiguredMemberFloor(int minMembers)
+        {
+            // The floor the model is told must be the floor the Reconciler applies.
+            // When these drifted apart the prompt asked for 3 and the filter demanded
+            // 6, and 17 of 22 proposals in a measured run were binned on size alone.
+            Assert.Contains(
+                $"at least {minMembers} members",
+                PromptBuilder.BuildSystemPrompt(new CategoryLimits(minMembers)),
+                StringComparison.Ordinal);
+            Assert.Contains(
+                $"at least {minMembers} members",
+                PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(minMembers)),
+                StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void SystemPrompts_NeverAskForFewerThanTwoMembers()
+        {
+            // A one-member category is not a category, whatever the config says.
+            Assert.Contains("at least 2 members", PromptBuilder.BuildSystemPrompt(new CategoryLimits(1)), StringComparison.Ordinal);
+            Assert.Contains("at least 2 members", PromptBuilder.BuildSystemPrompt(new CategoryLimits(0)), StringComparison.Ordinal);
+            Assert.Contains("at least 2 members", PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(-3)), StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void SystemPrompts_LeaveNoPlaceholderBehind()
+        {
+            foreach (var prompt in new[]
+            {
+                PromptBuilder.BuildSystemPrompt(new CategoryLimits(4)),
+                PromptBuilder.BuildSystemPrompt(new CategoryLimits(6, 0, 20)),
+                PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2)),
+                PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2, 0, 6)),
+            })
+            {
+                Assert.DoesNotContain("{MIN_MEMBERS}", prompt, StringComparison.Ordinal);
+                Assert.DoesNotContain("{MAX_CATEGORIES}", prompt, StringComparison.Ordinal);
+            }
+        }
+
+        [Theory]
+        [InlineData(20)]
+        [InlineData(8)]
+        public void SystemPrompts_TellTheModelHowManyCategoriesToAimFor(int max)
+        {
+            // A ceiling the model cannot see is one it cannot aim at. With no target
+            // count, one model read "find the threads" as be exhaustive and another
+            // as satisfy the constraint — 23 categories against 5, same prompt.
+            Assert.Contains(
+                $"up to {max} categories",
+                PromptBuilder.BuildSystemPrompt(new CategoryLimits(6, 0, max)),
+                StringComparison.Ordinal);
+            Assert.Contains(
+                $"up to {max} categories",
+                PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2, 0, max)),
+                StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void SystemPrompt_WithNoCap_AsksForWhatTheCollectionSupports()
+        {
+            var prompt = PromptBuilder.BuildSystemPrompt(new CategoryLimits(6, 0, 0));
+
+            Assert.Contains("as many categories as the collection genuinely supports", prompt, StringComparison.Ordinal);
+            Assert.DoesNotContain("up to 0 categories", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void SystemPrompts_StateTheMemberRangeNotJustTheFloor()
+        {
+            Assert.Contains(
+                "between 6 and 20 members",
+                PromptBuilder.BuildSystemPrompt(new CategoryLimits(6, 20, 10)),
+                StringComparison.Ordinal);
+            Assert.Contains(
+                "between 2 and 20 members",
+                PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2, 20, 6)),
+                StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void SystemPrompt_WithNoMemberCeiling_StatesOnlyTheFloor()
+        {
+            var prompt = PromptBuilder.BuildSystemPrompt(new CategoryLimits(6, 0, 10));
+
+            Assert.Contains("at least 6 members", prompt, StringComparison.Ordinal);
+            Assert.DoesNotContain("between", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void SystemPrompt_CeilingBelowTheFloor_FallsBackToTheFloorAlone()
+        {
+            // "between 6 and 4 members" is an impossible instruction; the floor wins.
+            var prompt = PromptBuilder.BuildSystemPrompt(new CategoryLimits(6, 4, 10));
+
+            Assert.Contains("at least 6 members", prompt, StringComparison.Ordinal);
+            Assert.DoesNotContain("and 4 members", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void SystemPrompt_AsksForCoverageAndVariedSizes()
+        {
+            // The failure this addresses was not bad categories — it was five
+            // categories all hugging the floor, covering a tenth of the library.
+            var prompt = PromptBuilder.BuildSystemPrompt(new CategoryLimits(6, 0, 20));
+
+            Assert.Contains("aim to place most of it", prompt, StringComparison.Ordinal);
+            Assert.Contains("Sizes should vary", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void PersonalSystemPrompt_AsksTheModelToUnderstandTheViewerFirst()
+        {
+            // The personal pass is worth its tokens only if the history is read as
+            // evidence about a person rather than as a list of titles.
+            Assert.Contains("get to know this viewer", PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2)), StringComparison.Ordinal);
+            Assert.Contains("Before either job", PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2)), StringComparison.Ordinal);
+
+            // ...without licensing invention past what the history supports.
+            Assert.Contains(
+                "guessing past the evidence",
+                PromptBuilder.BuildPersonalSystemPrompt(new CategoryLimits(2)),
+                StringComparison.Ordinal);
+        }
+
         [Fact]
         public void SystemPrompt_StatesTheIndexOnlyRule()
         {
-            Assert.Contains("integer index", PromptBuilder.SystemPrompt, StringComparison.Ordinal);
-            Assert.Contains("Never invent items", PromptBuilder.SystemPrompt, StringComparison.Ordinal);
+            Assert.Contains("integer index", PromptBuilder.BuildSystemPrompt(new CategoryLimits(4)), StringComparison.Ordinal);
+            Assert.Contains("Never invent items", PromptBuilder.BuildSystemPrompt(new CategoryLimits(4)), StringComparison.Ordinal);
         }
     }
 }

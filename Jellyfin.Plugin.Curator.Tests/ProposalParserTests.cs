@@ -215,6 +215,103 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Throws<FormatException>(() => ProposalParser.Parse(response, Batch(1)));
         }
 
+        // ---- viewer pass ----
+
+        [Fact]
+        public void ParsePersonal_ReturnsSelectionsAndNewCategories()
+        {
+            var batch = Batch(3);
+            const string response =
+                """
+                {"selected":["Cerebral Sci-Fi"],
+                 "categories":[{"name":"Sunday Afternoon Rewatch","description":"Worn smooth.","members":[0,1,2]}]}
+                """;
+
+            var result = ProposalParser.ParsePersonal(response, batch, ["Cerebral Sci-Fi", "Comfort Rewatch"]);
+
+            Assert.Equal(["Cerebral Sci-Fi"], result.SelectedNames);
+            Assert.Equal("Sunday Afternoon Rewatch", Assert.Single(result.Proposals).Name);
+        }
+
+        /// <summary>
+        /// The selected name is the join key back to a shared definition, and
+        /// Collection Sections resolves rows by exact name — so a differently-cased
+        /// selection must resolve to the STORED spelling, not the model's.
+        /// </summary>
+        [Fact]
+        public void ParsePersonal_SelectionIsCanonicalisedToTheStoredSpelling()
+        {
+            var result = ProposalParser.ParsePersonal(
+                """{"selected":["cerebral SCI-FI"],"categories":[]}""",
+                Batch(1),
+                ["Cerebral Sci-Fi"]);
+
+            Assert.Equal(["Cerebral Sci-Fi"], result.SelectedNames);
+        }
+
+        [Fact]
+        public void ParsePersonal_UnknownSelection_IsDiscardedAndCounted()
+        {
+            var result = ProposalParser.ParsePersonal(
+                """{"selected":["Cerebral Sci-Fi","A Category Nobody Proposed"],"categories":[]}""",
+                Batch(1),
+                ["Cerebral Sci-Fi"]);
+
+            Assert.Equal(["Cerebral Sci-Fi"], result.SelectedNames);
+            Assert.Equal(1, result.DiscardedSelectionCount);
+        }
+
+        [Fact]
+        public void ParsePersonal_DuplicateSelections_AreCollapsed()
+        {
+            var result = ProposalParser.ParsePersonal(
+                """{"selected":["Cerebral Sci-Fi","cerebral sci-fi"],"categories":[]}""",
+                Batch(1),
+                ["Cerebral Sci-Fi"]);
+
+            Assert.Single(result.SelectedNames);
+        }
+
+        /// <summary>
+        /// A viewer with thin history is told to invent nothing rather than pad, so
+        /// an absent or empty categories array is a valid answer — not a parse error.
+        /// </summary>
+        [Fact]
+        public void ParsePersonal_NoNewCategories_IsValid()
+        {
+            var noArray = ProposalParser.ParsePersonal(
+                """{"selected":["Cerebral Sci-Fi"]}""", Batch(1), ["Cerebral Sci-Fi"]);
+            Assert.Empty(noArray.Proposals);
+            Assert.Single(noArray.SelectedNames);
+
+            var emptyArray = ProposalParser.ParsePersonal(
+                """{"selected":[],"categories":[]}""", Batch(1), ["Cerebral Sci-Fi"]);
+            Assert.Empty(emptyArray.Proposals);
+            Assert.Empty(emptyArray.SelectedNames);
+        }
+
+        [Fact]
+        public void ParsePersonal_InventedCategory_StillCannotReferenceItemsOutsideTheBatch()
+        {
+            var batch = Batch(2);
+
+            var result = ProposalParser.ParsePersonal(
+                """{"selected":[],"categories":[{"name":"Invented","members":[0,1,99]}]}""",
+                batch,
+                []);
+
+            var proposal = Assert.Single(result.Proposals);
+            Assert.Equal([batch[0].Id, batch[1].Id], proposal.Members);
+            Assert.Equal(1, result.DiscardedMemberCount);
+        }
+
+        [Fact]
+        public void ParsePersonal_MalformedResponse_Throws()
+        {
+            Assert.Throws<FormatException>(() =>
+                ProposalParser.ParsePersonal("no json here", Batch(1), ["Cerebral Sci-Fi"]));
+        }
+
         [Fact]
         public void Parse_LargeIndexOverflowingInt_IsDiscardedNotCrashing()
         {

@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
+using Jellyfin.Plugin.Curator.Services.Playlists;
+using Jellyfin.Plugin.Curator.Services.Runs;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
@@ -28,6 +30,8 @@ namespace Jellyfin.Plugin.Curator.Api
     /// <param name="SourceProposalCount">Batch proposals that produced it in the latest run.</param>
     /// <param name="Users">Per-user playlist links.</param>
     /// <param name="SourceProposals">The individual proposals that merged into it.</param>
+    /// <param name="OwnerUserId">The user this category belongs to, or null when shared.</param>
+    /// <param name="OwnerUserName">That user's name, or null when shared or deleted.</param>
     public sealed record CategorySummary(
         Guid Id,
         string Name,
@@ -40,7 +44,9 @@ namespace Jellyfin.Plugin.Curator.Api
         DateTime CreatedAt,
         int SourceProposalCount,
         IReadOnlyList<CategoryUserLink> Users,
-        IReadOnlyList<CategorySourceProposal> SourceProposals);
+        IReadOnlyList<CategorySourceProposal> SourceProposals,
+        Guid? OwnerUserId,
+        string? OwnerUserName);
 
     /// <summary>One user's playlist link for a category, for the config page.</summary>
     /// <param name="UserId">The Jellyfin user.</param>
@@ -78,7 +84,11 @@ namespace Jellyfin.Plugin.Curator.Api
     /// <summary>Current run state for the configuration page.</summary>
     /// <param name="IsRunning">Whether a run is in progress.</param>
     /// <param name="Categories">The stored categories.</param>
-    public sealed record CuratorStatus(bool IsRunning, IReadOnlyList<CategorySummary> Categories);
+    /// <param name="CurrentRunId">The run in progress, for following it through the Runs endpoints.</param>
+    public sealed record CuratorStatus(
+        bool IsRunning,
+        IReadOnlyList<CategorySummary> Categories,
+        Guid? CurrentRunId);
 
     /// <summary>
     /// Admin API backing the configuration page: run status, the category list,
@@ -91,6 +101,8 @@ namespace Jellyfin.Plugin.Curator.Api
     {
         private readonly CuratorRunService _runService;
         private readonly ICategoryStore _categoryStore;
+        private readonly IRunLogStore _runLogStore;
+        private readonly ICuratorPlaylistService _playlistService;
         private readonly IUserManager _userManager;
         private readonly ILibraryManager _libraryManager;
         private readonly ILogger<CuratorController> _logger;
@@ -98,12 +110,16 @@ namespace Jellyfin.Plugin.Curator.Api
         public CuratorController(
             CuratorRunService runService,
             ICategoryStore categoryStore,
+            IRunLogStore runLogStore,
+            ICuratorPlaylistService playlistService,
             IUserManager userManager,
             ILibraryManager libraryManager,
             ILogger<CuratorController> logger)
         {
             _runService = runService;
             _categoryStore = categoryStore;
+            _runLogStore = runLogStore;
+            _playlistService = playlistService;
             _userManager = userManager;
             _libraryManager = libraryManager;
             _logger = logger;
@@ -141,10 +157,48 @@ namespace Jellyfin.Plugin.Curator.Api
                             link.PlaylistId,
                             link.HandedOff))
                         .ToArray(),
-                    category.SourceProposals))
+                    category.SourceProposals,
+                    category.OwnerUserId,
+                    category.OwnerUserId is { } owner ? userNames.GetValueOrDefault(owner) : null))
                 .ToArray();
 
-            return new CuratorStatus(_runService.IsRunning, categories);
+            return new CuratorStatus(_runService.IsRunning, categories, _runService.CurrentRunId);
+        }
+
+        /// <summary>
+        /// Lists recorded runs, newest first. Each run's full record — every step
+        /// and every LLM exchange — is fetched separately by ID.
+        /// </summary>
+        /// <param name="limit">The most to return.</param>
+        /// <response code="200">Runs listed.</response>
+        /// <returns>The run summaries.</returns>
+        [HttpGet("Runs")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<IReadOnlyList<RunLogSummary>> GetRuns([FromQuery] int limit = 25)
+        {
+            return Ok(_runLogStore.List(Math.Clamp(limit, 1, 200)));
+        }
+
+        /// <summary>
+        /// Gets one run's whole record, including every prompt and response.
+        /// </summary>
+        /// <remarks>
+        /// Returned as raw stored JSON rather than a re-serialized model: the file
+        /// is the artifact, and passing it through unchanged means what the page
+        /// shows is exactly what is on disk.
+        /// </remarks>
+        /// <param name="runId">The run ID.</param>
+        /// <response code="200">The run record.</response>
+        /// <response code="404">No such run.</response>
+        /// <returns>The run document.</returns>
+        [HttpGet("Runs/{runId}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public ActionResult GetRun([FromRoute] Guid runId)
+        {
+            return _runLogStore.ReadRaw(runId) is { } json
+                ? Content(json, "application/json")
+                : NotFound();
         }
 
         /// <summary>
@@ -235,32 +289,48 @@ namespace Jellyfin.Plugin.Curator.Api
         }
 
         /// <summary>
-        /// Deletes a category definition. Its playlists are left alone — remove
-        /// them in Jellyfin if you want them gone.
+        /// Deletes a category and the playlists it built.
         /// </summary>
+        /// <remarks>
+        /// Playlists a user has taken ownership of — those without the `curator`
+        /// tag, and those already marked handed off — are left in place. Deleting a
+        /// Curator category is not a licence to delete someone's own list.
+        /// </remarks>
         /// <param name="categoryId">The category ID.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
         /// <response code="204">Deleted.</response>
         /// <response code="404">No such category.</response>
         /// <returns>An action result.</returns>
         [HttpDelete("Categories/{categoryId}")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public ActionResult DeleteCategory([FromRoute] Guid categoryId)
+        public async Task<ActionResult> DeleteCategory(
+            [FromRoute] Guid categoryId,
+            CancellationToken cancellationToken)
         {
+            if (_categoryStore.Get(categoryId) is not { } category)
+            {
+                return NotFound();
+            }
+
+            await _playlistService.RemoveCategoryPlaylistsAsync(category, cancellationToken).ConfigureAwait(false);
             return _categoryStore.Delete(categoryId) ? NoContent() : NotFound();
         }
 
         /// <summary>
-        /// Deletes several category definitions in one call. Playlists are left
-        /// alone, exactly as for a single delete. Unknown IDs are counted rather
-        /// than failing the request, so a stale page cannot block the whole batch.
+        /// Deletes several categories and their playlists in one call. Unknown IDs
+        /// are counted rather than failing the request, so a stale page cannot block
+        /// the whole batch.
         /// </summary>
         /// <param name="request">The category IDs.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
         /// <response code="200">Deleted; the body reports what happened.</response>
         /// <returns>An action result.</returns>
         [HttpPost("Categories/Delete")]
         [ProducesResponseType(StatusCodes.Status200OK)]
-        public ActionResult<DeleteCategoriesResult> DeleteCategories([FromBody] DeleteCategoriesRequest request)
+        public async Task<ActionResult<DeleteCategoriesResult>> DeleteCategories(
+            [FromBody] DeleteCategoriesRequest request,
+            CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(request);
 
@@ -268,6 +338,13 @@ namespace Jellyfin.Plugin.Curator.Api
             var missing = 0;
             foreach (var id in request.CategoryIds)
             {
+                if (_categoryStore.Get(id) is not { } category)
+                {
+                    missing++;
+                    continue;
+                }
+
+                await _playlistService.RemoveCategoryPlaylistsAsync(category, cancellationToken).ConfigureAwait(false);
                 if (_categoryStore.Delete(id))
                 {
                     deleted++;
@@ -279,7 +356,7 @@ namespace Jellyfin.Plugin.Curator.Api
             }
 
             _logger.LogInformation(
-                "Curator: deleted {Deleted} category definition(s) from the config page ({Missing} not found)",
+                "Curator: deleted {Deleted} category definition(s) and their playlists from the config page ({Missing} not found)",
                 deleted,
                 missing);
 

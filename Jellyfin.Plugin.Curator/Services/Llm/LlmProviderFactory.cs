@@ -44,7 +44,29 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             {
                 case LlmProviderKind.Anthropic:
                     RequireApiKey(config);
-                    return new AnthropicProvider(httpClient, config.Model, config.ApiKey, NullIfEmpty(config.BaseUrl));
+                    return new AnthropicProvider(
+                        httpClient,
+                        config.Model,
+                        config.ApiKey,
+                        NullIfEmpty(config.BaseUrl),
+                        config.EnableThinking);
+
+                case LlmProviderKind.Google:
+                    RequireApiKey(config);
+                    return new GoogleProvider(
+                        httpClient,
+                        config.Model,
+                        config.ApiKey,
+                        NullIfEmpty(config.BaseUrl),
+                        config.EnableThinking);
+
+                case LlmProviderKind.Grok:
+                    RequireApiKey(config);
+                    return OpenAiChatProvider.CreateGrok(
+                        httpClient,
+                        config.Model,
+                        config.ApiKey,
+                        NullIfEmpty(config.BaseUrl));
 
                 case LlmProviderKind.OpenAi:
                     RequireApiKey(config);

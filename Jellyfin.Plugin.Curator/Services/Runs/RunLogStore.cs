@@ -1,0 +1,476 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using Jellyfin.Plugin.Curator.Services.Llm;
+using MediaBrowser.Controller;
+using Microsoft.Extensions.Logging;
+
+namespace Jellyfin.Plugin.Curator.Services.Runs
+{
+    /// <summary>
+    /// Default <see cref="IRunLogStore"/>: one JSON file per run at
+    /// <c>{DataPath}/curator/runs/run_{yyyyMMddTHHmmssZ}_{shortId}.json</c>,
+    /// deliberately separate from the category files so a run log can be deleted,
+    /// shipped, or diffed without touching plugin state.
+    /// <para>
+    /// The timestamp leads the filename so the directory sorts chronologically in
+    /// any file listing, which is how anyone actually reads these.
+    /// </para>
+    /// </summary>
+    public sealed class RunLogStore : IRunLogStore
+    {
+        /// <summary>
+        /// How many run files to keep. Runs are frequent during tuning and each
+        /// carries the full prompt text, so the directory is rotated rather than
+        /// left to grow without limit.
+        /// </summary>
+        private const int RetainedRuns = 50;
+
+        private static readonly JsonSerializerOptions SerializerOptions = new()
+        {
+            WriteIndented = true,
+
+            // Prompts are prose full of quotes, apostrophes and em dashes. The
+            // default encoder escapes them into \u sequences, which turns a run log
+            // into something nobody can read.
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        };
+
+        private readonly string _basePath;
+        private readonly ILogger<RunLogStore> _logger;
+
+        public RunLogStore(IServerApplicationPaths applicationPaths, ILogger<RunLogStore> logger)
+            : this(Path.Combine(applicationPaths.DataPath, "curator", "runs"), logger)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="RunLogStore"/> class rooted
+        /// at an explicit directory. Used directly by tests.
+        /// </summary>
+        /// <param name="basePath">The directory holding the run files.</param>
+        /// <param name="logger">The logger.</param>
+        public RunLogStore(string basePath, ILogger<RunLogStore> logger)
+        {
+            _basePath = basePath;
+            _logger = logger;
+        }
+
+        /// <inheritdoc />
+        public IRunLog Begin(string trigger, IReadOnlyDictionary<string, object?> settings)
+        {
+            ArgumentNullException.ThrowIfNull(settings);
+
+            var startedAt = DateTime.UtcNow;
+            var runId = Guid.NewGuid();
+            var document = new RunLogDocument
+            {
+                RunId = runId,
+                Trigger = trigger,
+                Status = RunStatus.Running,
+                StartedAt = startedAt,
+                Settings = settings,
+            };
+
+            // Milliseconds, not seconds: two runs can start inside the same second
+            // and the ID suffix is random, so a second-precision name would leave
+            // their order down to a coin flip in any filename-ordered listing.
+            var path = Path.Combine(
+                _basePath,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"run_{startedAt:yyyyMMdd'T'HHmmssfff}Z_{runId.ToString("N")[..8]}.json"));
+
+            var log = new RunLog(document, path, _logger);
+
+            // Written immediately so the file exists for the whole life of the run,
+            // not only once it ends — a run that dies without ever finishing is
+            // exactly the one worth having a log of.
+            log.Flush();
+            Prune();
+            return log;
+        }
+
+        /// <inheritdoc />
+        public IReadOnlyList<RunLogSummary> List(int limit = 50)
+        {
+            if (!Directory.Exists(_basePath))
+            {
+                return [];
+            }
+
+            var documents = new List<RunLogDocument>();
+            foreach (var file in EnumerateRunFiles().Take(limit))
+            {
+                if (TryRead(file) is { } document)
+                {
+                    documents.Add(document);
+                }
+            }
+
+            // Ordered on the recorded start time rather than the filename: the name
+            // is only a convenience for reading the directory, and the document is
+            // what actually knows when the run began.
+            documents.Sort((a, b) => b.StartedAt.CompareTo(a.StartedAt));
+
+            var summaries = new List<RunLogSummary>(documents.Count);
+            foreach (var document in documents)
+            {
+                var lastStep = document.Steps.Count > 0 ? document.Steps[^1] : null;
+
+                // A file still marked running when nothing is running was orphaned
+                // by a restart. Report that rather than leaving a ghost run that the
+                // configuration page would wait on forever.
+                var status = document.Status == RunStatus.Running && IsStale(document)
+                    ? RunStatus.Abandoned
+                    : document.Status;
+
+                summaries.Add(new RunLogSummary(
+                    document.RunId,
+                    document.Trigger,
+                    status,
+                    document.Progress,
+                    document.StartedAt,
+                    document.FinishedAt,
+                    document.DurationSeconds,
+                    document.Model,
+                    document.Provider,
+                    document.Totals,
+                    document.Steps.Count,
+                    document.Error,
+                    lastStep?.Message));
+            }
+
+            return summaries;
+        }
+
+        /// <inheritdoc />
+        public string? ReadRaw(Guid runId)
+        {
+            if (!Directory.Exists(_basePath))
+            {
+                return null;
+            }
+
+            // The ID is in the filename, but only its first 8 characters, so a match
+            // there still has to be confirmed against the document itself.
+            var shortId = runId.ToString("N")[..8];
+            foreach (var file in EnumerateRunFiles().Where(f => Path.GetFileName(f).Contains(shortId, StringComparison.Ordinal)))
+            {
+                try
+                {
+                    var json = File.ReadAllText(file);
+                    if (TryParseRunId(json) == runId)
+                    {
+                        return json;
+                    }
+                }
+                catch (IOException ex)
+                {
+                    _logger.LogWarning(ex, "Curator: could not read run log {Path}", file);
+                }
+            }
+
+            return null;
+        }
+
+        private IEnumerable<string> EnumerateRunFiles()
+        {
+            return Directory.EnumerateFiles(_basePath, "run_*.json")
+                .OrderByDescending(f => Path.GetFileName(f), StringComparer.Ordinal);
+        }
+
+        /// <summary>
+        /// Whether a document still marked running is really just abandoned. A live
+        /// run touches its file on every step, so a long silence means the process
+        /// behind it is gone.
+        /// </summary>
+        private static bool IsStale(RunLogDocument document)
+        {
+            var last = document.Steps.Count > 0 ? document.Steps[^1].At : document.StartedAt;
+            return DateTime.UtcNow - last > TimeSpan.FromMinutes(30);
+        }
+
+        private static Guid? TryParseRunId(string json)
+        {
+            try
+            {
+                using var parsed = JsonDocument.Parse(json);
+                return parsed.RootElement.TryGetProperty("RunId", out var id) && id.TryGetGuid(out var value)
+                    ? value
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private RunLogDocument? TryRead(string path)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<RunLogDocument>(File.ReadAllText(path), SerializerOptions);
+            }
+            catch (Exception ex) when (ex is JsonException or IOException)
+            {
+                _logger.LogWarning(ex, "Curator: skipping unreadable run log {Path}", path);
+                return null;
+            }
+        }
+
+        private void Prune()
+        {
+            try
+            {
+                if (!Directory.Exists(_basePath))
+                {
+                    return;
+                }
+
+                foreach (var file in EnumerateRunFiles().Skip(RetainedRuns))
+                {
+                    File.Delete(file);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning(ex, "Curator: could not prune old run logs in {Path}", _basePath);
+            }
+        }
+
+        /// <summary>
+        /// The live recorder for one run. Serialized by its own lock: progress can
+        /// be reported from a different thread than the one walking the pipeline.
+        /// </summary>
+        private sealed class RunLog : IRunLog
+        {
+            private readonly RunLogDocument _document;
+            private readonly string _path;
+            private readonly ILogger _logger;
+            private readonly object _lock = new();
+            private int _stepSeq;
+            private int _callSeq;
+            private decimal _inputCostPerMillion;
+            private decimal _outputCostPerMillion;
+
+            public RunLog(RunLogDocument document, string path, ILogger logger)
+            {
+                _document = document;
+                _path = path;
+                _logger = logger;
+            }
+
+            public Guid RunId => _document.RunId;
+
+            public void Step(string step, string message, IReadOnlyDictionary<string, object?>? detail = null)
+            {
+                lock (_lock)
+                {
+                    _document.Steps.Add(new RunStep(++_stepSeq, DateTime.UtcNow, step, message, detail));
+                    Write();
+                }
+            }
+
+            public void Progress(double percent)
+            {
+                lock (_lock)
+                {
+                    _document.Progress = percent;
+
+                    // Deliberately not flushed: progress moves far more often than
+                    // anything else and the next step writes it out anyway. A reader
+                    // polling the file is never more than one step behind.
+                }
+            }
+
+            public void LlmCall(
+                string phase,
+                int batch,
+                int attempt,
+                Guid? userId,
+                TimeSpan duration,
+                LlmRequest request,
+                LlmResult? result,
+                string outcome,
+                string? error)
+            {
+                ArgumentNullException.ThrowIfNull(request);
+
+                lock (_lock)
+                {
+                    var prompt = new RunLogPrompt(
+                        Pool(request.SystemPrompt),
+                        Pool(request.CacheablePrefix),
+                        request.VariableSuffix,
+                        request.MaxOutputTokens,
+                        request.Shape.ToString());
+
+                    RunLogResponse? response = null;
+                    if (result is not null)
+                    {
+                        response = new RunLogResponse(
+                            result.Text,
+                            result.InputTokens,
+                            result.OutputTokens,
+                            result.CacheReadTokens,
+                            result.CacheWriteTokens,
+                            result.Truncated,
+                            result.ThinkingTokens,
+                            Cost(result.InputTokens, result.OutputTokens));
+
+                        _document.Totals.InputTokens += result.InputTokens;
+                        _document.Totals.OutputTokens += result.OutputTokens;
+                        _document.Totals.CacheReadTokens += result.CacheReadTokens;
+                        _document.Totals.CacheWriteTokens += result.CacheWriteTokens;
+
+                        // The run total is recomputed from the running token totals
+                        // rather than summed from the per-call figures, so rounding
+                        // cannot make the parts disagree with the whole.
+                        _document.Totals.Cost = Cost(
+                            _document.Totals.InputTokens,
+                            _document.Totals.OutputTokens);
+                        _document.Totals.EstimatedCostUsd = _document.Totals.Cost?.TotalUsd;
+                    }
+
+                    _document.Totals.LlmCallCount++;
+                    _document.LlmCalls.Add(new RunLogCall(
+                        ++_callSeq,
+                        DateTime.UtcNow,
+                        phase,
+                        batch,
+                        attempt,
+                        userId,
+                        (long)duration.TotalMilliseconds,
+                        prompt,
+                        response,
+                        outcome,
+                        error));
+
+                    Write();
+                }
+            }
+
+            public void SetProvider(
+                string provider,
+                string model,
+                decimal inputCostPerMillion = 0,
+                decimal outputCostPerMillion = 0)
+            {
+                lock (_lock)
+                {
+                    _document.Provider = provider;
+                    _document.Model = model;
+                    _inputCostPerMillion = inputCostPerMillion;
+                    _outputCostPerMillion = outputCostPerMillion;
+                    _document.Pricing = new RunLogPricing(
+                        inputCostPerMillion,
+                        outputCostPerMillion,
+                        inputCostPerMillion > 0 || outputCostPerMillion > 0);
+                    Write();
+                }
+            }
+
+            public void Complete()
+            {
+                Finish(RunStatus.Completed, null);
+            }
+
+            public void Fail(string error)
+            {
+                Finish(RunStatus.Failed, error);
+            }
+
+            public void Flush()
+            {
+                lock (_lock)
+                {
+                    Write();
+                }
+            }
+
+            private void Finish(string status, string? error)
+            {
+                lock (_lock)
+                {
+                    var finishedAt = DateTime.UtcNow;
+                    _document.Status = status;
+                    _document.Error = error;
+                    _document.FinishedAt = finishedAt;
+                    _document.DurationSeconds = (finishedAt - _document.StartedAt).TotalSeconds;
+                    if (status == RunStatus.Completed)
+                    {
+                        _document.Progress = 100;
+                    }
+
+                    Write();
+                }
+            }
+
+            /// <summary>
+            /// Prices a token count pair, or returns null when no price is set.
+            /// </summary>
+            /// <remarks>
+            /// Null rather than zero throughout: a run that cost real money must
+            /// never be recorded as free because nobody typed the rates in.
+            /// </remarks>
+            private RunLogCost? Cost(long inputTokens, long outputTokens)
+            {
+                if (_inputCostPerMillion <= 0 && _outputCostPerMillion <= 0)
+                {
+                    return null;
+                }
+
+                var input = inputTokens * _inputCostPerMillion / 1_000_000m;
+                var output = outputTokens * _outputCostPerMillion / 1_000_000m;
+                return new RunLogCost(input, output, input + output);
+            }
+
+            /// <summary>
+            /// Interns a prompt body and returns its reference. Identical bodies —
+            /// which is every pass's copy of the item list — collapse to one entry.
+            /// </summary>
+            private string Pool(string text)
+            {
+                if (string.IsNullOrEmpty(text))
+                {
+                    return string.Empty;
+                }
+
+                var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)))[..16].ToLowerInvariant();
+                var key = "sha256:" + hash;
+                _document.PromptPool.TryAdd(key, text);
+                return key;
+            }
+
+            /// <summary>
+            /// Rewrites the whole document atomically. Callers hold the lock.
+            /// </summary>
+            /// <remarks>
+            /// A run log must never be able to break the run it is describing, so
+            /// every failure here is swallowed with a warning. Temp-file-plus-rename
+            /// means a reader polling mid-run never sees a half-written file.
+            /// </remarks>
+            private void Write()
+            {
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+                    var tempPath = _path + ".tmp";
+                    File.WriteAllText(tempPath, JsonSerializer.Serialize(_document, SerializerOptions));
+                    File.Move(tempPath, _path, overwrite: true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+                {
+                    _logger.LogWarning(ex, "Curator: could not write run log {Path}", _path);
+                }
+            }
+        }
+    }
+}

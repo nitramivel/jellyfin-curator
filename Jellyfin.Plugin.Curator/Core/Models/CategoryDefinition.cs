@@ -63,6 +63,19 @@ namespace Jellyfin.Plugin.Curator.Core.Models
         /// <summary>Gets or sets the model identifier that last produced this category.</summary>
         public string ModelId { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Gets or sets the user this category belongs to, or null when it is shared.
+        /// <para>
+        /// Shared categories come from the library-wide discovery pass and carry one
+        /// link per user who selected them. Personal categories are invented during a
+        /// user's own pass from their watch history and belong to them alone. The
+        /// distinction matters for identity: two users selecting "Cerebral Sci-Fi"
+        /// must land on the SAME definition, while two users independently inventing
+        /// a category of the same name must not.
+        /// </para>
+        /// </summary>
+        public Guid? OwnerUserId { get; set; }
+
         /// <summary>Gets or sets the per-user playlist links.</summary>
         public List<UserPlaylistLink> UserPlaylists { get; set; } = [];
 

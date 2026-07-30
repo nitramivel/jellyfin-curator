@@ -20,9 +20,67 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
     public static class PromptBuilder
     {
         /// <summary>
-        /// The system prompt: task definition, hard rules, and output contract.
+        /// Builds the discovery system prompt: task definition, hard rules, and
+        /// output contract.
         /// </summary>
-        public const string SystemPrompt =
+        /// <param name="limits">
+        /// The limits for the shared pool. Pass the same instance to the
+        /// Reconciler — that is what stops the instruction and the enforcement
+        /// from drifting apart. See <see cref="CategoryLimits"/>.
+        /// </param>
+        /// <returns>The system prompt.</returns>
+        public static string BuildSystemPrompt(CategoryLimits limits)
+        {
+            return Fill(SystemPromptTemplate, limits);
+        }
+
+        /// <summary>
+        /// Builds the per-viewer system prompt.
+        /// </summary>
+        /// <param name="limits">The limits for the personal pool.</param>
+        /// <returns>The system prompt.</returns>
+        public static string BuildPersonalSystemPrompt(CategoryLimits limits)
+        {
+            return Fill(PersonalSystemPromptTemplate, limits);
+        }
+
+        /// <summary>
+        /// States the limits in the prompt, in the words the model reads.
+        /// </summary>
+        /// <remarks>
+        /// Everything here is derived from <paramref name="limits"/> and nothing
+        /// else, so the sentence the model is given and the rule the Reconciler
+        /// applies cannot describe different numbers.
+        /// </remarks>
+        private static string Fill(string template, CategoryLimits limits)
+        {
+            ArgumentNullException.ThrowIfNull(limits);
+
+            var floor = limits.EffectiveMinMembers;
+            var ceiling = limits.EffectiveMaxMembers;
+
+            var size = ceiling > 0
+                ? string.Create(CultureInfo.InvariantCulture, $"between {floor} and {ceiling} members")
+                : string.Create(CultureInfo.InvariantCulture, $"at least {floor} members");
+
+            var count = limits.HasCategoryCap
+                ? string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Propose up to {limits.MaxCategories} categories. Only the strongest {limits.MaxCategories} are kept, so there is no penalty for offering more than you are sure of — but a thread invented to reach the number is worse than one category fewer.")
+                : "Propose as many categories as the collection genuinely supports.";
+
+            return template
+                .Replace(MemberRangeToken, size, StringComparison.Ordinal)
+                .Replace(MaxCategoriesToken, count, StringComparison.Ordinal);
+        }
+
+        /// <summary>The placeholder the category-count instruction is spliced into.</summary>
+        private const string MaxCategoriesToken = "{MAX_CATEGORIES}";
+
+        /// <summary>The placeholder the member-count range is spliced into.</summary>
+        private const string MemberRangeToken = "{MEMBER_RANGE}";
+
+        private const string SystemPromptTemplate =
             """
             You are a film and television curator with distinctive personal taste. You are given a numbered
             list of items from one person's private media library: movies, series, and sometimes individual
@@ -34,16 +92,6 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
             "Movies That Look Better Than They Are". Do NOT propose categories that are just metadata
             filters (a genre, a decade, a franchise, a director) — those are what this tool exists to avoid.
 
-            A "Watch activity:" section may follow the item list. When it does, the list belongs to one
-            specific viewer and each line groups item indexes by one kind of history: "favourites",
-            "rated 0-10" as index=rating, "rewatched, times played" as index=count, "watched once", and
-            "watched recently, days ago" as index=days. An item can appear on more than one line. Any
-            index missing from every line has no recorded activity. Use this: heavy replays suggest
-            comfort rewatches, favourites and ratings reveal taste, and items they own but have never
-            watched can seed "you own this for a reason" categories. Never mention the viewer or their
-            activity in category names or descriptions — the output must read as curation, not
-            surveillance.
-
             Rules:
             - Reference items ONLY by their integer index from the input. Never invent items.
             - Episodes may be grouped into episode-level categories (e.g. "Bottle Episodes"); do not mix
@@ -51,10 +99,80 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
             - Order each category's members by how strongly they belong, strongest first.
             - Category names must be short (at most 40 characters), evocative, and free of colons.
             - Descriptions are one sentence.
-            - Propose only categories with at least 3 members from this batch.
+            - Give each category {MEMBER_RANGE}. Below that floor it is discarded unread, so a thread
+              you cannot fill is not worth proposing — find a broader framing instead. Above the
+              ceiling only the leading members are kept, so put the strongest first and stop rather
+              than listing everything that loosely fits.
+            - {MAX_CATEGORIES}
+            - Work through the whole list and aim to place most of it. An item may sit in several
+              categories, and a strong thread is worth naming even where it overlaps one you have
+              already found. Sizes should vary within the range above — some threads run through a
+              handful of titles and others through dozens — so do not pad a thin category or clip a
+              rich one just to make them match each other.
 
             Respond with a single JSON object and nothing else — no prose, no code fences:
             {"categories":[{"name":"...","description":"...","members":[0,17,4]}]}
+            """;
+
+        /// <summary>
+        /// The system prompt for a single viewer's pass. Given the same library plus
+        /// the categories the shared pass already found, and this viewer's history,
+        /// the model both picks which shared categories suit them AND coins new ones
+        /// of its own.
+        /// </summary>
+        private const string PersonalSystemPromptTemplate =
+            """
+            You are a film and television curator with distinctive personal taste. You are given a numbered
+            list of items from a shared media library, a list of categories already drawn from that library,
+            and one specific viewer's watch history.
+
+            Before either job, get to know this viewer. Read their history as evidence about a person, not as
+            a list of titles: what do they return to, what did they finish once and never touch again, what do
+            they rate highly versus merely complete, what have they owned for months without playing? Look for
+            the sensibility underneath — the tone, pace, era, and kind of story they keep choosing, and the
+            kinds they visibly avoid. Hold that picture of them in mind for everything below; the better you
+            understand this particular person, the better every match you make will be. Someone with a thin
+            history tells you little, and guessing past the evidence serves them worse than restraint does.
+
+            You have two jobs.
+
+            FIRST, choose which of the existing categories belong on this viewer's home screen. Pick the ones
+            their history suggests they would actually want. Leave out ones that plainly are not for them.
+            Reference these by their exact name, unchanged.
+
+            SECOND — and this matters more — invent NEW categories that only make sense for this viewer.
+            These must be genuinely new: not a rename of an existing category, not a rewording of one, and
+            not the same set of items under a different title. They should be threads you can only see by
+            looking at what this person actually watches — what they return to, what they abandoned, what
+            they rate highly, what sits unwatched. Ground them in the history you are given. If their history
+            is too thin to support a real observation, propose nothing rather than padding.
+
+            A "Watch activity:" section describes this viewer. Each line groups item indexes by one kind of
+            history: "favourites", "rated 0-10" as index=rating, "rewatched, times played" as index=count,
+            "watched once", and "watched recently, days ago" as index=days. An item can appear on more than
+            one line. Any index missing from every line has no recorded activity — they own it but have never
+            played it, which is itself a signal.
+
+            Rules:
+            - Reference items ONLY by their integer index from the item list. Never invent items.
+            - New categories may include items the viewer has never watched; the history tells you what they
+              like, not what they are limited to.
+            - New category names must be short (at most 40 characters), evocative, and free of colons.
+            - Do NOT propose categories that are just metadata filters (a genre, a decade, a franchise) or
+              just a restatement of their history ("Watched Once", "Recently Played"). Find the taste behind
+              the history, not the history itself.
+            - Order each new category's members by how strongly they belong, strongest first.
+            - Give each new category {MEMBER_RANGE}. Below that floor it is discarded unread; above the
+              ceiling only the leading members are kept.
+            - {MAX_CATEGORIES}
+            - Sizes should vary with the strength of the thread rather than converging on the
+              minimum. If their history only supports two real observations, two is the right answer.
+            - Never mention the viewer or their activity in names or descriptions — the output must read as
+              curation, not surveillance.
+
+            Respond with a single JSON object and nothing else — no prose, no code fences:
+            {"selected":["Exact Existing Name","Another Existing Name"],
+             "categories":[{"name":"...","description":"...","members":[0,17,4]}]}
             """;
 
         /// <summary>Days beyond which "when" stops adding anything to a play count.</summary>
@@ -236,6 +354,65 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
                         CultureInfo.InvariantCulture,
                         $"{r.Index}={r.Days}"))));
             }
+        }
+
+        /// <summary>
+        /// Lists the categories the shared pass found, for a viewer's pass to choose
+        /// from. Names must round-trip exactly — they are the join key back to the
+        /// shared definitions.
+        /// </summary>
+        /// <param name="candidates">The shared categories, name and description.</param>
+        /// <returns>The candidate section, ending in a newline; empty when there are none.</returns>
+        public static string BuildCandidateSection(IReadOnlyList<ReconciledCategory> candidates)
+        {
+            ArgumentNullException.ThrowIfNull(candidates);
+
+            if (candidates.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var sb = new StringBuilder(candidates.Count * 96);
+            sb.AppendLine("Existing categories drawn from this library:");
+            foreach (var candidate in candidates)
+            {
+                sb.Append("- ").Append(candidate.Name);
+                if (!string.IsNullOrWhiteSpace(candidate.Description))
+                {
+                    sb.Append(" — ").Append(candidate.Description);
+                }
+
+                sb.AppendLine();
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Builds the variable half of a viewer's pass: the candidate categories,
+        /// that viewer's activity, and the closing instruction.
+        /// </summary>
+        /// <param name="batch">The batch of reduced items.</param>
+        /// <param name="candidates">Categories the shared pass found.</param>
+        /// <param name="activity">This viewer's watch activity.</param>
+        /// <returns>The personal suffix.</returns>
+        public static string BuildPersonalSuffix(
+            IReadOnlyList<MediaItemRecord> batch,
+            IReadOnlyList<ReconciledCategory> candidates,
+            IReadOnlyDictionary<Guid, UserActivity>? activity)
+        {
+            ArgumentNullException.ThrowIfNull(batch);
+
+            var sb = new StringBuilder();
+            sb.Append(BuildCandidateSection(candidates));
+
+            if (activity is not null)
+            {
+                AppendActivityGroups(sb, batch, activity);
+            }
+
+            sb.Append("Choose the existing categories that suit this viewer, then propose new ones of your own, as the single JSON object described.");
+            return sb.ToString();
         }
 
         private static string JoinIndexes(List<int> indexes)

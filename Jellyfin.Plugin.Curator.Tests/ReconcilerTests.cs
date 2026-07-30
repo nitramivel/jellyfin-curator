@@ -19,7 +19,8 @@ namespace Jellyfin.Plugin.Curator.Tests
             Members = members.Select(Id).ToArray(),
         };
 
-        private static ReconcilerSettings Settings(int minSize = 1, int max = 0) => new(minSize, max);
+        private static ReconcilerSettings Settings(int minSize = 1, int max = 0, int maxMembers = 0)
+            => new(new CategoryLimits(minSize, maxMembers, max));
 
         [Fact]
         public void CrossBatchSameName_MergesOnNameAloneWithDisjointMembers()
@@ -304,6 +305,75 @@ namespace Jellyfin.Plugin.Curator.Tests
             var category = Assert.Single(result);
             Assert.Equal(3, category.SourceProposalCount);
             Assert.Equal(6, category.Members.Count);
+        }
+
+        [Fact]
+        public void MaxCategoryMembers_TrimsTheTailRatherThanDroppingTheCategory()
+        {
+            // Members arrive strongest-first, so the head is the best of the thread.
+            var proposal = new CategoryProposal
+            {
+                Name = "Big Thread",
+                Members = [.. Enumerable.Range(0, 40).Select(_ => Guid.NewGuid())],
+            };
+
+            var result = Reconciler.Reconcile([proposal], Settings(minSize: 1, maxMembers: 20));
+
+            var category = Assert.Single(result);
+            Assert.Equal(20, category.Members.Count);
+            Assert.Equal(proposal.Members.Take(20), category.Members);
+        }
+
+        [Fact]
+        public void MaxCategoryMembers_LeavesSmallerCategoriesAlone()
+        {
+            var proposal = new CategoryProposal
+            {
+                Name = "Small Thread",
+                Members = [.. Enumerable.Range(0, 7).Select(_ => Guid.NewGuid())],
+            };
+
+            var category = Assert.Single(Reconciler.Reconcile([proposal], Settings(minSize: 1, maxMembers: 20)));
+
+            Assert.Equal(7, category.Members.Count);
+        }
+
+        [Fact]
+        public void MaxCategoryMembers_Zero_MeansNoLimit()
+        {
+            var proposal = new CategoryProposal
+            {
+                Name = "Unbounded",
+                Members = [.. Enumerable.Range(0, 60).Select(_ => Guid.NewGuid())],
+            };
+
+            var category = Assert.Single(Reconciler.Reconcile([proposal], Settings(minSize: 1, maxMembers: 0)));
+
+            Assert.Equal(60, category.Members.Count);
+        }
+
+        [Fact]
+        public void MaxCategoryMembers_TrimIsAppliedAfterRankingNotBefore()
+        {
+            // A 40-item thread outranks a 7-item one, and must keep doing so after
+            // trimming — otherwise the count cap would be handed to whichever
+            // categories happened to be small.
+            var big = new CategoryProposal
+            {
+                Name = "Sprawling",
+                Members = [.. Enumerable.Range(0, 40).Select(_ => Guid.NewGuid())],
+            };
+            var small = new CategoryProposal
+            {
+                Name = "Slight",
+                Members = [.. Enumerable.Range(0, 7).Select(_ => Guid.NewGuid())],
+            };
+
+            var result = Reconciler.Reconcile([small, big], Settings(minSize: 1, max: 1, maxMembers: 20));
+
+            var kept = Assert.Single(result);
+            Assert.Equal("Sprawling", kept.Name);
+            Assert.Equal(20, kept.Members.Count);
         }
     }
 }

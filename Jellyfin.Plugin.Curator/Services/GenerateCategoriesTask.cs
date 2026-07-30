@@ -41,7 +41,7 @@ namespace Jellyfin.Plugin.Curator.Services
         {
             try
             {
-                await _runService.RunAsync(progress, cancellationToken).ConfigureAwait(false);
+                await _runService.RunAsync(progress, cancellationToken, "scheduled").ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

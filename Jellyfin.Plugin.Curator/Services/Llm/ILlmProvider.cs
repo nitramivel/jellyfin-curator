@@ -5,6 +5,27 @@ using System.Threading.Tasks;
 namespace Jellyfin.Plugin.Curator.Services.Llm
 {
     /// <summary>
+    /// Which JSON object the model is being asked for. The prompts describe these
+    /// shapes in prose and <see cref="Core.Llm.ProposalParser"/> enforces them on the
+    /// way back; a provider that supports structured outputs can additionally hand
+    /// the shape to the API so valid JSON becomes a guarantee rather than a hope.
+    /// <para>
+    /// Kept provider-neutral on purpose: the enum names the contract, and each
+    /// provider translates it into whatever its own schema dialect is. Providers
+    /// without structured outputs ignore it and rely on the prompt, which is why
+    /// the prompts must keep describing the shape in full.
+    /// </para>
+    /// </summary>
+    public enum ResponseShape
+    {
+        /// <summary>{"categories":[{"name","description","members":[int]}]}.</summary>
+        Categories = 0,
+
+        /// <summary>The above plus {"selected":[string]} — one viewer's pass.</summary>
+        PersonalCategories = 1,
+    }
+
+    /// <summary>
     /// One request to the LLM. The user prompt is split at the point where it stops
     /// being reusable: <paramref name="CacheablePrefix"/> is byte-identical across the
     /// per-user passes for a given batch, <paramref name="VariableSuffix"/> is not.
@@ -14,11 +35,13 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
     /// <param name="CacheablePrefix">The reusable leading portion of the user prompt.</param>
     /// <param name="VariableSuffix">The per-request trailing portion of the user prompt.</param>
     /// <param name="MaxOutputTokens">Maximum output tokens for this call.</param>
+    /// <param name="Shape">The JSON object being asked for; used by providers with structured outputs.</param>
     public sealed record LlmRequest(
         string SystemPrompt,
         string CacheablePrefix,
         string VariableSuffix,
-        int MaxOutputTokens)
+        int MaxOutputTokens,
+        ResponseShape Shape = ResponseShape.Categories)
     {
         /// <summary>
         /// Gets the whole user prompt, for providers with no caching support.
@@ -35,13 +58,22 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
     /// <param name="Truncated">Whether the output was cut off by the output-token cap.</param>
     /// <param name="CacheWriteTokens">Input tokens written to the prompt cache; 0 when unsupported.</param>
     /// <param name="CacheReadTokens">Input tokens served from the prompt cache; 0 when unsupported.</param>
+    /// <param name="ThinkingTokens">
+    /// The share of <paramref name="OutputTokens"/> spent reasoning rather than
+    /// answering, where the provider reports it separately; 0 when unknown.
+    /// Included in the output total because it is billed as output — this is the
+    /// breakdown, not an addition. Worth surfacing because thinking and the visible
+    /// answer compete for one output cap, and thinking winning that race is how a
+    /// response gets truncated mid-JSON.
+    /// </param>
     public sealed record LlmResult(
         string Text,
         long InputTokens,
         long OutputTokens,
         bool Truncated,
         long CacheWriteTokens = 0,
-        long CacheReadTokens = 0);
+        long CacheReadTokens = 0,
+        long ThinkingTokens = 0);
 
     /// <summary>
     /// One request in a batch submission, paired with the caller's key for it.

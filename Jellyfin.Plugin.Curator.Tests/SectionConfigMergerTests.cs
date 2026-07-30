@@ -223,5 +223,127 @@ namespace Jellyfin.Plugin.Curator.Tests
                 settings["enabledSections"]!.AsArray().Select(n => (string?)n));
             Assert.Null(settings["EnabledSections"]);
         }
+    
+        // ------------------------------------------------------------------
+        // Row order and card shape, which live in Home Screen Sections' own
+        // configuration — Collection Sections has no fields for either.
+        // ------------------------------------------------------------------
+
+        [Fact]
+        public void SectionSettings_AreCreatedAtOrder500WithAShapeFromTheItemCount()
+        {
+            var config = JsonNode.Parse("{}")!;
+
+            var changed = SectionConfigMerger.MergeSectionSettings(config, [
+                new DesiredSection("curator-a", "Small Row", 6),
+                new DesiredSection("curator-b", "Full Row", 14),
+            ]);
+
+            Assert.True(changed);
+            var settings = config["SectionSettings"]!.AsArray();
+            Assert.Equal(2, settings.Count);
+
+            Assert.Equal(500, settings[0]!["OrderIndex"]!.GetValue<int>());
+            Assert.Equal("Landscape", settings[0]!["ViewMode"]!.GetValue<string>());
+            Assert.Equal(500, settings[1]!["OrderIndex"]!.GetValue<int>());
+            Assert.Equal("Portrait", settings[1]!["ViewMode"]!.GetValue<string>());
+        }
+
+        [Theory]
+        [InlineData(2, "Landscape")]
+        [InlineData(9, "Landscape")]
+        [InlineData(10, "Portrait")]
+        [InlineData(40, "Portrait")]
+        public void ViewMode_FlipsAtTheThreshold(int members, string expected)
+        {
+            Assert.Equal(expected, SectionConfigMerger.ViewModeFor(members));
+        }
+
+        [Fact]
+        public void SectionSettings_LeaveOtherPluginsSectionsAlone()
+        {
+            var config = JsonNode.Parse("""
+                {"SectionSettings":[
+                    {"SectionId":"ContinueWatching","OrderIndex":999,"ViewMode":"Landscape","HideWatchedItems":false},
+                    {"SectionId":"MARVEL","OrderIndex":12,"ViewMode":"Square"}
+                ]}
+                """)!;
+
+            SectionConfigMerger.MergeSectionSettings(config, [new DesiredSection("curator-a", "Mine", 12)]);
+
+            var settings = config["SectionSettings"]!.AsArray();
+            Assert.Equal(3, settings.Count);
+            Assert.Equal(999, settings[0]!["OrderIndex"]!.GetValue<int>());
+            Assert.Equal(12, settings[1]!["OrderIndex"]!.GetValue<int>());
+            Assert.Equal("Square", settings[1]!["ViewMode"]!.GetValue<string>());
+        }
+
+        [Fact]
+        public void SectionSettings_PreserveFieldsWeDoNotSet()
+        {
+            // HideWatchedItems, limits and per-user override are the user's to
+            // choose; we only ever touch order and shape.
+            var config = JsonNode.Parse("""
+                {"SectionSettings":[
+                    {"SectionId":"curator-a","Enabled":true,"AllowUserOverride":true,
+                     "LowerLimit":1,"UpperLimit":1,"OrderIndex":7,"ViewMode":"Square",
+                     "HideWatchedItems":true}
+                ]}
+                """)!;
+
+            SectionConfigMerger.MergeSectionSettings(config, [new DesiredSection("curator-a", "Mine", 3)]);
+
+            var entry = config["SectionSettings"]!.AsArray()[0]!;
+            Assert.Equal(500, entry["OrderIndex"]!.GetValue<int>());
+            Assert.Equal("Landscape", entry["ViewMode"]!.GetValue<string>());
+            Assert.True(entry["HideWatchedItems"]!.GetValue<bool>());
+            Assert.True(entry["AllowUserOverride"]!.GetValue<bool>());
+            Assert.Equal(1, entry["UpperLimit"]!.GetValue<int>());
+        }
+
+        [Fact]
+        public void SectionSettings_RemoveCuratorEntriesForCategoriesThatAreGone()
+        {
+            var config = JsonNode.Parse("""
+                {"SectionSettings":[
+                    {"SectionId":"curator-old","OrderIndex":500,"ViewMode":"Portrait"},
+                    {"SectionId":"Genre","OrderIndex":3,"ViewMode":"Square"}
+                ]}
+                """)!;
+
+            Assert.True(SectionConfigMerger.MergeSectionSettings(config, []));
+
+            var settings = config["SectionSettings"]!.AsArray();
+            Assert.Equal("Genre", Assert.Single(settings)!["SectionId"]!.GetValue<string>());
+        }
+
+        [Fact]
+        public void SectionSettings_AlreadyCorrect_ReportNoChange()
+        {
+            var config = JsonNode.Parse("""
+                {"SectionSettings":[{"SectionId":"curator-a","OrderIndex":500,"ViewMode":"Portrait"}]}
+                """)!;
+
+            Assert.False(SectionConfigMerger.MergeSectionSettings(
+                config, [new DesiredSection("curator-a", "Mine", 12)]));
+        }
+
+        [Fact]
+        public void SectionSettings_TolerateCamelCaseFromTheServer()
+        {
+            // The server serializes plugin config as camelCase over HTTP while the
+            // C# type is PascalCase; a naive merge creates a second array.
+            var config = JsonNode.Parse("""
+                {"sectionSettings":[{"sectionId":"curator-a","orderIndex":9,"viewMode":"Square"}]}
+                """)!;
+
+            Assert.True(SectionConfigMerger.MergeSectionSettings(
+                config, [new DesiredSection("curator-a", "Mine", 12)]));
+
+            Assert.Null(config["SectionSettings"]);
+            var entry = config["sectionSettings"]!.AsArray()[0]!;
+            Assert.Equal(500, entry["orderIndex"]!.GetValue<int>());
+            Assert.Equal("Portrait", entry["viewMode"]!.GetValue<string>());
+        }
     }
 }

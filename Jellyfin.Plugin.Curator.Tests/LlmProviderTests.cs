@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -46,6 +48,59 @@ namespace Jellyfin.Plugin.Curator.Tests
             }
         }
 
+        /// <param name="Status">The status to return.</param>
+        /// <param name="Body">The response body.</param>
+        /// <param name="RetryAfterSeconds">A Retry-After header to set, when the case needs one.</param>
+        private sealed record Reply(HttpStatusCode Status, string Body = "{}", int? RetryAfterSeconds = null);
+
+        /// <summary>
+        /// Plays a queued sequence of replies and counts the sends, for the retry
+        /// paths. The last reply repeats once the queue is drained.
+        /// </summary>
+        /// <remarks>
+        /// A fresh <see cref="HttpResponseMessage"/> is built per send rather than
+        /// replaying one instance: the provider disposes each response it reads, so
+        /// a repeated instance would come back disposed on the second attempt.
+        /// </remarks>
+        private sealed class SequenceHandler : HttpMessageHandler
+        {
+            private readonly Queue<Reply> _replies;
+            private Reply _last = null!;
+
+            public SequenceHandler(params Reply[] replies)
+            {
+                _replies = new Queue<Reply>(replies);
+            }
+
+            public int SendCount { get; private set; }
+
+            protected override Task<HttpResponseMessage> SendAsync(
+                HttpRequestMessage request,
+                CancellationToken cancellationToken)
+            {
+                SendCount++;
+                if (_replies.Count > 0)
+                {
+                    _last = _replies.Dequeue();
+                }
+
+                var response = new HttpResponseMessage(_last.Status)
+                {
+                    Content = new StringContent(_last.Body),
+                };
+
+                if (_last.RetryAfterSeconds is { } seconds)
+                {
+                    response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(seconds));
+                }
+
+                return Task.FromResult(response);
+            }
+        }
+
+        /// <summary>A retry delay short enough that tests do not wait on it.</summary>
+        private static readonly TimeSpan NoDelay = TimeSpan.FromMilliseconds(1);
+
         private static readonly LlmRequest Request = new("SYSTEM", "ITEMS", "SUFFIX", 4096);
 
         private const string AnthropicResponse =
@@ -54,6 +109,14 @@ namespace Jellyfin.Plugin.Curator.Tests
              "content":[{"type":"text","text":"{\"categories\":[]}"}],
              "stop_reason":"end_turn",
              "usage":{"input_tokens":1234,"output_tokens":56}}
+            """;
+
+        private const string GoogleResponse =
+            """
+            {"candidates":[{"content":{"parts":[{"text":"{\"categories\":[]}"}],"role":"model"},
+                            "finishReason":"STOP","index":0}],
+             "usageMetadata":{"promptTokenCount":1234,"candidatesTokenCount":56,"totalTokenCount":1290},
+             "modelVersion":"gemini-2.5-flash"}
             """;
 
         private const string OpenAiResponse =
@@ -80,10 +143,11 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal(4096, body.RootElement.GetProperty("max_tokens").GetInt32());
             Assert.Equal("SYSTEM", body.RootElement.GetProperty("system").GetString());
 
-            // Sonnet 5 and later think by default, and max_tokens caps thinking plus
-            // visible text together — which truncates the JSON before it closes.
+            // Thinking is on by default. It is the output CAP that has to accommodate
+            // it — disabling it makes recent models write their reasoning into the
+            // visible response instead, which is worse on both counts.
             Assert.Equal(
-                "disabled",
+                "adaptive",
                 body.RootElement.GetProperty("thinking").GetProperty("type").GetString());
 
             var message = Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray());
@@ -100,6 +164,21 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal("ephemeral", cacheControl.GetProperty("type").GetString());
             Assert.Equal("1h", cacheControl.GetProperty("ttl").GetString());
             Assert.False(blocks[1].TryGetProperty("cache_control", out _));
+        }
+
+        [Fact]
+        public async Task Anthropic_ThinkingDisabled_IsSentExplicitly()
+        {
+            var handler = new StubHandler(AnthropicResponse);
+            var provider = new AnthropicProvider(
+                new HttpClient(handler), "claude-sonnet-5", "sk-test", baseUrl: null, enableThinking: false);
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.Equal(
+                "disabled",
+                body.RootElement.GetProperty("thinking").GetProperty("type").GetString());
         }
 
         [Fact]
@@ -279,6 +358,575 @@ namespace Jellyfin.Plugin.Curator.Tests
             var result = await provider.CompleteAsync(Request, CancellationToken.None);
 
             Assert.True(result.Truncated);
+        }
+
+        [Fact]
+        public async Task Google_SendsCorrectRequestShape()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+                handler.Request!.RequestUri!.ToString());
+            Assert.Equal("AIza-test", Assert.Single(handler.Request.Headers.GetValues("x-goog-api-key")));
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var root = body.RootElement;
+
+            var systemPart = Assert.Single(
+                root.GetProperty("systemInstruction").GetProperty("parts").EnumerateArray());
+            Assert.Equal("SYSTEM", systemPart.GetProperty("text").GetString());
+
+            var content = Assert.Single(root.GetProperty("contents").EnumerateArray());
+            Assert.Equal("user", content.GetProperty("role").GetString());
+
+            // Kept as two parts so the reusable half stays at a stable prefix
+            // boundary for implicit context caching.
+            var parts = content.GetProperty("parts").EnumerateArray().ToList();
+            Assert.Equal(2, parts.Count);
+            Assert.Equal("ITEMS", parts[0].GetProperty("text").GetString());
+            Assert.Equal("SUFFIX", parts[1].GetProperty("text").GetString());
+
+            var generation = root.GetProperty("generationConfig");
+            Assert.Equal(4096, generation.GetProperty("maxOutputTokens").GetInt32());
+            Assert.Equal("application/json", generation.GetProperty("responseMimeType").GetString());
+        }
+
+        [Fact]
+        public async Task Google_ModelIdWithModelsPrefix_IsNotDoubled()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "models/gemini-2.5-pro", "AIza-test");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+                handler.Request!.RequestUri!.ToString());
+            Assert.Equal("gemini-2.5-pro", provider.ModelId);
+        }
+
+        [Fact]
+        public async Task Google_DiscoverySchema_MatchesTheParserContract()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var schema = body.RootElement.GetProperty("generationConfig").GetProperty("responseSchema");
+
+            Assert.Equal("OBJECT", schema.GetProperty("type").GetString());
+            Assert.Equal("categories", Assert.Single(schema.GetProperty("required").EnumerateArray()).GetString());
+
+            var categories = schema.GetProperty("properties").GetProperty("categories");
+            Assert.Equal("ARRAY", categories.GetProperty("type").GetString());
+
+            // The item shape ProposalParser reads back: a name, a description, and
+            // integer indexes into the batch.
+            var category = categories.GetProperty("items");
+            var categoryProps = category.GetProperty("properties");
+            Assert.Equal("STRING", categoryProps.GetProperty("name").GetProperty("type").GetString());
+            Assert.Equal("STRING", categoryProps.GetProperty("description").GetProperty("type").GetString());
+            Assert.Equal("ARRAY", categoryProps.GetProperty("members").GetProperty("type").GetString());
+            Assert.Equal(
+                "INTEGER",
+                categoryProps.GetProperty("members").GetProperty("items").GetProperty("type").GetString());
+
+            // A discovery pass has no "selected" — that belongs to a viewer's pass.
+            Assert.False(schema.GetProperty("properties").TryGetProperty("selected", out _));
+        }
+
+        [Fact]
+        public async Task Google_PersonalShape_AddsSelectedAndRequiresBoth()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.PersonalCategories),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var schema = body.RootElement.GetProperty("generationConfig").GetProperty("responseSchema");
+
+            var selected = schema.GetProperty("properties").GetProperty("selected");
+            Assert.Equal("ARRAY", selected.GetProperty("type").GetString());
+            Assert.Equal("STRING", selected.GetProperty("items").GetProperty("type").GetString());
+
+            // Both keys required, so "nothing to add" arrives as an empty array
+            // rather than a missing key.
+            var required = schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList();
+            Assert.Contains("selected", required);
+            Assert.Contains("categories", required);
+        }
+
+        [Fact]
+        public async Task Google_ThinkingOn_LeavesTheBudgetToTheModel()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.False(body.RootElement.GetProperty("generationConfig").TryGetProperty("thinkingConfig", out _));
+        }
+
+        [Fact]
+        public async Task Google_ThinkingOff_SendsZeroBudget()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(
+                new HttpClient(handler), "gemini-2.5-flash", "AIza-test", baseUrl: null, enableThinking: false);
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.Equal(
+                0,
+                body.RootElement.GetProperty("generationConfig")
+                    .GetProperty("thinkingConfig").GetProperty("thinkingBudget").GetInt32());
+        }
+
+        [Fact]
+        public async Task Google_ParsesTextAndUsage()
+        {
+            var provider = new GoogleProvider(
+                new HttpClient(new StubHandler(GoogleResponse)), "gemini-2.5-flash", "AIza-test");
+
+            var result = await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal("""{"categories":[]}""", result.Text);
+            Assert.Equal(1234, result.InputTokens);
+            Assert.Equal(56, result.OutputTokens);
+            Assert.False(result.Truncated);
+        }
+
+        [Fact]
+        public async Task Google_SubtractsCachedTokensFromInputAndAddsThinkingToOutput()
+        {
+            // promptTokenCount is the TOTAL input including the cached span — the
+            // opposite of Anthropic — so a cache hit must not read as more input.
+            // thoughtsTokenCount is billed as output but reported outside
+            // candidatesTokenCount.
+            const string cached =
+                """
+                {"candidates":[{"content":{"parts":[{"text":"{\"categories\":[]}"}],"role":"model"},
+                                "finishReason":"STOP"}],
+                 "usageMetadata":{"promptTokenCount":5000,"candidatesTokenCount":56,
+                                  "thoughtsTokenCount":400,"cachedContentTokenCount":4321,
+                                  "totalTokenCount":5456}}
+                """;
+
+            var provider = new GoogleProvider(
+                new HttpClient(new StubHandler(cached)), "gemini-2.5-flash", "AIza-test");
+
+            var result = await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal(679, result.InputTokens);
+            Assert.Equal(4321, result.CacheReadTokens);
+            Assert.Equal(0, result.CacheWriteTokens);
+            Assert.Equal(456, result.OutputTokens);
+        }
+
+        [Fact]
+        public async Task Google_ThoughtParts_AreNotTreatedAsTheAnswer()
+        {
+            const string withThoughts =
+                """
+                {"candidates":[{"content":{"parts":[
+                    {"text":"Let me think about this library...","thought":true},
+                    {"text":"{\"categories\":[]}"}],"role":"model"},
+                                "finishReason":"STOP"}],
+                 "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}
+                """;
+
+            var provider = new GoogleProvider(
+                new HttpClient(new StubHandler(withThoughts)), "gemini-2.5-flash", "AIza-test");
+
+            var result = await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal("""{"categories":[]}""", result.Text);
+        }
+
+        [Fact]
+        public async Task Google_MaxTokensFinish_IsReportedAsTruncated()
+        {
+            var response = GoogleResponse.Replace("\"STOP\"", "\"MAX_TOKENS\"", StringComparison.Ordinal);
+            var provider = new GoogleProvider(
+                new HttpClient(new StubHandler(response)), "gemini-2.5-flash", "AIza-test");
+
+            var result = await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.True(result.Truncated);
+        }
+
+        [Fact]
+        public async Task Google_SafetyFinish_Throws()
+        {
+            var response = GoogleResponse.Replace("\"STOP\"", "\"SAFETY\"", StringComparison.Ordinal);
+            var provider = new GoogleProvider(
+                new HttpClient(new StubHandler(response)), "gemini-2.5-flash", "AIza-test");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => provider.CompleteAsync(Request, CancellationToken.None));
+        }
+
+        [Fact]
+        public async Task Google_BlockedPrompt_Throws()
+        {
+            const string blocked = """{"promptFeedback":{"blockReason":"SAFETY"}}""";
+            var provider = new GoogleProvider(
+                new HttpClient(new StubHandler(blocked)), "gemini-2.5-flash", "AIza-test");
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => provider.CompleteAsync(Request, CancellationToken.None));
+        }
+
+        [Fact]
+        public async Task Google_HttpError_ThrowsWithStatus()
+        {
+            var provider = new GoogleProvider(
+                new HttpClient(new StubHandler("""{"error":{"message":"API key not valid"}}""", HttpStatusCode.BadRequest)),
+                "gemini-2.5-flash",
+                "AIza-bad");
+
+            var ex = await Assert.ThrowsAsync<HttpRequestException>(
+                () => provider.CompleteAsync(Request, CancellationToken.None));
+            Assert.Contains("400", ex.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Google_BaseUrlOverride_IsUsed()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(
+                new HttpClient(handler), "gemini-2.5-flash", "AIza-test", "https://proxy.example.com/v1beta/");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal(
+                "https://proxy.example.com/v1beta/models/gemini-2.5-flash:generateContent",
+                handler.Request!.RequestUri!.ToString());
+        }
+
+        [Fact]
+        public async Task Google_TurnsSafetyFilteringOff()
+        {
+            // Gemini blocks on OUR input — a library of horror and true crime with
+            // their synopses. A blocked response loses a paid-for pass, and nothing
+            // here is generative in the risky sense.
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var settings = body.RootElement.GetProperty("safetySettings").EnumerateArray()
+                .ToDictionary(
+                    s => s.GetProperty("category").GetString()!,
+                    s => s.GetProperty("threshold").GetString()!);
+
+            Assert.Equal(4, settings.Count);
+            Assert.All(settings.Values, threshold => Assert.Equal("OFF", threshold));
+            Assert.Contains("HARM_CATEGORY_HARASSMENT", settings.Keys);
+            Assert.Contains("HARM_CATEGORY_HATE_SPEECH", settings.Keys);
+            Assert.Contains("HARM_CATEGORY_SEXUALLY_EXPLICIT", settings.Keys);
+            Assert.Contains("HARM_CATEGORY_DANGEROUS_CONTENT", settings.Keys);
+        }
+
+        [Fact]
+        public async Task Google_RateLimited_IsRetriedRatherThanEndingTheRun()
+        {
+            // Quota is per-minute and a run fires a request per user back to back;
+            // 429 is ordinary here. Failing the run on one would throw away every
+            // pass already paid for.
+            var handler = new SequenceHandler(
+                new Reply(HttpStatusCode.TooManyRequests, """{"error":{"message":"quota"}}"""),
+                new Reply(HttpStatusCode.OK, GoogleResponse));
+            var provider = new GoogleProvider(
+                new HttpClient(handler), "gemini-2.5-flash", "AIza-test", null, true, NoDelay);
+
+            var result = await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal(2, handler.SendCount);
+            Assert.Equal("""{"categories":[]}""", result.Text);
+        }
+
+        [Theory]
+        [InlineData(HttpStatusCode.InternalServerError)]
+        [InlineData(HttpStatusCode.ServiceUnavailable)]
+        [InlineData(HttpStatusCode.GatewayTimeout)]
+        public async Task Google_TransientServerErrors_AreRetried(HttpStatusCode status)
+        {
+            var handler = new SequenceHandler(
+                new Reply(status),
+                new Reply(HttpStatusCode.OK, GoogleResponse));
+            var provider = new GoogleProvider(
+                new HttpClient(handler), "gemini-2.5-flash", "AIza-test", null, true, NoDelay);
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal(2, handler.SendCount);
+        }
+
+        [Fact]
+        public async Task Google_RetryAfterHeader_IsHonouredOverTheBackoff()
+        {
+            // The server's own pacing beats any curve we invent. A zero here also
+            // proves the header is being read rather than ignored.
+            var handler = new SequenceHandler(
+                new Reply(HttpStatusCode.TooManyRequests, "{}", RetryAfterSeconds: 0),
+                new Reply(HttpStatusCode.OK, GoogleResponse));
+            var provider = new GoogleProvider(
+                new HttpClient(handler), "gemini-2.5-flash", "AIza-test", null, true, TimeSpan.FromMinutes(5));
+
+            // Would block for five minutes if the header were ignored.
+            var result = await provider.CompleteAsync(Request, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(2, handler.SendCount);
+            Assert.Equal("""{"categories":[]}""", result.Text);
+        }
+
+        [Fact]
+        public async Task Google_PersistentRateLimit_GivesUpAfterFourAttempts()
+        {
+            var handler = new SequenceHandler(new Reply(HttpStatusCode.TooManyRequests, """{"error":"quota"}"""));
+            var provider = new GoogleProvider(
+                new HttpClient(handler), "gemini-2.5-flash", "AIza-test", null, true, NoDelay);
+
+            var ex = await Assert.ThrowsAsync<HttpRequestException>(
+                () => provider.CompleteAsync(Request, CancellationToken.None));
+
+            Assert.Equal(4, handler.SendCount);
+            Assert.Contains("429", ex.Message, StringComparison.Ordinal);
+        }
+
+        [Theory]
+        [InlineData(HttpStatusCode.Unauthorized)]
+        [InlineData(HttpStatusCode.BadRequest)]
+        [InlineData(HttpStatusCode.NotFound)]
+        public async Task Google_PermanentErrors_FailFastWithoutRetrying(HttpStatusCode status)
+        {
+            // A bad key or a wrong model id must not take a minute to say so.
+            var handler = new SequenceHandler(new Reply(status, """{"error":{"message":"nope"}}"""));
+            var provider = new GoogleProvider(
+                new HttpClient(handler), "gemini-2.5-flash", "AIza-test", null, true, NoDelay);
+
+            await Assert.ThrowsAsync<HttpRequestException>(
+                () => provider.CompleteAsync(Request, CancellationToken.None));
+
+            Assert.Equal(1, handler.SendCount);
+        }
+
+        [Fact]
+        public async Task Google_ReportsThinkingTokensSeparatelyFromTheOutputTotal()
+        {
+            // Thinking and the answer compete for one output cap, and thinking
+            // winning that race is how a schema-constrained response gets truncated
+            // mid-JSON. The breakdown is what makes that diagnosable.
+            const string thinking =
+                """
+                {"candidates":[{"content":{"parts":[{"text":"{\"categories\":[]}"}],"role":"model"},
+                                "finishReason":"MAX_TOKENS"}],
+                 "usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":200,
+                                  "thoughtsTokenCount":15800}}
+                """;
+
+            var provider = new GoogleProvider(
+                new HttpClient(new StubHandler(thinking)), "gemini-2.5-flash", "AIza-test");
+
+            var result = await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal(15800, result.ThinkingTokens);
+            Assert.Equal(16000, result.OutputTokens);
+            Assert.True(result.Truncated);
+        }
+
+        [Fact]
+        public async Task Google_EmptyCacheablePrefix_SendsSinglePart()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", string.Empty, "SUFFIX", 4096), CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var content = Assert.Single(body.RootElement.GetProperty("contents").EnumerateArray());
+            var part = Assert.Single(content.GetProperty("parts").EnumerateArray());
+            Assert.Equal("SUFFIX", part.GetProperty("text").GetString());
+        }
+    
+        private const string GrokResponse =
+            """
+            {"id":"chatcmpl-x1","object":"chat.completion","model":"grok-4",
+             "choices":[{"index":0,"message":{"role":"assistant","content":"{\"categories\":[]}"},"finish_reason":"stop"}],
+             "usage":{"prompt_tokens":5000,"completion_tokens":300,"total_tokens":5300,
+                      "prompt_tokens_details":{"cached_tokens":4000},
+                      "completion_tokens_details":{"reasoning_tokens":120}}}
+            """;
+
+        [Fact]
+        public async Task Grok_PostsToXaiWithBearerAuth()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal("https://api.x.ai/v1/chat/completions", handler.Request!.RequestUri!.ToString());
+            Assert.Equal("Bearer", handler.Request.Headers.Authorization!.Scheme);
+            Assert.Equal("xai-test", handler.Request.Headers.Authorization.Parameter);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.Equal("grok-4", body.RootElement.GetProperty("model").GetString());
+            Assert.Equal(4096, body.RootElement.GetProperty("max_completion_tokens").GetInt32());
+        }
+
+        [Fact]
+        public async Task Grok_ConstrainsTheAnswerWithAStrictJsonSchema()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var format = body.RootElement.GetProperty("response_format");
+            Assert.Equal("json_schema", format.GetProperty("type").GetString());
+
+            var jsonSchema = format.GetProperty("json_schema");
+            Assert.True(jsonSchema.GetProperty("strict").GetBoolean());
+
+            var schema = jsonSchema.GetProperty("schema");
+            Assert.Equal("object", schema.GetProperty("type").GetString());
+            Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
+
+            // The shape ProposalParser reads back, in OpenAI's lowercase dialect.
+            var category = schema.GetProperty("properties").GetProperty("categories").GetProperty("items");
+            var props = category.GetProperty("properties");
+            Assert.Equal("string", props.GetProperty("name").GetProperty("type").GetString());
+            Assert.Equal("string", props.GetProperty("description").GetProperty("type").GetString());
+            Assert.Equal("integer", props.GetProperty("members").GetProperty("items").GetProperty("type").GetString());
+
+            // Strict mode rejects a schema that leaves any property out of required.
+            var required = category.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList();
+            Assert.Equal(props.EnumerateObject().Count(), required.Count);
+        }
+
+        [Fact]
+        public async Task Grok_PersonalShape_AddsSelected()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.PersonalCategories),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var jsonSchema = body.RootElement.GetProperty("response_format").GetProperty("json_schema");
+            Assert.Equal("curator_personal_categories", jsonSchema.GetProperty("name").GetString());
+
+            var schema = jsonSchema.GetProperty("schema");
+            Assert.Equal(
+                "string",
+                schema.GetProperty("properties").GetProperty("selected").GetProperty("items").GetProperty("type").GetString());
+
+            var required = schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList();
+            Assert.Contains("selected", required);
+            Assert.Contains("categories", required);
+        }
+
+        [Fact]
+        public async Task Grok_SubtractsCachedTokensAndReportsReasoningSeparately()
+        {
+            var provider = OpenAiChatProvider.CreateGrok(
+                new HttpClient(new StubHandler(GrokResponse)), "grok-4", "xai-test");
+
+            var result = await provider.CompleteAsync(Request, CancellationToken.None);
+
+            // prompt_tokens includes the cached span, as on Gemini and unlike Anthropic.
+            Assert.Equal(1000, result.InputTokens);
+            Assert.Equal(4000, result.CacheReadTokens);
+            Assert.Equal(300, result.OutputTokens);
+            Assert.Equal(120, result.ThinkingTokens);
+            Assert.False(result.Truncated);
+        }
+
+        [Fact]
+        public async Task Grok_RateLimited_IsRetried()
+        {
+            var handler = new SequenceHandler(
+                new Reply(HttpStatusCode.TooManyRequests, """{"error":"rate limited"}"""),
+                new Reply(HttpStatusCode.OK, GrokResponse));
+            var provider = OpenAiChatProvider.CreateGrok(
+                new HttpClient(handler), "grok-4", "xai-test", null, NoDelay);
+
+            var result = await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal(2, handler.SendCount);
+            Assert.Equal("""{"categories":[]}""", result.Text);
+        }
+
+        [Fact]
+        public async Task Grok_BadKey_FailsFastAndNamesTheProvider()
+        {
+            var handler = new SequenceHandler(
+                new Reply(HttpStatusCode.Unauthorized, """{"error":"bad key"}"""));
+            var provider = OpenAiChatProvider.CreateGrok(
+                new HttpClient(handler), "grok-4", "xai-bad", null, NoDelay);
+
+            var ex = await Assert.ThrowsAsync<HttpRequestException>(
+                () => provider.CompleteAsync(Request, CancellationToken.None));
+
+            Assert.Equal(1, handler.SendCount);
+            Assert.Contains("Grok returned 401", ex.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task Grok_BaseUrlOverride_IsUsed()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(
+                new HttpClient(handler), "grok-4", "xai-test", "https://proxy.example.com/v1");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            Assert.Equal("https://proxy.example.com/v1/chat/completions", handler.Request!.RequestUri!.ToString());
+        }
+
+        [Fact]
+        public async Task CompatibleEndpoint_NeverSendsAResponseFormat()
+        {
+            // Ollama, LM Studio and friends reject the whole request rather than
+            // ignoring a field they do not know.
+            var handler = new StubHandler(OpenAiResponse);
+            var provider = OpenAiChatProvider.CreateCompatible(
+                new HttpClient(handler), "llama3", "http://localhost:11434/v1");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.False(body.RootElement.TryGetProperty("response_format", out _));
+        }
+
+        [Fact]
+        public async Task OpenAi_StillSendsNoResponseFormat()
+        {
+            var handler = new StubHandler(OpenAiResponse);
+            var provider = OpenAiChatProvider.CreateOpenAi(new HttpClient(handler), "gpt-test", "sk-test");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.False(body.RootElement.TryGetProperty("response_format", out _));
         }
     }
 }

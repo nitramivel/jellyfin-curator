@@ -21,13 +21,20 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         private readonly string _apiKey;
         private readonly Uri _endpoint;
         private readonly Uri _batchEndpoint;
+        private readonly bool _enableThinking;
 
-        public AnthropicProvider(HttpClient httpClient, string model, string apiKey, string? baseUrl = null)
+        public AnthropicProvider(
+            HttpClient httpClient,
+            string model,
+            string apiKey,
+            string? baseUrl = null,
+            bool enableThinking = true)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(model);
             _httpClient = httpClient;
             ModelId = model;
             _apiKey = apiKey;
+            _enableThinking = enableThinking;
             var basePart = string.IsNullOrWhiteSpace(baseUrl) ? DefaultBaseUrl : baseUrl.TrimEnd('/');
             _endpoint = new Uri(basePart + "/messages");
             _batchEndpoint = new Uri(basePart + "/messages/batches");
@@ -133,11 +140,14 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             {
                 model = ModelId,
                 max_tokens = request.MaxOutputTokens,
-                // Sonnet 5 and later run adaptive thinking when this is omitted, and
-                // max_tokens caps thinking plus visible text together — so the JSON
-                // gets truncated before it closes. This is pure structured extraction;
-                // there is nothing here worth thinking about.
-                thinking = new { type = "disabled" },
+                // max_tokens caps thinking AND visible text together, so a tight cap
+                // with thinking on truncates the JSON before it closes. The answer is
+                // a bigger cap, not disabling thinking: with it off recent models
+                // write their reasoning into the visible response instead, wasting the
+                // budget anyway and returning far fewer categories.
+                thinking = _enableThinking
+                    ? new { type = "adaptive" }
+                    : new { type = "disabled" },
                 system = request.SystemPrompt,
                 messages = new[]
                 {

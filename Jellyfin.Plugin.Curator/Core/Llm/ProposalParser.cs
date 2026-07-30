@@ -1,10 +1,26 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Jellyfin.Plugin.Curator.Core.Models;
 
 namespace Jellyfin.Plugin.Curator.Core.Llm
 {
+    /// <summary>
+    /// The outcome of one viewer's pass.
+    /// </summary>
+    /// <param name="SelectedNames">Existing category names the model chose, canonically spelled.</param>
+    /// <param name="Proposals">New categories the model invented for this viewer.</param>
+    /// <param name="DiscardedMemberCount">Member references outside the batch.</param>
+    /// <param name="DiscardedCategoryCount">New categories dropped as unusable.</param>
+    /// <param name="DiscardedSelectionCount">Selected names that match no existing category.</param>
+    public sealed record PersonalParseResult(
+        IReadOnlyList<string> SelectedNames,
+        IReadOnlyList<CategoryProposal> Proposals,
+        int DiscardedMemberCount,
+        int DiscardedCategoryCount,
+        int DiscardedSelectionCount);
+
     /// <summary>
     /// The outcome of parsing one batch response: the validated proposals plus
     /// counts of what was discarded, for logging.
@@ -125,6 +141,103 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
 
                 return new ParseResult(proposals, discardedMembers, discardedCategories);
             }
+        }
+
+        /// <summary>
+        /// Parses a viewer pass: the names of existing categories the model chose,
+        /// plus any new categories it invented.
+        /// </summary>
+        /// <param name="responseText">Raw model output.</param>
+        /// <param name="batch">The batch the indexes refer to.</param>
+        /// <param name="candidateNames">Valid existing names, for validating selections.</param>
+        /// <returns>The selections and new proposals.</returns>
+        /// <exception cref="FormatException">The response is not a usable JSON object.</exception>
+        public static PersonalParseResult ParsePersonal(
+            string responseText,
+            IReadOnlyList<MediaItemRecord> batch,
+            IReadOnlyCollection<string> candidateNames)
+        {
+            ArgumentNullException.ThrowIfNull(responseText);
+            ArgumentNullException.ThrowIfNull(batch);
+            ArgumentNullException.ThrowIfNull(candidateNames);
+
+            var json = ExtractJsonObject(responseText);
+
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(json);
+            }
+            catch (JsonException ex)
+            {
+                throw new FormatException("Model response is not valid JSON.", ex);
+            }
+
+            var selected = new List<string>();
+            var discardedSelections = 0;
+
+            using (document)
+            {
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException("Model response is not a JSON object.");
+                }
+
+                if (root.TryGetProperty("selected", out var selectedElement)
+                    && selectedElement.ValueKind == JsonValueKind.Array)
+                {
+                    // Match names case-insensitively but keep the stored spelling —
+                    // the name is the join key back to the shared definition, and
+                    // Collection Sections resolves rows by exact name string.
+                    var lookup = candidateNames.ToDictionary(n => n, n => n, StringComparer.OrdinalIgnoreCase);
+                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var entry in selectedElement.EnumerateArray())
+                    {
+                        if (entry.ValueKind == JsonValueKind.String
+                            && entry.GetString() is { } name
+                            && lookup.TryGetValue(name, out var canonical))
+                        {
+                            if (seen.Add(canonical))
+                            {
+                                selected.Add(canonical);
+                            }
+                        }
+                        else
+                        {
+                            // A name the shared pass never produced cannot be
+                            // resolved to a definition; dropping it is the only
+                            // safe option.
+                            discardedSelections++;
+                        }
+                    }
+                }
+            }
+
+            // "categories" is optional here: a viewer with thin history is told to
+            // propose nothing rather than pad, so an absent or empty array is a
+            // valid answer, not a malformed one.
+            var proposals = TryParseCategories(json, batch);
+
+            return new PersonalParseResult(
+                selected,
+                proposals.Proposals,
+                proposals.DiscardedMemberCount,
+                proposals.DiscardedCategoryCount,
+                discardedSelections);
+        }
+
+        private static ParseResult TryParseCategories(string json, IReadOnlyList<MediaItemRecord> batch)
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("categories", out var categories)
+                || categories.ValueKind != JsonValueKind.Array)
+            {
+                return new ParseResult([], 0, 0);
+            }
+
+            return Parse(json, batch);
         }
 
         /// <summary>

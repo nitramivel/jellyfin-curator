@@ -29,6 +29,8 @@
                 }
                 .curatorBulkBar .curatorBulkCount { opacity: 0.75; }
                 .curatorTableScroll { overflow-x: auto; }
+                .curatorScopeBar { margin: 0.5em 0 1em 0; }
+                .curatorScopeBar .curatorTabButton { font-size: 0.92em; }
                 /* Plain inputs rather than is="emby-checkbox": customized built-in
                    elements upgrade unreliably inside innerHTML, which left the first
                    generated row styled-but-unwired and the rest bare. */
@@ -68,12 +70,17 @@
                         <div class="selectContainer">
                             <label class="selectLabel" for="Provider">Provider</label>
                             <select is="emby-select" id="Provider" name="Provider" class="emby-select-withcolor emby-select">
-                                <option value="Anthropic">Anthropic</option>
-                                <option value="OpenAi">OpenAI</option>
-                                <option value="OpenAiCompatible">OpenAI-compatible (Ollama, LM Studio, vLLM, OpenRouter)</option>
+                                <option value="Anthropic">Anthropic (Claude)</option>
+                                <option value="OpenAi">OpenAI (GPT)</option>
+                                <option value="OpenAiCompatible">Any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter)</option>
+                                <option value="Google">Google (Gemini)</option>
+                                <option value="Grok">xAI (Grok)</option>
                             </select>
                             <div class="fieldDescription">
-                                Gemini works through the OpenAI-compatible option using Google's compatibility endpoint.
+                                Google and Grok constrain the model to the exact response shape this plugin expects,
+                                so a malformed answer cannot lose a batch. Both are also reachable through the
+                                OpenAI-compatible option, but that path gives that guarantee up — prefer their own
+                                entries. Grok needs a model of <code>grok-2-1212</code> or newer for this.
                             </div>
                         </div>
 
@@ -82,7 +89,7 @@
                             <input id="Model" name="Model" type="text" class="emby-input" />
                             <div class="fieldDescription">
                                 The model identifier, for example <code>claude-sonnet-4-6</code>, <code>gpt-5</code>,
-                                or <code>llama3.3</code>.
+                                <code>gemini-2.5-flash</code>, <code>grok-4</code>, or <code>llama3.3</code>.
                             </div>
                         </div>
 
@@ -128,16 +135,80 @@
                             </div>
                         </div>
 
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxCategories">Max categories</label>
-                            <input id="MaxCategories" name="MaxCategories" type="number" min="0" max="200" class="emby-input" />
-                            <div class="fieldDescription">Ceiling on categories per run. 0 means no cap.</div>
+                        <h4 class="sectionTitle">Category size and count</h4>
+                        <div class="fieldDescription" style="margin-bottom:1em;">
+                            Two pools, a floor and a ceiling each. <strong>Shared</strong> categories come from
+                            one library-wide pass; <strong>personal</strong> ones are invented for a single
+                            viewer from their own history, so the same numbers do not suit both — keep the
+                            personal floor at or below the shared one.
+                            <br /><br />
+                            The floors are sent to the model, not just applied to its answer: it is told the
+                            number it will be judged by. A run measured before this was wired up asked for
+                            3-member categories and then discarded everything under 6 — 17 of 22 proposals
+                            binned on size alone.
                         </div>
 
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MinCategorySize">Minimum category size</label>
-                            <input id="MinCategorySize" name="MinCategorySize" type="number" min="1" max="100" class="emby-input" />
-                            <div class="fieldDescription">Categories with fewer members than this are discarded.</div>
+                            <label class="inputLabel inputLabelUnfocused" for="MinSharedCategorySize">Minimum shared category size</label>
+                            <input id="MinSharedCategorySize" name="MinSharedCategorySize" type="number" min="2" max="100" class="emby-input" />
+                            <div class="fieldDescription">
+                                Smallest shared category worth keeping, in items, and the size the model is asked
+                                to meet. Raise it for fewer, broader rows; lower it to let the model name narrower
+                                threads. Minimum 2.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxSharedCategories">Max shared categories</label>
+                            <input id="MaxSharedCategories" name="MaxSharedCategories" type="number" min="0" max="200" class="emby-input" />
+                            <div class="fieldDescription">
+                                Ceiling on how many survive the library-wide pass, strongest first, and the number
+                                the model is asked to aim for. Set it generously — the floor above decides what is
+                                worth keeping, this only decides how many. A cap the model is not told is one it
+                                cannot aim at: given no target count, one model returned 23 categories covering 78%
+                                of the library and another returned 5 covering 10%, from an identical prompt.
+                                0 means no cap.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxCategoryMembers">Max items per category</label>
+                            <input id="MaxCategoryMembers" name="MaxCategoryMembers" type="number" min="0" max="500" class="emby-input" />
+                            <div class="fieldDescription">
+                                Applies to both pools — a category is a home screen row either way, and Collection
+                                Sections renders only the first 16 items of one. Members are ranked strongest-first,
+                                so anything past this is trimmed off the tail rather than the category being dropped:
+                                a forty-item thread becomes the best twenty of itself. 0 means no limit.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MinPersonalCategorySize">Minimum personal category size</label>
+                            <input id="MinPersonalCategorySize" name="MinPersonalCategorySize" type="number" min="2" max="100" class="emby-input" />
+                            <div class="fieldDescription">
+                                Smallest category invented for one viewer. A viewer with a handful of watched
+                                items cannot support a category as large as one drawn from the whole library,
+                                so this belongs below the shared floor. Minimum 2.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxPersonalCategories">Max personal categories per user</label>
+                            <input id="MaxPersonalCategories" name="MaxPersonalCategories" type="number" min="0" max="200" class="emby-input" />
+                            <div class="fieldDescription">
+                                Ceiling on the categories invented for one viewer. 0 means no cap.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MinWatchedForPersonalization">Minimum watched items to personalize</label>
+                            <input id="MinWatchedForPersonalization" name="MinWatchedForPersonalization" type="number" min="0" max="1000" class="emby-input" />
+                            <div class="fieldDescription">
+                                A user who has watched fewer items than this is skipped before their pass is sent,
+                                and gets the shared categories instead. Personalization costs a full library prompt
+                                per user whether or not they have any history to shape it, so an account that has
+                                never watched anything is pure spend. 0 personalizes everyone.
+                            </div>
                         </div>
 
                         <div class="inputContainer">
@@ -162,6 +233,24 @@
                             <input id="OutputCostPerMillion" name="OutputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
                             <div class="fieldDescription">
                                 Used only for the estimated-cost line each run logs. Leave both at 0 to log token counts alone.
+                                These are plain numbers and are never looked up — <strong>change them when you change
+                                provider</strong>, or the cost of a cheap model will be reported at the price of an
+                                expensive one.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="EnableThinking" name="EnableThinking" />
+                                <span>Let the model think before answering</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                On by default, and worth leaving on. Turning it off does not simply save tokens:
+                                recent models write their reasoning into the visible response instead, which
+                                wastes the output budget anyway and produces markedly worse results — a
+                                discovery pass returned one usable category instead of twenty with this off.
+                                Note the output cap covers thinking and the answer together, so raise
+                                <em>Max output tokens</em> rather than turning this off.
                             </div>
                         </div>
 
@@ -265,6 +354,8 @@
                 <div class="verticalSection">
                     <h3 class="sectionTitle">Categories</h3>
 
+                    <div class="curatorTabBar curatorScopeBar" id="CuratorScopeBar"></div>
+
                     <div class="curatorBulkBar">
                         <label class="curatorCheckLabel">
                             <input type="checkbox" class="curatorCheck" id="CuratorSelectAll" />
@@ -280,9 +371,10 @@
                     </div>
 
                     <div class="fieldDescription" style="margin-bottom:0.75em;">
-                        Deleting a definition does not delete its Jellyfin playlists — remove those from the Playlists
-                        library if you want them gone. A deleted category can reappear under the same name on the next
-                        run, with a new identity.
+                        Deleting a category also deletes the Jellyfin playlists it built. Playlists you have taken
+                        ownership of are kept — removing Curator's <code>curator</code> tag from a playlist makes it
+                        permanently yours, and nothing here will delete it. A deleted category can reappear under the
+                        same name on the next run, with a new identity.
                     </div>
 
                     <div id="CuratorCategories"><p class="fieldDescription">Loading&hellip;</p></div>
@@ -302,6 +394,9 @@
             var expandedMembers = {};
             var memberCache = {};
             var expandedProposals = {};
+            var allUsers = [];
+            // 'shared' or a user id — which slice of the category list is on screen.
+            var activeScope = 'all';
 
             function escapeHtml(value) {
                 return String(value === null || value === undefined ? '' : value)
@@ -311,6 +406,7 @@
 
             function fillUsers(chosenIds) {
                 return ApiClient.getUsers().then(function (users) {
+                    allUsers = users;
                     var select = page.querySelector('#TargetUsers');
                     select.innerHTML = users.map(function (user) {
                         var selected = chosenIds.indexOf(user.Id) !== -1 ? ' selected' : '';
@@ -529,21 +625,136 @@
                 });
             }
 
+            function isShared(category) {
+                return !category.OwnerUserId;
+            }
+
+            function matchesScope(category, scope) {
+                if (scope === 'all') {
+                    return true;
+                }
+
+                return scope === 'shared'
+                    ? isShared(category)
+                    : String(category.OwnerUserId).toLowerCase() === String(scope).toLowerCase();
+            }
+
+            function inScope(category) {
+                return matchesScope(category, activeScope);
+            }
+
+            function visibleCategories() {
+                return currentCategories.filter(inScope);
+            }
+
+            function countFor(scope) {
+                return currentCategories.filter(function (category) {
+                    return matchesScope(category, scope);
+                }).length;
+            }
+
+            // Names of everyone a category was built for. Replaces a bare playlist
+            // count, which said how many existed but never who had them — the
+            // question actually asked of a shared category.
+            function assignedUsers(category) {
+                var links = category.Users || [];
+                if (!links.length) {
+                    return 'no users';
+                }
+
+                return links.map(function (link) {
+                    // A link can outlive the account it points at; say so rather
+                    // than rendering an empty gap.
+                    var name = link.UserName || 'deleted user';
+                    if (link.HandedOff) {
+                        return name + ' (theirs)';
+                    }
+
+                    return link.PlaylistId ? name : name + ' (no playlist)';
+                }).join(', ');
+            }
+
+            function renderScopeBar() {
+                var bar = page.querySelector('#CuratorScopeBar');
+                var buttons = [{ id: 'all', label: 'All' }, { id: 'shared', label: 'Shared' }];
+                allUsers.forEach(function (user) {
+                    buttons.push({ id: user.Id, label: user.Name });
+                });
+
+                bar.innerHTML = buttons.map(function (b) {
+                    var active = String(b.id).toLowerCase() === String(activeScope).toLowerCase()
+                        ? ' curatorTabActive'
+                        : '';
+                    return '<button is="emby-button" type="button" '
+                        + 'class="raised curatorTabButton curatorScopeButton' + active + '" '
+                        + 'data-scope="' + escapeHtml(b.id) + '">'
+                        + '<span>' + escapeHtml(b.label) + ' (' + countFor(b.id) + ')</span></button>';
+                }).join('');
+            }
+
+            function scopeBlurb() {
+                if (activeScope === 'all') {
+                    return 'Every category Curator manages — the shared ones and every user\'s own, '
+                        + 'in one list. Each row names the users it was built for.';
+                }
+
+                if (activeScope === 'shared') {
+                    return 'Categories drawn from the library as a whole. One definition each, shared by '
+                        + 'everyone who was given it — expand a category to see which users have it.';
+                }
+
+                var user = allUsers.filter(function (u) {
+                    return String(u.Id).toLowerCase() === String(activeScope).toLowerCase();
+                })[0];
+                var name = user ? escapeHtml(user.Name) : 'this user';
+                return 'Categories invented for ' + name + ' alone, from their watch history. '
+                    + 'These belong to them and are not shared.';
+            }
+
             function renderCategories() {
+                renderScopeBar();
                 var container = page.querySelector('#CuratorCategories');
+                var scoped = visibleCategories();
+                var blurb = '<p class="fieldDescription" style="margin-bottom:0.75em;">'
+                    + scopeBlurb() + '</p>';
+
                 if (!currentCategories.length) {
-                    container.innerHTML =
-                        '<p class="fieldDescription">No categories yet. Run Curator to generate some.</p>';
+                    container.innerHTML = blurb
+                        + '<p class="fieldDescription">No categories yet. Run Curator to generate some.</p>';
                     updateSelectionUi();
                     return;
                 }
 
-                var rows = currentCategories.map(function (category) {
+                if (!scoped.length) {
+                    container.innerHTML = blurb
+                        + '<p class="fieldDescription">Nothing here yet. '
+                        + (activeScope === 'all'
+                            ? 'No categories have been generated.'
+                            : activeScope === 'shared'
+                                ? 'The shared discovery pass has not produced any categories.'
+                                : 'The last run did not invent any categories for this user — that happens when '
+                                  + 'their watch history is too thin to support one.')
+                        + '</p>';
+                    updateSelectionUi();
+                    return;
+                }
+
+                var rows = scoped.map(function (category) {
                     var id = escapeHtml(category.Id);
-                    var meta = category.MemberCount + ' items · ' + category.PlaylistCount + ' playlist(s)';
-                    if (category.HandedOffCount) {
-                        meta += ' · ' + category.HandedOffCount + ' handed off';
+                    var meta = '';
+
+                    // Only in the combined view: elsewhere the tab already says
+                    // whose categories these are, and repeating it is noise.
+                    //
+                    // Kind only, never the owner's name — a personal category's
+                    // sole link IS its owner, so naming them here printed the same
+                    // person twice on every row. The assigned-users list below
+                    // carries the name, and carries its playlist state with it.
+                    if (activeScope === 'all') {
+                        meta += (isShared(category) ? 'Shared' : 'Personal') + ' · ';
                     }
+
+                    meta += category.MemberCount + ' items · ' + escapeHtml(assignedUsers(category));
                     meta += ' · ' + escapeHtml(category.ModelId);
 
                     var checked = selectedIds[category.Id] ? ' checked' : '';
@@ -565,7 +776,7 @@
                         + '</div>';
                 }).join('');
 
-                container.innerHTML = '<div class="paperList">' + rows + '</div>';
+                container.innerHTML = blurb + '<div class="paperList">' + rows + '</div>';
                 updateSelectionUi();
             }
 
@@ -581,12 +792,27 @@
             }
 
             function updateSelectionUi() {
+                var scoped = visibleCategories();
                 var count = selectionCount();
                 page.querySelector('#CuratorSelectionCount').innerHTML =
-                    count + ' selected' + (currentCategories.length ? ' of ' + currentCategories.length : '');
+                    count + ' selected' + (scoped.length ? ' of ' + scoped.length : '');
                 page.querySelector('#CuratorDeleteSelected').disabled = count === 0;
                 page.querySelector('#CuratorSelectAll').checked =
-                    currentCategories.length > 0 && count === currentCategories.length;
+                    scoped.length > 0 && count === scoped.length;
+            }
+
+            function onScopeBarClick(e) {
+                var button = e.target.closest ? e.target.closest('.curatorScopeButton') : null;
+                if (!button) {
+                    return;
+                }
+
+                activeScope = button.getAttribute('data-scope');
+
+                // Clear selection when the visible set changes, so Delete selected
+                // can never act on something the user cannot see.
+                selectedIds = {};
+                renderCategories();
             }
 
             function onCategoriesClick(e) {
@@ -640,7 +866,7 @@
                 var checked = page.querySelector('#CuratorSelectAll').checked;
                 selectedIds = {};
                 if (checked) {
-                    currentCategories.forEach(function (category) {
+                    visibleCategories().forEach(function (category) {
                         selectedIds[category.Id] = true;
                     });
                 }
@@ -650,13 +876,14 @@
 
             function onExpandAll() {
                 // Collapse everything if anything is open, otherwise open everything.
-                var anyOpen = currentCategories.some(function (category) {
+                var scoped = visibleCategories();
+                var anyOpen = scoped.some(function (category) {
                     return expandedIds[category.Id];
                 });
 
                 expandedIds = {};
                 if (!anyOpen) {
-                    currentCategories.forEach(function (category) {
+                    scoped.forEach(function (category) {
                         expandedIds[category.Id] = true;
                     });
                 }
@@ -667,7 +894,7 @@
             }
 
             function onDeleteSelected() {
-                var ids = currentCategories
+                var ids = visibleCategories()
                     .filter(function (category) { return selectedIds[category.Id]; })
                     .map(function (category) { return category.Id; });
 
@@ -676,8 +903,9 @@
                 }
 
                 var message = ids.length === 1
-                    ? 'Delete this category definition? Its playlists are left in place.'
-                    : 'Delete these ' + ids.length + ' category definitions? Their playlists are left in place.';
+                    ? 'Delete this category and the playlists it built? Playlists you have taken ownership of are kept.'
+                    : 'Delete these ' + ids.length + ' categories and the playlists they built? '
+                        + 'Playlists you have taken ownership of are kept.';
 
                 if (!window.confirm(message)) {
                     return;
@@ -771,8 +999,12 @@
                     page.querySelector('#BatchSize').value = config.BatchSize;
                     page.querySelector('#MaxOutputTokens').value = config.MaxOutputTokens;
                     page.querySelector('#TokenBudget').value = config.TokenBudget;
-                    page.querySelector('#MaxCategories').value = config.MaxCategories;
-                    page.querySelector('#MinCategorySize').value = config.MinCategorySize;
+                    page.querySelector('#MaxSharedCategories').value = config.MaxSharedCategories;
+                    page.querySelector('#MinSharedCategorySize').value = config.MinSharedCategorySize;
+                    page.querySelector('#MaxPersonalCategories').value = config.MaxPersonalCategories;
+                    page.querySelector('#MinPersonalCategorySize').value = config.MinPersonalCategorySize;
+                    page.querySelector('#MaxCategoryMembers').value = config.MaxCategoryMembers;
+                    page.querySelector('#MinWatchedForPersonalization').value = config.MinWatchedForPersonalization;
                     page.querySelector('#MaxTagsPerItem').value = config.MaxTagsPerItem;
                     page.querySelector('#InputCostPerMillion').value = config.InputCostPerMillion;
                     page.querySelector('#OutputCostPerMillion').value = config.OutputCostPerMillion;
@@ -781,6 +1013,7 @@
                     page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
                     page.querySelector('#AutoEnableSections').checked = config.AutoEnableSections;
                     page.querySelector('#UseBatchApi').checked = config.UseBatchApi;
+                    page.querySelector('#EnableThinking').checked = config.EnableThinking;
 
                     return fillUsers(config.TargetUsers || []);
                 }).then(function () {
@@ -801,8 +1034,12 @@
                     config.BatchSize = parseInt(page.querySelector('#BatchSize').value, 10);
                     config.MaxOutputTokens = parseInt(page.querySelector('#MaxOutputTokens').value, 10);
                     config.TokenBudget = parseInt(page.querySelector('#TokenBudget').value, 10);
-                    config.MaxCategories = parseInt(page.querySelector('#MaxCategories').value, 10);
-                    config.MinCategorySize = parseInt(page.querySelector('#MinCategorySize').value, 10);
+                    config.MaxSharedCategories = parseInt(page.querySelector('#MaxSharedCategories').value, 10);
+                    config.MinSharedCategorySize = parseInt(page.querySelector('#MinSharedCategorySize').value, 10);
+                    config.MaxPersonalCategories = parseInt(page.querySelector('#MaxPersonalCategories').value, 10);
+                    config.MinPersonalCategorySize = parseInt(page.querySelector('#MinPersonalCategorySize').value, 10);
+                    config.MaxCategoryMembers = parseInt(page.querySelector('#MaxCategoryMembers').value, 10);
+                    config.MinWatchedForPersonalization = parseInt(page.querySelector('#MinWatchedForPersonalization').value, 10);
                     config.MaxTagsPerItem = parseInt(page.querySelector('#MaxTagsPerItem').value, 10);
                     config.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value);
                     config.OutputCostPerMillion = parseFloat(page.querySelector('#OutputCostPerMillion').value);
@@ -811,6 +1048,7 @@
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;
                     config.AutoEnableSections = page.querySelector('#AutoEnableSections').checked;
                     config.UseBatchApi = page.querySelector('#UseBatchApi').checked;
+                    config.EnableThinking = page.querySelector('#EnableThinking').checked;
 
                     config.TargetUsers = Array.prototype.filter.call(
                         page.querySelector('#TargetUsers').options,
@@ -847,6 +1085,8 @@
                 page.querySelector('#CuratorSelectAll').addEventListener('change', onSelectAll);
                 page.querySelector('#CuratorDeleteSelected').addEventListener('click', onDeleteSelected);
                 page.querySelector('#CuratorExpandAll').addEventListener('click', onExpandAll);
+
+                page.querySelector('#CuratorScopeBar').addEventListener('click', onScopeBarClick);
 
                 var categories = page.querySelector('#CuratorCategories');
                 categories.addEventListener('click', onCategoriesClick);

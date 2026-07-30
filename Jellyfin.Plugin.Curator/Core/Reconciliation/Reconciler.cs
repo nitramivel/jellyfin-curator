@@ -8,13 +8,15 @@ namespace Jellyfin.Plugin.Curator.Core.Reconciliation
     /// <summary>
     /// Settings for the reconciliation pass.
     /// </summary>
-    /// <param name="MinCategorySize">Categories with fewer members after merging are dropped.</param>
-    /// <param name="MaxCategories">Ceiling on the final category count; 0 disables the cap.</param>
+    /// <param name="Limits">
+    /// The size and count limits for this pool. The same instance must be given to
+    /// <see cref="Llm.PromptBuilder"/> so the model is told what will be enforced —
+    /// see <see cref="CategoryLimits"/> for why that is not optional.
+    /// </param>
     /// <param name="NameSimilarityThreshold">Normalized-name similarity at or above which two proposals merge.</param>
     /// <param name="MemberOverlapThreshold">Member overlap coefficient at or above which two proposals merge.</param>
     public sealed record ReconcilerSettings(
-        int MinCategorySize,
-        int MaxCategories,
+        CategoryLimits Limits,
         double NameSimilarityThreshold = 0.85,
         double MemberOverlapThreshold = 0.7);
 
@@ -47,15 +49,51 @@ namespace Jellyfin.Plugin.Curator.Core.Reconciliation
 
             var categories = clusters
                 .Select(MergeCluster)
-                .Where(category => category.Members.Count >= Math.Max(1, settings.MinCategorySize))
+                .Where(category => category.Members.Count >= settings.Limits.EffectiveMinMembers)
                 .OrderByDescending(category => category.SourceProposalCount)
                 .ThenByDescending(category => category.Members.Count)
                 .ThenBy(category => category.Name, StringComparer.Ordinal)
                 .ToList();
 
-            if (settings.MaxCategories > 0 && categories.Count > settings.MaxCategories)
+            if (settings.Limits.HasCategoryCap && categories.Count > settings.Limits.MaxCategories)
             {
-                categories = categories.Take(settings.MaxCategories).ToList();
+                categories = categories.Take(settings.Limits.MaxCategories).ToList();
+            }
+
+            return TrimMembers(categories, settings.Limits.EffectiveMaxMembers);
+        }
+
+        /// <summary>
+        /// Trims each category to its strongest members.
+        /// </summary>
+        /// <remarks>
+        /// Applied last, after the size filter, the ranking and the count cap, so
+        /// the trim never changes which categories survive — a forty-item thread is
+        /// still a stronger candidate than a seven-item one, and ranking on the
+        /// trimmed count would flatten that distinction and hand the cap to
+        /// whichever categories happened to be small. Members arrive strongest
+        /// first, so taking the head keeps the best of each: this is a trim, never
+        /// a discard, and a category over the ceiling is shortened rather than
+        /// dropped.
+        /// </remarks>
+        private static IReadOnlyList<ReconciledCategory> TrimMembers(
+            List<ReconciledCategory> categories,
+            int maxMembers)
+        {
+            if (maxMembers <= 0)
+            {
+                return categories;
+            }
+
+            for (var i = 0; i < categories.Count; i++)
+            {
+                if (categories[i].Members.Count > maxMembers)
+                {
+                    categories[i] = categories[i] with
+                    {
+                        Members = categories[i].Members.Take(maxMembers).ToArray(),
+                    };
+                }
             }
 
             return categories;

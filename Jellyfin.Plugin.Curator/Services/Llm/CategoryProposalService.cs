@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Curator.Core.Llm;
 using Jellyfin.Plugin.Curator.Core.Models;
+using Jellyfin.Plugin.Curator.Services.Runs;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Curator.Services.Llm
@@ -28,6 +31,25 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         long CacheReadTokens = 0);
 
     /// <summary>
+    /// The outcome of one viewer's pass.
+    /// </summary>
+    /// <param name="SelectedNames">Shared category names this viewer should receive.</param>
+    /// <param name="NewProposals">Categories invented for this viewer alone.</param>
+    /// <param name="InputTokens">Uncached input tokens consumed.</param>
+    /// <param name="OutputTokens">Output tokens consumed.</param>
+    /// <param name="BatchesSkipped">Batches whose response could not be parsed.</param>
+    /// <param name="CacheWriteTokens">Input tokens written to the prompt cache.</param>
+    /// <param name="CacheReadTokens">Input tokens served from the prompt cache.</param>
+    public sealed record PersonalRunResult(
+        IReadOnlyList<string> SelectedNames,
+        IReadOnlyList<CategoryProposal> NewProposals,
+        long InputTokens,
+        long OutputTokens,
+        int BatchesSkipped,
+        long CacheWriteTokens = 0,
+        long CacheReadTokens = 0);
+
+    /// <summary>
     /// Settings for one proposal run.
     /// </summary>
     /// <param name="BatchSize">Items per LLM request.</param>
@@ -37,6 +59,11 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
     /// <param name="OutputCostPerMillion">Output USD per million tokens for the cost log; 0 omits cost.</param>
     /// <param name="UseBatchApi">Submit through the provider's async batch endpoint when it has one.</param>
     /// <param name="MaxTagsPerItem">Tags per item sent to the model; 0 omits them.</param>
+    /// <param name="SharedLimits">
+    /// Limits for the shared pool. This same instance is what the Reconciler is
+    /// given, so what the prompt asks for is what gets enforced.
+    /// </param>
+    /// <param name="PersonalLimits">Limits for the personal pool, on the same terms.</param>
     public sealed record ProposalRunSettings(
         int BatchSize,
         int MaxOutputTokens,
@@ -44,7 +71,16 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         decimal InputCostPerMillion = 0,
         decimal OutputCostPerMillion = 0,
         bool UseBatchApi = false,
-        int MaxTagsPerItem = 0);
+        int MaxTagsPerItem = 0,
+        CategoryLimits? SharedLimits = null,
+        CategoryLimits? PersonalLimits = null)
+    {
+        /// <summary>Gets the shared-pool limits, defaulted for callers that supply none.</summary>
+        public CategoryLimits Shared => SharedLimits ?? new CategoryLimits(6);
+
+        /// <summary>Gets the personal-pool limits, defaulted for callers that supply none.</summary>
+        public CategoryLimits Personal => PersonalLimits ?? new CategoryLimits(2);
+    }
 
     /// <summary>
     /// Drives the batch → prompt → complete → parse pipeline over a reduced
@@ -69,24 +105,27 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// <param name="settings">Run settings.</param>
         /// <param name="activity">Per-item watch activity for the target user, or null for a non-personalized run.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
+        /// <param name="runLog">Recorder for this run; defaults to recording nothing.</param>
         /// <returns>The aggregated result.</returns>
         public async Task<ProposalRunResult> ProposeAsync(
             ILlmProvider provider,
             IReadOnlyList<MediaItemRecord> records,
             ProposalRunSettings settings,
             IReadOnlyDictionary<Guid, UserActivity>? activity = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            IRunLog? runLog = null)
         {
             ArgumentNullException.ThrowIfNull(provider);
             ArgumentNullException.ThrowIfNull(records);
             ArgumentNullException.ThrowIfNull(settings);
 
+            var log = runLog ?? NullRunLog.Instance;
             var batches = Batcher.Split(records, settings.BatchSize);
 
             if (settings.UseBatchApi && provider is IBatchLlmProvider batchProvider)
             {
                 return await ProposeViaBatchApiAsync(
-                    provider, batchProvider, batches, settings, activity, cancellationToken).ConfigureAwait(false);
+                    provider, batchProvider, batches, settings, activity, cancellationToken, log).ConfigureAwait(false);
             }
 
             var proposals = new List<CategoryProposal>();
@@ -114,10 +153,11 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
 
                 var batch = batches[i];
                 var request = new LlmRequest(
-                    PromptBuilder.SystemPrompt,
+                    PromptBuilder.BuildSystemPrompt(settings.Shared),
                     PromptBuilder.BuildItemList(batch, settings.MaxTagsPerItem),
                     PromptBuilder.BuildActivitySection(batch, activity),
-                    settings.MaxOutputTokens);
+                    settings.MaxOutputTokens,
+                    ResponseShape.Categories);
 
                 // One retry on a malformed response. The model occasionally emits
                 // invalid JSON — an unescaped quote inside a description is the usual
@@ -127,27 +167,42 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 ParseResult? parsed = null;
                 for (var attempt = 0; attempt < 2 && parsed is null; attempt++)
                 {
-                    var result = await provider.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+                    var startedAt = Stopwatch.GetTimestamp();
+                    LlmResult result;
+                    try
+                    {
+                        result = await provider.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Recorded before rethrowing: a run that dies on a provider
+                        // error is precisely the one whose prompt someone will want
+                        // to read afterwards.
+                        log.LlmCall(
+                            "discovery", i, attempt + 1, null, Stopwatch.GetElapsedTime(startedAt),
+                            request, null, "error", ex.Message);
+                        throw;
+                    }
+
                     inputTokens += result.InputTokens;
                     outputTokens += result.OutputTokens;
                     cacheWriteTokens += result.CacheWriteTokens;
                     cacheReadTokens += result.CacheReadTokens;
 
-                    if (result.Truncated)
-                    {
-                        _logger.LogWarning(
-                            "Curator: batch {Batch} response was truncated at {MaxTokens} output tokens; proposals from it may be incomplete. Consider a smaller batch size or a larger output cap.",
-                            i,
-                            settings.MaxOutputTokens);
-                    }
+                    WarnIfTruncated(i, result, settings);
 
+                    string outcome;
+                    string? parseError = null;
                     try
                     {
                         parsed = ProposalParser.Parse(result.Text, batch);
+                        outcome = "ok";
                     }
                     catch (FormatException ex)
                     {
                         var lastAttempt = attempt == 1;
+                        outcome = "unparseable";
+                        parseError = ex.Message;
                         _logger.LogWarning(
                             ex,
                             "Curator: batch {Batch} produced an unparseable response{Action}. Response was: {Response}",
@@ -155,6 +210,10 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                             lastAttempt ? "; skipping it" : "; retrying once",
                             Excerpt(result.Text));
                     }
+
+                    log.LlmCall(
+                        "discovery", i, attempt + 1, null, Stopwatch.GetElapsedTime(startedAt),
+                        request, result, outcome, parseError);
                 }
 
                 if (parsed is null)
@@ -198,6 +257,153 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         }
 
         /// <summary>
+        /// Runs one viewer's pass: the same library (so the cached prefix still
+        /// matches) plus the categories the shared pass found and this viewer's
+        /// history. The model picks which shared categories suit them and invents
+        /// new ones of its own.
+        /// </summary>
+        /// <param name="provider">The LLM provider.</param>
+        /// <param name="records">The reduced library snapshot.</param>
+        /// <param name="candidates">Categories the shared discovery pass produced.</param>
+        /// <param name="settings">Run settings.</param>
+        /// <param name="activity">This viewer's watch activity.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <param name="runLog">Recorder for this run; defaults to recording nothing.</param>
+        /// <param name="userId">The viewer, recorded against this pass's calls in the run log.</param>
+        /// <returns>Selected names, invented categories, and token usage.</returns>
+        public async Task<PersonalRunResult> ProposePersonalAsync(
+            ILlmProvider provider,
+            IReadOnlyList<MediaItemRecord> records,
+            IReadOnlyList<ReconciledCategory> candidates,
+            ProposalRunSettings settings,
+            IReadOnlyDictionary<Guid, UserActivity>? activity,
+            CancellationToken cancellationToken = default,
+            IRunLog? runLog = null,
+            Guid? userId = null)
+        {
+            ArgumentNullException.ThrowIfNull(provider);
+            ArgumentNullException.ThrowIfNull(records);
+            ArgumentNullException.ThrowIfNull(candidates);
+            ArgumentNullException.ThrowIfNull(settings);
+
+            var log = runLog ?? NullRunLog.Instance;
+            var batches = Batcher.Split(records, settings.BatchSize);
+            var candidateNames = candidates.Select(c => c.Name).ToArray();
+
+            var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var selectedOrdered = new List<string>();
+            var proposals = new List<CategoryProposal>();
+            long inputTokens = 0;
+            long outputTokens = 0;
+            long cacheWriteTokens = 0;
+            long cacheReadTokens = 0;
+            var skipped = 0;
+
+            for (var i = 0; i < batches.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var batch = batches[i];
+                var request = new LlmRequest(
+                    PromptBuilder.BuildPersonalSystemPrompt(settings.Personal),
+                    // Byte-identical to the discovery pass, so this is a cache read.
+                    PromptBuilder.BuildItemList(batch, settings.MaxTagsPerItem),
+                    PromptBuilder.BuildPersonalSuffix(batch, candidates, activity),
+                    settings.MaxOutputTokens,
+                    ResponseShape.PersonalCategories);
+
+                PersonalParseResult? parsed = null;
+                for (var attempt = 0; attempt < 2 && parsed is null; attempt++)
+                {
+                    var startedAt = Stopwatch.GetTimestamp();
+                    LlmResult result;
+                    try
+                    {
+                        result = await provider.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        log.LlmCall(
+                            "personal", i, attempt + 1, userId, Stopwatch.GetElapsedTime(startedAt),
+                            request, null, "error", ex.Message);
+                        throw;
+                    }
+
+                    inputTokens += result.InputTokens;
+                    outputTokens += result.OutputTokens;
+                    cacheWriteTokens += result.CacheWriteTokens;
+                    cacheReadTokens += result.CacheReadTokens;
+                    WarnIfTruncated(i, result, settings);
+
+                    string outcome;
+                    string? parseError = null;
+                    try
+                    {
+                        parsed = ProposalParser.ParsePersonal(result.Text, batch, candidateNames);
+                        outcome = "ok";
+                    }
+                    catch (FormatException ex)
+                    {
+                        outcome = "unparseable";
+                        parseError = ex.Message;
+                        _logger.LogWarning(
+                            ex,
+                            "Curator: viewer batch {Batch} produced an unparseable response{Action}. Response was: {Response}",
+                            i,
+                            attempt == 1 ? "; skipping it" : "; retrying once",
+                            Excerpt(result.Text));
+                    }
+
+                    log.LlmCall(
+                        "personal", i, attempt + 1, userId, Stopwatch.GetElapsedTime(startedAt),
+                        request, result, outcome, parseError);
+                }
+
+                if (parsed is null)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                foreach (var name in parsed.SelectedNames)
+                {
+                    if (selected.Add(name))
+                    {
+                        selectedOrdered.Add(name);
+                    }
+                }
+
+                proposals.AddRange(parsed.Proposals);
+
+                if (parsed.DiscardedSelectionCount > 0)
+                {
+                    _logger.LogInformation(
+                        "Curator: viewer batch {Batch} named {Count} categor(ies) that do not exist; ignored",
+                        i,
+                        parsed.DiscardedSelectionCount);
+                }
+            }
+
+            _logger.LogInformation(
+                "Curator viewer pass: {Selected} of {Candidates} shared categories chosen, {New} new proposed, {Input} input + {Output} output tokens ({Read} cached)",
+                selectedOrdered.Count,
+                candidates.Count,
+                proposals.Count,
+                inputTokens,
+                outputTokens,
+                cacheReadTokens);
+
+            return new PersonalRunResult(
+                selectedOrdered,
+                proposals,
+                inputTokens,
+                outputTokens,
+                skipped,
+                cacheWriteTokens,
+                cacheReadTokens);
+        }
+
+        /// <summary>
         /// Submits every batch as one asynchronous job. Half the token price, but the
         /// whole run is committed up front: the per-batch token-budget brake in the
         /// direct path cannot apply here, so the budget is checked once before
@@ -209,7 +415,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             IReadOnlyList<IReadOnlyList<MediaItemRecord>> batches,
             ProposalRunSettings settings,
             IReadOnlyDictionary<Guid, UserActivity>? activity,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            IRunLog log)
         {
             var requests = new List<BatchLlmRequest>(batches.Count);
             for (var i = 0; i < batches.Count; i++)
@@ -218,10 +425,11 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 requests.Add(new BatchLlmRequest(
                     CustomIdFor(i),
                     new LlmRequest(
-                        PromptBuilder.SystemPrompt,
+                        PromptBuilder.BuildSystemPrompt(settings.Shared),
                         PromptBuilder.BuildItemList(batch, settings.MaxTagsPerItem),
                         PromptBuilder.BuildActivitySection(batch, activity),
-                        settings.MaxOutputTokens)));
+                        settings.MaxOutputTokens,
+                        ResponseShape.Categories)));
             }
 
             _logger.LogInformation(
@@ -253,6 +461,9 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 {
                     skipped++;
                     _logger.LogWarning("Curator: batch {Batch} is missing from the job results; skipping it", i);
+                    log.LlmCall(
+                        "discovery-batch", i, 1, null, TimeSpan.Zero,
+                        requests[i].Request, null, "error", "missing from job results");
                     continue;
                 }
 
@@ -263,6 +474,9 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                         "Curator: batch {Batch} did not succeed in the job ({Reason}); skipping it",
                         i,
                         entry.Error ?? "unknown");
+                    log.LlmCall(
+                        "discovery-batch", i, 1, null, TimeSpan.Zero,
+                        requests[i].Request, null, "error", entry.Error ?? "unknown");
                     continue;
                 }
 
@@ -271,29 +485,34 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 cacheWriteTokens += result.CacheWriteTokens;
                 cacheReadTokens += result.CacheReadTokens;
 
-                if (result.Truncated)
-                {
-                    _logger.LogWarning(
-                        "Curator: batch {Batch} response was truncated at {MaxTokens} output tokens; proposals from it may be incomplete. Consider a smaller batch size or a larger output cap.",
-                        i,
-                        settings.MaxOutputTokens);
-                }
+                WarnIfTruncated(i, result, settings);
 
+                string outcome;
+                string? parseError = null;
                 try
                 {
                     var parsed = ProposalParser.Parse(result.Text, batches[i]);
                     proposals.AddRange(parsed.Proposals);
                     completed++;
+                    outcome = "ok";
                 }
                 catch (FormatException ex)
                 {
                     skipped++;
+                    outcome = "unparseable";
+                    parseError = ex.Message;
                     _logger.LogWarning(
                         ex,
                         "Curator: batch {Batch} produced an unparseable response; skipping it. Response was: {Response}",
                         i,
                         Excerpt(result.Text));
                 }
+
+                // No per-request timing here: the job runs them in parallel on the
+                // provider's side and reports nothing about individual durations.
+                log.LlmCall(
+                    "discovery-batch", i, 1, null, TimeSpan.Zero,
+                    requests[i].Request, result, outcome, parseError);
             }
 
             LogRunTotals(provider, settings, inputTokens, outputTokens, proposals.Count, completed, skipped);
@@ -306,6 +525,40 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 skipped,
                 cacheWriteTokens,
                 cacheReadTokens);
+        }
+
+        /// <summary>
+        /// Warns when the output cap cut a response short, naming the cause when
+        /// the provider reports one.
+        /// </summary>
+        /// <remarks>
+        /// Truncation is worse than it sounds now that providers can be held to a
+        /// response schema: a cut-off body is invalid JSON, so the batch is lost
+        /// outright rather than merely shortened. When most of the budget went on
+        /// reasoning the remedy is a bigger cap, and a smaller batch will not help
+        /// at all — thinking does not shrink with the item list.
+        /// </remarks>
+        private void WarnIfTruncated(int batch, LlmResult result, ProposalRunSettings settings)
+        {
+            if (!result.Truncated)
+            {
+                return;
+            }
+
+            if (result.ThinkingTokens > 0)
+            {
+                _logger.LogWarning(
+                    "Curator: batch {Batch} response was truncated at {MaxTokens} output tokens, of which {Thinking} went on thinking. Raise the output cap — a smaller batch will not help, since thinking does not shrink with the item list.",
+                    batch,
+                    settings.MaxOutputTokens,
+                    result.ThinkingTokens);
+                return;
+            }
+
+            _logger.LogWarning(
+                "Curator: batch {Batch} response was truncated at {MaxTokens} output tokens; proposals from it may be incomplete. Consider a smaller batch size or a larger output cap.",
+                batch,
+                settings.MaxOutputTokens);
         }
 
         private static string CustomIdFor(int batchIndex)

@@ -18,7 +18,9 @@ Curator is a scheduled task. It sends every movie and show in your library to a 
 
 The categories it produces are the ones a query can't express.
 
-> **Status:** feature-complete and pending real-world testing. The full pipeline — scan, propose, reconcile, build playlists, publish home screen rows — runs end to end from the scheduled task or the configuration page's **Generate categories now** button.
+> **Status:** running against a live Jellyfin 10.11.11 server. The full pipeline — scan, propose, reconcile, build playlists, publish home screen rows — completes from the scheduled task or the configuration page's **Generate categories now** button, and every run writes a complete record you can read afterwards.
+>
+> Still being tuned: how stable category names are between runs, and how shared categories should be distributed to users who have watched very little.
 
 ## 🎯 Scope
 
@@ -47,6 +49,12 @@ flowchart LR
 
 **4. Reconcile.** Because each batch only sees a slice of the library, proposals overlap and duplicate across batches. A reconciliation pass merges near-identical categories (fuzzy name match plus member overlap), drops categories below a minimum size, caps the total number of categories, and produces the final set.
 
+> Both limits are **written into the prompt as well as applied afterwards**, so the model aims at the numbers it will be judged by. Raising the floor asks for fewer, broader categories rather than quietly binning most of what it returns; the ceilings tell the model how many categories to reach for and how large to let each grow. A cap the model cannot see is one it cannot aim at — given no target count, one model returned 23 categories covering 78% of the library while another returned 5 covering 10%, from an identical prompt.
+
+> Categories are recognised across runs by their **members as well as their name**. Models reword the same theme every run — "Reality Coming Undone" becomes "Reality Is Optional" becomes "Glitch in the Reality Engine" — and matching on the name alone made every run tear down and rebuild every home screen row. A renamed category now keeps its playlist, its position and its watch state, and simply changes its label.
+
+Curator also sets each row's placement in Home Screen Sections: **order index 500** for every row — one lane, leaving the arrangement around it to you — and a card shape from the category's size, landscape below 10 items and portrait at 10 or more. Everything else about a row (enabled, limits, hide-watched) is left as you set it.
+
 **5. Build.** Each surviving category becomes a Jellyfin playlist, ordered by the model's confidence ranking. Curator then registers a matching home screen section and enables it for your users.
 
 ## ⚙️ Configuration
@@ -57,16 +65,24 @@ Set in the plugin's configuration page:
 
 | Setting | Description |
 |---|---|
-| **Provider** | Anthropic, OpenAI, or any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter — Gemini works via Google's OpenAI-compatible API) |
+| **Provider** | Anthropic (Claude), Google (Gemini), xAI (Grok), OpenAI (GPT), or any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter). Google and Grok constrain the model to this plugin's exact response shape, so a malformed answer cannot lose a batch — prefer their own entries over reaching them through the OpenAI-compatible endpoint, which gives that up |
 | **Model** | The model identifier to use |
 | **API key** | Stored in the plugin configuration; optional for local OpenAI-compatible servers |
 | **Base URL** | Optional override for self-hosted or proxied endpoints; required for the OpenAI-compatible provider (e.g. `http://localhost:11434/v1`) |
 | **Batch size** | Items per request. Lower this if you hit context limits |
 | **Max output tokens** | Output cap per request. Raise it if batch responses get truncated |
-| **Max categories** | Ceiling on how many categories a run may produce |
-| **Min category size** | Categories with fewer members than this are discarded |
+| **Min / max shared category size and count** | The floor and ceiling for categories from the library-wide pass. Defaults: at least 6 items, at most 10 categories |
+| **Min / max personal category size and count** | The same two limits for categories invented for a single viewer. Defaults: at least 2 items, at most 6 per user. Keep the floor at or below the shared one — a personal category is grounded in one person's history and cannot be as large as one drawn from the whole library |
+| **Max items per category** | Ceiling on how many items one category may hold, across both pools. Default 20. Members are ranked strongest-first, so the excess is trimmed off the tail rather than the category being dropped — and Collection Sections only renders the first 16 of a row anyway. 0 means no limit |
+| **Min watched items to personalize** | How many items a user must have watched before they get a personalization pass. Defaults to 2; users below it are skipped before the request is sent and receive the shared categories instead. 0 personalizes everyone |
 | **Token budget** | Hard cap per run, so a large library can't run up an unexpected bill |
-| **Input / output cost per million** | Your provider's prices, used only for the estimated-cost log line; leave at 0 to log token counts alone |
+| **Input / output cost per million** | Your provider's prices, used only for the estimated-cost log line; leave at 0 to log token counts alone. **Update these when you switch provider** — they are plain numbers, not looked up, so Anthropic's prices left in place while running Gemini make every cost figure wrong |
+
+**Grok** talks the OpenAI wire format at `https://api.x.ai/v1`, with `response_format: json_schema` in strict mode — so valid JSON is an API guarantee, as with Gemini. Needs `grok-2-1212` or newer for that. Cached input and reasoning tokens are read from the usage detail blocks, so cache hits and thinking spend show up in the run log. Rate limits and transient 5xx are retried with backoff.
+
+The Google provider is built for unattended runs: the response schema makes valid JSON an API guarantee, safety filtering is turned off (the prompt is a list of your own films and their synopses, and a blocked response costs a whole pass), rate limits and transient 5xx are retried with backoff honouring `Retry-After`, and thinking tokens are reported separately so a truncated response tells you whether to raise the output cap or shrink the batch. Implicit context caching works without configuration — the item list is sent as a stable leading part, and cache hits show up in the run log.
+
+The two ceilings are enforced on what is **kept**, not only on what each run produces. When a pool is over its cap, the oldest categories are deleted — definition and playlists together — until it fits, so lowering a cap takes effect on the categories already stored. "Oldest" means least recently produced by a run, not earliest created: a category the model re-proposes every time is the last thing to go, and long-dead leftovers are the first.
 
 > [!IMPORTANT]
 > **A note on what gets sent.** Curator transmits your library's titles and metadata to whatever provider you configure — and, when personalized playlists are enabled, each target user's watch activity too. With a hosted provider, that means a third party sees a list of everything you own and how you watch it. If that's not acceptable, disable personalization, or point Curator at a local model using the base URL override — then nothing leaves your network.
@@ -76,10 +92,20 @@ Set in the plugin's configuration page:
 | Setting | Description |
 |---|---|
 | **Output type** | Playlists (default) or collections |
-| **Personalized playlists** | Attach each target user's watch activity so their playlists reflect their taste. Playlists only; runs the model once per user, so cost scales with user count |
+| **Personalized playlists** | Attach each target user's watch activity so their playlists reflect their taste. Playlists only; runs the model once per user, so cost scales with user count — see **min watched items to personalize** for the floor that keeps dormant accounts out of that multiplier |
 | **Include episodes** | Allow the model to select individual episodes, not just whole series |
 | **Target users** | Which users get playlists generated for them (empty = all users) |
 | **Auto-enable sections** | Enable newly created sections on the home screen automatically |
+
+### Run logs
+
+Every run writes a complete record to `{data}/curator/runs/run_<timestamp>_<id>.json`, separate from the category files. One file per run, containing the settings it ran under, every step in order, and **every LLM prompt and response in full** — including the attempts that failed, which are usually the interesting ones. The file is written as the run progresses, so a run that dies part-way still leaves everything up to the point it stopped.
+
+Repeated prompt bodies are stored once and referenced by hash: the item list is byte-identical across every pass of a run, so a six-pass run records it once rather than six times. The newest 50 runs are kept and older files are rotated away. API keys are never written to a run log.
+
+Each run log carries costs at three levels: the **prices as entered in settings** (recorded verbatim, so a figure is never readable without the rate that produced it), a **per-call** input/output/total, and a **run total**. With no prices set, every cost is `null` rather than `0` — a run that cost money must not read as free.
+
+They are readable over the API too — `GET /Curator/Runs` for the list, `GET /Curator/Runs/{runId}` for one run's whole record.
 
 Runs happen weekly by default via the **Curator: Generate Categories** scheduled task (adjust the schedule under **Dashboard → Scheduled Tasks**), or on demand from the **Generate categories now** button on the configuration page. Only one run happens at a time, and the page lists every category with its item and playlist counts.
 
@@ -123,7 +149,7 @@ If you'd rather approve categories before they go live, disable **Auto-enable se
 1. A Jellyfin **10.11.x** server.
 2. [Home Screen Sections](https://github.com/IAmParadox27/jellyfin-plugin-home-sections) installed and working — follow its guide first, including enabling modular home in your user settings.
 3. [Collection Sections](https://github.com/IAmParadox27/jellyfin-plugin-collection-sections) installed on top of it.
-4. An API key for Anthropic or OpenAI, **or** a local OpenAI-compatible endpoint (Ollama, LM Studio, vLLM).
+4. An API key for Anthropic, Google, xAI, or OpenAI, **or** a local OpenAI-compatible endpoint (Ollama, LM Studio, vLLM).
 
 ### Install from the plugin catalogue (recommended)
 

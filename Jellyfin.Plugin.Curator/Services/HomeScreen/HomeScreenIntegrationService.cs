@@ -36,6 +36,9 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
         /// <summary>Collection Sections' plugin GUID.</summary>
         public const string CollectionSectionsPluginId = "043b2c48-b3e0-4610-b398-8217b146d1a4";
 
+        /// <summary>Home Screen Sections' plugin GUID.</summary>
+        public const string HomeScreenSectionsPluginId = "b8298e01-2697-407a-b44d-aa8dc795e850";
+
         /// <summary>The named HttpClient used for loopback calls to this server.</summary>
         public const string HttpClientName = "CuratorLoopback";
 
@@ -91,7 +94,10 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             // Only categories that actually have a playlist somewhere can render a row.
             var desired = categories
                 .Where(category => category.UserPlaylists.Exists(link => link.PlaylistId is not null))
-                .Select(category => new DesiredSection(SectionConfigMerger.SectionIdFor(category.Id), category.Name))
+                .Select(category => new DesiredSection(
+                    SectionConfigMerger.SectionIdFor(category.Id),
+                    category.Name,
+                    category.Members.Count))
                 .ToList();
 
             try
@@ -102,6 +108,12 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 {
                     return false;
                 }
+
+                // Row order and card shape live in Home Screen Sections' own
+                // configuration, not Collection Sections'. Done after the
+                // registration above, because a section has to exist before its
+                // settings mean anything.
+                await WriteSectionSettingsAsync(client, desired, cancellationToken).ConfigureAwait(false);
 
                 if (config.AutoEnableSections && desired.Count > 0)
                 {
@@ -123,6 +135,58 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                     "Curator: home screen integration failed; playlists were still created. Categories can be added as rows manually in Collection Sections.");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Sets the row order and card shape for Curator's sections in Home Screen
+        /// Sections' configuration.
+        /// </summary>
+        /// <remarks>
+        /// Never fatal. These are presentation details: a row in the wrong shape is
+        /// still a row, and failing the whole integration over it would throw away
+        /// the registration that just succeeded.
+        /// </remarks>
+        private async Task WriteSectionSettingsAsync(
+            HttpClient client,
+            IReadOnlyList<DesiredSection> desired,
+            CancellationToken cancellationToken)
+        {
+            var path = $"/Plugins/{HomeScreenSectionsPluginId}/Configuration";
+
+            using var getResponse = await client.GetAsync(path, cancellationToken).ConfigureAwait(false);
+            if (!getResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Curator: could not read Home Screen Sections configuration ({Status}); rows keep their existing order and shape",
+                    (int)getResponse.StatusCode);
+                return;
+            }
+
+            var body = await getResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var configJson = JsonNode.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body) ?? new JsonObject();
+
+            if (!SectionConfigMerger.MergeSectionSettings(configJson, desired))
+            {
+                return;
+            }
+
+            using var content = new StringContent(configJson.ToJsonString(), Encoding.UTF8, "application/json");
+            using var postResponse = await client.PostAsync(path, content, cancellationToken).ConfigureAwait(false);
+            if (!postResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Curator: could not save Home Screen Sections configuration ({Status}); rows keep their existing order and shape",
+                    (int)postResponse.StatusCode);
+                return;
+            }
+
+            var portrait = desired.Count(d => d.MemberCount >= SectionConfigMerger.PortraitThreshold);
+            _logger.LogInformation(
+                "Curator: set {Count} section(s) to order {Order} — {Portrait} portrait, {Landscape} landscape",
+                desired.Count,
+                SectionConfigMerger.OrderIndex,
+                portrait,
+                desired.Count - portrait);
         }
 
         /// <summary>
