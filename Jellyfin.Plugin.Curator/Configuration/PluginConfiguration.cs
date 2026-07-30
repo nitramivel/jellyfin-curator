@@ -44,23 +44,60 @@ namespace Jellyfin.Plugin.Curator.Configuration
     public class PluginConfiguration : BasePluginConfiguration
     {
         /// <summary>
-        /// Gets or sets the LLM provider.
+        /// Gets or sets the saved model profiles — each a provider, a model, its own
+        /// API key, and its own prices. See <see cref="ModelProfile"/>.
+        /// <para>
+        /// The list is the source of truth for how Curator calls a model. The legacy
+        /// scalar fields below are kept only so an existing install's credential is
+        /// not lost on upgrade; <c>Core/Llm/ModelProfiles.Normalize</c> folds them
+        /// into a single profile the first time it sees an empty list.
+        /// </para>
+        /// </summary>
+        public ModelProfile[] ModelProfiles { get; set; } = Array.Empty<ModelProfile>();
+
+        /// <summary>
+        /// Gets or sets the <see cref="ModelProfile.Id"/> of the profile used for
+        /// every LLM call.
+        /// <para>
+        /// Named "default" rather than "active" because it is the fallback each task
+        /// resolves to when nothing more specific is assigned. Per-task overrides are
+        /// intended to sit alongside this, not replace it — a task with no assignment
+        /// of its own must always land here.
+        /// </para>
+        /// </summary>
+        public string DefaultModelProfileId { get; set; } = string.Empty;
+
+        // ---------------------------------------------------------------------
+        // Legacy single-profile settings.
+        //
+        // Superseded by ModelProfiles. They are NOT dead code and must not be
+        // deleted: XmlSerializer silently drops elements it has no property for,
+        // so removing these would throw away the API key of every install that
+        // upgrades before it next opens the config page. Normalize() reads them
+        // once, writes the profile, and nothing else in the plugin looks at them.
+        // ---------------------------------------------------------------------
+
+        /// <summary>
+        /// Gets or sets the pre-profile LLM provider. Migration source only —
+        /// read <see cref="ModelProfile.Provider"/> instead.
         /// </summary>
         public LlmProviderKind Provider { get; set; } = LlmProviderKind.Anthropic;
 
         /// <summary>
-        /// Gets or sets the model identifier sent to the provider.
+        /// Gets or sets the pre-profile model identifier. Migration source only —
+        /// read <see cref="ModelProfile.Model"/> instead.
         /// </summary>
         public string Model { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets the provider API key.
+        /// Gets or sets the pre-profile provider API key. Migration source only —
+        /// read <see cref="ModelProfile.ApiKey"/> instead.
         /// </summary>
         public string ApiKey { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets an optional base URL override (Ollama, LM Studio, vLLM, OpenRouter, proxies).
-        /// Empty means the provider's default endpoint.
+        /// Gets or sets the pre-profile base URL override. Migration source only —
+        /// read <see cref="ModelProfile.BaseUrl"/> instead.
         /// </summary>
         public string BaseUrl { get; set; } = string.Empty;
 
@@ -149,14 +186,16 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public int MaxOutputTokens { get; set; } = 16000;
 
         /// <summary>
-        /// Gets or sets the provider's input price in USD per million tokens,
-        /// used only for the estimated-cost log line. 0 logs token counts without cost.
+        /// Gets or sets the pre-profile input price in USD per million tokens.
+        /// Migration source only — read <see cref="ModelProfile.InputCostPerMillion"/>
+        /// instead, so the price follows the profile it belongs to.
         /// </summary>
         public decimal InputCostPerMillion { get; set; }
 
         /// <summary>
-        /// Gets or sets the provider's cache-read price in USD per million tokens.
-        /// Blank falls back to half <see cref="InputCostPerMillion"/>.
+        /// Gets or sets the pre-profile cache-read price in USD per million tokens.
+        /// Migration source only — read <see cref="ModelProfile.CachedInputCostPerMillion"/>
+        /// instead. Blank falls back to half the input price.
         /// <para>
         /// Cache reads are discounted, not free, and every provider discounts them
         /// differently — Anthropic bills a tenth of the input rate, others nearer a
@@ -169,8 +208,9 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public decimal CachedInputCostPerMillion { get; set; }
 
         /// <summary>
-        /// Gets or sets the provider's output price in USD per million tokens,
-        /// used only for the estimated-cost log line. 0 logs token counts without cost.
+        /// Gets or sets the pre-profile output price in USD per million tokens.
+        /// Migration source only — read <see cref="ModelProfile.OutputCostPerMillion"/>
+        /// instead.
         /// </summary>
         public decimal OutputCostPerMillion { get; set; }
 

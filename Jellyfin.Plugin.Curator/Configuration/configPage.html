@@ -15,17 +15,13 @@
                 .curatorTabButton.curatorTabActive { background: #00a4dc; color: #fff; }
                 .curatorCatRow { display: flex; align-items: flex-start; gap: 0.6em; width: 100%; }
                 .curatorCatRow .curatorCatBody { flex: 1 1 auto; min-width: 0; }
-                
-                
-                
-                
-                
+
                 .curatorBulkBar {
                     display: flex; align-items: center; gap: 1em; flex-wrap: wrap;
                     padding: 0.6em 0; margin-bottom: 0.5em;
                 }
                 .curatorBulkBar .curatorBulkCount { opacity: 0.75; }
-                
+
                 .curatorScopeBar { margin: 0.5em 0 1em 0; }
                 .curatorScopeBar .curatorTabButton { font-size: 0.92em; }
                 /* Plain inputs rather than is="emby-checkbox": customized built-in
@@ -99,7 +95,7 @@
                 /* Run history */
                 .curatorRunRow { display: flex; align-items: flex-start; gap: 0.6em; width: 100%; }
                 .curatorRunRow .curatorRunBody { flex: 1 1 auto; min-width: 0; }
-                
+
                 .curatorDot {
                     width: 0.62em; height: 0.62em; border-radius: 50%;
                     flex: 0 0 auto; margin-top: 0.5em;
@@ -108,17 +104,38 @@
                 .curatorDotFailed    { background: #d9534f; }
                 .curatorDotRunning   { background: #00a4dc; }
                 .curatorDotAbandoned { background: #b0883a; }
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
+
+                /* THE fix for narrow detail drawers. Jellyfin's .listItem is
+                   "display:flex; align-items:center", so a drawer added as a second
+                   child becomes a flex item *beside* the row rather than under it,
+                   and gets whatever width the row leaves over — which is very little,
+                   and varies with the row's content, so the two lists ended up
+                   different widths for no reason anyone chose. Stacking them makes
+                   both drawers full width and makes their widths deliberate. */
+                #CuratorRuns .listItem,
+                #CuratorCategories .listItem {
+                    flex-direction: column;
+                    align-items: stretch;
+                }
+
+                /* This page is denser than a normal settings page, so it opts out of
+                   the dashboard's default reading column. The run drawer in
+                   particular carries two numeric tables the category drawer has no
+                   equivalent of.
+
+                   Scoped to this page's id on purpose: the style element is global
+                   once parsed, so a bare .content-primary rule would re-lay-out every
+                   other dashboard page too. The id also outranks Jellyfin's own
+                   single-class rule, which a bare class selector would not. Only
+                   max-width is touched — never width — so a narrow viewport still
+                   shrinks normally instead of gaining a horizontal scrollbar. */
+                #CuratorConfigPage .content-primary { max-width: 1500px; }
+
+                /* Runs get the full width; the category list is capped narrower
+                   because its drawer is mostly prose — a description set 1500px wide
+                   is harder to read, not easier. This is the intended ordering:
+                   the run drawer is the wider of the two. */
+                #CuratorCategories { max-width: 1080px; }
 
                 /* Detail panels — shared by the category list and the run history.
                    The old panels indented with padding-left, which spent width in an already
@@ -188,7 +205,7 @@
                     .curatorProgressPct { font-size: 1.25em; }
                     .curatorCostLegend { gap: 0.3em 1em; }
                 }
-            </style>
+</style>
 
             <div class="verticalSection">
                 <h2 class="sectionTitle">Curator</h2>
@@ -215,46 +232,115 @@
 
                 <div class="curatorTabPanel" data-panel="model">
                     <div class="verticalSection">
-                        <h3 class="sectionTitle">Provider</h3>
-                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Which model answers, and how to reach it.</p>
+                        <h3 class="sectionTitle">Model profiles</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            Each profile is one saved way of calling a model — a provider, a model, its own API key,
+                            and its own prices. Pick which one runs; the rest stay saved so you can switch back
+                            without retyping a key.
+                        </p>
                         <div class="selectContainer">
-                            <label class="selectLabel" for="Provider">Provider</label>
-                            <select is="emby-select" id="Provider" name="Provider" class="emby-select-withcolor emby-select">
-                                <option value="Anthropic">Anthropic (Claude)</option>
-                                <option value="OpenAi">OpenAI (GPT)</option>
-                                <option value="OpenAiCompatible">Any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter)</option>
-                                <option value="Google">Google (Gemini)</option>
-                                <option value="Grok">xAI (Grok)</option>
-                            </select>
-                            <div class="fieldDescription">
-                                Google and Grok constrain the model to the exact response shape this plugin expects,
-                                so a malformed answer cannot lose a batch. Both are also reachable through the
-                                OpenAI-compatible option, but that path gives that guarantee up — prefer their own
-                                entries. Grok needs a model of <code>grok-2-1212</code> or newer for this.
+                            <label class="selectLabel" for="ModelProfileSelect">Profile used for runs</label>
+                            <select is="emby-select" id="ModelProfileSelect" name="ModelProfileSelect"
+                                    class="emby-select-withcolor emby-select"></select>
+                            <div class="fieldDescription" id="ModelProfileHint">
+                                The selected profile is the default every run uses.
                             </div>
                         </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="Model">Model</label>
-                            <input id="Model" name="Model" type="text" class="emby-input" />
-                            <div class="fieldDescription">
-                                The model identifier, for example <code>claude-sonnet-4-6</code>, <code>gpt-5</code>,
-                                <code>gemini-2.5-flash</code>, <code>grok-4</code>, or <code>llama3.3</code>.
+                        <div style="margin:0 0 1.4em;">
+                            <button is="emby-button" type="button" id="ModelProfileAdd" class="raised">
+                                <span>Add profile</span>
+                            </button>
+                            <button is="emby-button" type="button" id="ModelProfileDuplicate" class="raised">
+                                <span>Duplicate</span>
+                            </button>
+                            <button is="emby-button" type="button" id="ModelProfileRemove" class="raised">
+                                <span>Remove</span>
+                            </button>
+                        </div>
+
+                        <div id="ModelProfileEditor">
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="ProfileName">Profile name</label>
+                                <input id="ProfileName" name="ProfileName" type="text" class="emby-input" />
+                                <div class="fieldDescription">
+                                    Just a label for this list, so name it however you will recognise it.
+                                </div>
+                            </div>
+                            <div class="selectContainer">
+                                <label class="selectLabel" for="Provider">Provider</label>
+                                <select is="emby-select" id="Provider" name="Provider" class="emby-select-withcolor emby-select">
+                                    <option value="Anthropic">Anthropic (Claude)</option>
+                                    <option value="OpenAi">OpenAI (GPT)</option>
+                                    <option value="OpenAiCompatible">Any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter)</option>
+                                    <option value="Google">Google (Gemini)</option>
+                                    <option value="Grok">xAI (Grok)</option>
+                                </select>
+                                <div class="fieldDescription">
+                                    Google and Grok constrain the model to the exact response shape this plugin expects,
+                                    so a malformed answer cannot lose a batch. Both are also reachable through the
+                                    OpenAI-compatible option, but that path gives that guarantee up — prefer their own
+                                    entries. Grok needs a model of <code>grok-2-1212</code> or newer for this.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="Model">Model</label>
+                                <input id="Model" name="Model" type="text" class="emby-input" />
+                                <div class="fieldDescription">
+                                    The model identifier, for example <code>claude-sonnet-4-6</code>, <code>gpt-5</code>,
+                                    <code>gemini-2.5-flash</code>, <code>grok-4</code>, or <code>llama3.3</code>.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="ApiKey">API key</label>
+                                <input id="ApiKey" name="ApiKey" type="password" class="emby-input" autocomplete="off" />
+                                <div class="fieldDescription">
+                                    Belongs to this profile alone. Optional for local OpenAI-compatible servers that
+                                    need no key.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="BaseUrl">Base URL</label>
+                                <input id="BaseUrl" name="BaseUrl" type="text" class="emby-input"
+                                       placeholder="http://localhost:11434/v1" />
+                                <div class="fieldDescription">
+                                    Leave empty to use the provider's default endpoint. Required for the OpenAI-compatible
+                                    provider — include the version segment.
+                                </div>
+                            </div>
+
+                            <h3 class="sectionTitle" style="margin-top:1.4em;">This profile's prices</h3>
+                            <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                                Used only to report what a run cost — they change nothing about the run itself. They
+                                belong to this profile, so switching profile switches the prices too and a cheap model
+                                is no longer reported at an expensive model's rate.
+                            </p>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="InputCostPerMillion">Input cost per million tokens (USD)</label>
+                                <input id="InputCostPerMillion" name="InputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="CachedInputCostPerMillion">Cached input cost per million tokens</label>
+                                <input id="CachedInputCostPerMillion" name="CachedInputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
+                                <div class="fieldDescription">
+                                    What the provider charges for input served from its prompt cache. <strong>Leave blank
+                                    for half the input price</strong> — a deliberately conservative default that errs high
+                                    rather than reporting a run as cheaper than it was. Anthropic bills cache reads at a
+                                    tenth of the input rate; others are nearer a half. Cache reads used to be left out of
+                                    the total entirely, which understated any run served largely from cache.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="OutputCostPerMillion">Output cost per million tokens (USD)</label>
+                                <input id="OutputCostPerMillion" name="OutputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
+                                <div class="fieldDescription">
+                                    Leave both at 0 to log token counts alone. These are plain numbers and are never
+                                    looked up, so set them when you create a profile.
+                                </div>
                             </div>
                         </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="ApiKey">API key</label>
-                            <input id="ApiKey" name="ApiKey" type="password" class="emby-input" autocomplete="off" />
-                            <div class="fieldDescription">Optional for local OpenAI-compatible servers that need no key.</div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="BaseUrl">Base URL</label>
-                            <input id="BaseUrl" name="BaseUrl" type="text" class="emby-input"
-                                   placeholder="http://localhost:11434/v1" />
-                            <div class="fieldDescription">
-                                Leave empty to use the provider's default endpoint. Required for the OpenAI-compatible
-                                provider — include the version segment.
-                            </div>
-                        </div>
+                        <p class="fieldDescription" id="ModelProfileEmpty" style="margin:0 0 1.2em;">
+                            No profiles yet — add one to tell Curator which model to call.
+                        </p>
 
                         <h3 class="sectionTitle">Request</h3>
                         <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">How each call to that model is made.</p>
@@ -292,33 +378,10 @@
                         </div>
 
                         <h3 class="sectionTitle">Spend</h3>
-                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Prices are only used to report cost — they change nothing about the run itself.</p>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="InputCostPerMillion">Input cost per million tokens (USD)</label>
-                            <input id="InputCostPerMillion" name="InputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
-                        </div>
-                                                <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="CachedInputCostPerMillion">Cached input cost per million tokens</label>
-                            <input id="CachedInputCostPerMillion" name="CachedInputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
-                            <div class="fieldDescription">
-                                What the provider charges for input served from its prompt cache. <strong>Leave blank
-                                for half the input price</strong> — a deliberately conservative default that errs high
-                                rather than reporting a run as cheaper than it was. Anthropic bills cache reads at a
-                                tenth of the input rate; others are nearer a half. Cache reads used to be left out of
-                                the total entirely, which understated any run served largely from cache.
-                            </div>
-                        </div>
-
-<div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="OutputCostPerMillion">Output cost per million tokens (USD)</label>
-                            <input id="OutputCostPerMillion" name="OutputCostPerMillion" type="number" min="0" step="0.01" class="emby-input" />
-                            <div class="fieldDescription">
-                                Used only for the estimated-cost line each run logs. Leave both at 0 to log token counts alone.
-                                These are plain numbers and are never looked up — <strong>change them when you change
-                                provider</strong>, or the cost of a cheap model will be reported at the price of an
-                                expensive one.
-                            </div>
-                        </div>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            Per-token prices now live on each profile, under <em>Model profiles</em> above — switching
+                            profile switches the prices with it.
+                        </p>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="TokenBudget">Token budget per run</label>
                             <input id="TokenBudget" name="TokenBudget" type="number" min="0" class="emby-input" />
@@ -638,6 +701,183 @@
                 return String(value === null || value === undefined ? '' : value)
                     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
                     .replace(/"/g, '&quot;');
+            }
+
+            // ---- model profiles ----
+            //
+            // The list is held here while the tab is open and written back to config
+            // on save, because the editor below only ever shows one profile: edits to
+            // the others would be lost if the DOM were the only copy.
+            var modelProfiles = [];
+            var activeProfileId = '';
+
+            function newProfileId() {
+                // Mirrors Guid.ToString("N") server-side. Math.random is fine — this
+                // only has to be unique within one owner's short list, and the server
+                // re-mints any id that still manages to collide.
+                var out = '';
+                for (var i = 0; i < 32; i++) {
+                    out += Math.floor(Math.random() * 16).toString(16);
+                }
+
+                return out;
+            }
+
+            function describeProfile(profile) {
+                if (profile.Name) {
+                    return profile.Name;
+                }
+
+                return profile.Model ? profile.Provider + ' ' + profile.Model : String(profile.Provider);
+            }
+
+            // The JavaScript half of Core/Llm/ModelProfiles.Normalize. The server runs
+            // the same rules on every read; this exists so the page shows the migrated
+            // profile before the owner has saved anything. Change one, change both.
+            function normalizeProfiles(config) {
+                var profiles = (config.ModelProfiles || []).filter(function (p) { return !!p; });
+
+                if (!profiles.length) {
+                    var hasLegacy = !!(config.Model || config.ApiKey || config.BaseUrl);
+                    if (hasLegacy) {
+                        profiles.push({
+                            Id: newProfileId(),
+                            Name: config.Model ? config.Provider + ' ' + config.Model : 'Default',
+                            Provider: config.Provider || 'Anthropic',
+                            Model: config.Model || '',
+                            ApiKey: config.ApiKey || '',
+                            BaseUrl: config.BaseUrl || '',
+                            InputCostPerMillion: config.InputCostPerMillion || 0,
+                            CachedInputCostPerMillion: config.CachedInputCostPerMillion || 0,
+                            OutputCostPerMillion: config.OutputCostPerMillion || 0
+                        });
+                    }
+                }
+
+                var seen = {};
+                profiles.forEach(function (profile) {
+                    if (!profile.Id || seen[profile.Id]) {
+                        profile.Id = newProfileId();
+                    }
+
+                    seen[profile.Id] = true;
+                    if (!profile.Name) {
+                        profile.Name = describeProfile(profile);
+                    }
+                });
+
+                var defaultId = config.DefaultModelProfileId || '';
+                var found = profiles.some(function (p) { return p.Id === defaultId; });
+                if (!found) {
+                    defaultId = profiles.length ? profiles[0].Id : '';
+                }
+
+                modelProfiles = profiles;
+                activeProfileId = defaultId;
+            }
+
+            function activeProfile() {
+                for (var i = 0; i < modelProfiles.length; i++) {
+                    if (modelProfiles[i].Id === activeProfileId) {
+                        return modelProfiles[i];
+                    }
+                }
+
+                return null;
+            }
+
+            /** Copies the editor fields back into the profile they belong to. */
+            function captureProfileEditor() {
+                var profile = activeProfile();
+                if (!profile) {
+                    return;
+                }
+
+                profile.Name = page.querySelector('#ProfileName').value.trim();
+                profile.Provider = page.querySelector('#Provider').value;
+                profile.Model = page.querySelector('#Model').value.trim();
+                profile.ApiKey = page.querySelector('#ApiKey').value;
+                profile.BaseUrl = page.querySelector('#BaseUrl').value.trim();
+                profile.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value) || 0;
+                profile.CachedInputCostPerMillion = parseFloat(page.querySelector('#CachedInputCostPerMillion').value) || 0;
+                profile.OutputCostPerMillion = parseFloat(page.querySelector('#OutputCostPerMillion').value) || 0;
+
+                if (!profile.Name) {
+                    profile.Name = describeProfile(profile);
+                }
+            }
+
+            function renderProfiles() {
+                var select = page.querySelector('#ModelProfileSelect');
+                select.innerHTML = modelProfiles.map(function (profile) {
+                    var selected = profile.Id === activeProfileId ? ' selected' : '';
+                    return '<option value="' + escapeHtml(profile.Id) + '"' + selected + '>'
+                        + escapeHtml(describeProfile(profile)) + '</option>';
+                }).join('');
+
+                var profile = activeProfile();
+                page.querySelector('#ModelProfileEditor').classList.toggle('hide', !profile);
+                page.querySelector('#ModelProfileEmpty').classList.toggle('hide', !!profile);
+                page.querySelector('#ModelProfileRemove').disabled = !profile;
+                page.querySelector('#ModelProfileDuplicate').disabled = !profile;
+
+                if (!profile) {
+                    return;
+                }
+
+                page.querySelector('#ProfileName').value = profile.Name || '';
+                setEnumSelect(page.querySelector('#Provider'), profile.Provider);
+                page.querySelector('#Model').value = profile.Model || '';
+                page.querySelector('#ApiKey').value = profile.ApiKey || '';
+                page.querySelector('#BaseUrl').value = profile.BaseUrl || '';
+                page.querySelector('#InputCostPerMillion').value = profile.InputCostPerMillion || 0;
+                page.querySelector('#CachedInputCostPerMillion').value = profile.CachedInputCostPerMillion || 0;
+                page.querySelector('#OutputCostPerMillion').value = profile.OutputCostPerMillion || 0;
+            }
+
+            function selectProfile(id) {
+                captureProfileEditor();
+                activeProfileId = id;
+                renderProfiles();
+            }
+
+            function addProfile(copyActive) {
+                captureProfileEditor();
+
+                var source = copyActive ? activeProfile() : null;
+                var profile = {
+                    Id: newProfileId(),
+                    Name: source ? source.Name + ' copy' : 'New profile',
+                    Provider: source ? source.Provider : 'Anthropic',
+                    Model: source ? source.Model : '',
+                    ApiKey: source ? source.ApiKey : '',
+                    BaseUrl: source ? source.BaseUrl : '',
+                    InputCostPerMillion: source ? source.InputCostPerMillion : 0,
+                    CachedInputCostPerMillion: source ? source.CachedInputCostPerMillion : 0,
+                    OutputCostPerMillion: source ? source.OutputCostPerMillion : 0
+                };
+
+                modelProfiles.push(profile);
+                activeProfileId = profile.Id;
+                renderProfiles();
+            }
+
+            function removeProfile() {
+                var profile = activeProfile();
+                if (!profile) {
+                    return;
+                }
+
+                // Deleting the selected profile deletes its API key too, and nothing
+                // on this page can get it back — so ask, and name what is going.
+                if (!window.confirm('Remove the profile "' + describeProfile(profile)
+                    + '"? Its API key is deleted with it.')) {
+                    return;
+                }
+
+                modelProfiles = modelProfiles.filter(function (p) { return p.Id !== profile.Id; });
+                activeProfileId = modelProfiles.length ? modelProfiles[0].Id : '';
+                renderProfiles();
             }
 
             function fillUsers(chosenIds) {
@@ -1625,10 +1865,8 @@
             function loadConfiguration() {
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    setEnumSelect(page.querySelector('#Provider'), config.Provider);
-                    page.querySelector('#Model').value = config.Model || '';
-                    page.querySelector('#ApiKey').value = config.ApiKey || '';
-                    page.querySelector('#BaseUrl').value = config.BaseUrl || '';
+                    normalizeProfiles(config);
+                    renderProfiles();
                     page.querySelector('#BatchSize').value = config.BatchSize;
                     page.querySelector('#MaxOutputTokens').value = config.MaxOutputTokens;
                     page.querySelector('#TokenBudget').value = config.TokenBudget;
@@ -1641,9 +1879,6 @@
                     page.querySelector('#MinWatchedForPersonalization').value = config.MinWatchedForPersonalization;
                     page.querySelector('#MaxTagsPerItem').value = config.MaxTagsPerItem;
                     page.querySelector('#SurfacedCollections').value = config.SurfacedCollections || '';
-                    page.querySelector('#InputCostPerMillion').value = config.InputCostPerMillion;
-                    page.querySelector('#OutputCostPerMillion').value = config.OutputCostPerMillion;
-                    page.querySelector('#CachedInputCostPerMillion').value = config.CachedInputCostPerMillion;
                     setEnumSelect(page.querySelector('#OutputType'), config.OutputType);
                     page.querySelector('#PersonalizedPlaylists').checked = config.PersonalizedPlaylists;
                     page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
@@ -1663,11 +1898,26 @@
                 event.preventDefault();
                 Dashboard.showLoadingMsg();
 
+                captureProfileEditor();
+
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                    config.Provider = page.querySelector('#Provider').value;
-                    config.Model = page.querySelector('#Model').value.trim();
-                    config.ApiKey = page.querySelector('#ApiKey').value;
-                    config.BaseUrl = page.querySelector('#BaseUrl').value.trim();
+                    config.ModelProfiles = modelProfiles;
+                    config.DefaultModelProfileId = activeProfileId;
+
+                    // Retire the pre-profile fields once the list holds anything, so
+                    // migration happens exactly once. Left populated they would be
+                    // re-imported the moment the list went empty, resurrecting a
+                    // profile the owner had deliberately deleted. Only when the list
+                    // is empty are they left alone — that is the one case where they
+                    // are still the only copy of a working key.
+                    if (modelProfiles.length) {
+                        config.Model = '';
+                        config.ApiKey = '';
+                        config.BaseUrl = '';
+                        config.InputCostPerMillion = 0;
+                        config.CachedInputCostPerMillion = 0;
+                        config.OutputCostPerMillion = 0;
+                    }
                     config.BatchSize = parseInt(page.querySelector('#BatchSize').value, 10);
                     config.MaxOutputTokens = parseInt(page.querySelector('#MaxOutputTokens').value, 10);
                     config.TokenBudget = parseInt(page.querySelector('#TokenBudget').value, 10);
@@ -1680,9 +1930,6 @@
                     config.MinWatchedForPersonalization = parseInt(page.querySelector('#MinWatchedForPersonalization').value, 10);
                     config.MaxTagsPerItem = parseInt(page.querySelector('#MaxTagsPerItem').value, 10);
                     config.SurfacedCollections = page.querySelector('#SurfacedCollections').value.trim();
-                    config.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value);
-                    config.OutputCostPerMillion = parseFloat(page.querySelector('#OutputCostPerMillion').value);
-                    config.CachedInputCostPerMillion = parseFloat(page.querySelector('#CachedInputCostPerMillion').value) || 0;
                     config.OutputType = page.querySelector('#OutputType').value;
                     config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;
@@ -1786,6 +2033,33 @@
                 page.querySelector('#CuratorSelectAll').addEventListener('change', onSelectAll);
                 page.querySelector('#CuratorDeleteSelected').addEventListener('click', onDeleteSelected);
                 page.querySelector('#CuratorExpandAll').addEventListener('click', onExpandAll);
+
+                page.querySelector('#ModelProfileSelect').addEventListener('change', function () {
+                    selectProfile(this.value);
+                });
+                page.querySelector('#ModelProfileAdd').addEventListener('click', function () {
+                    addProfile(false);
+                });
+                page.querySelector('#ModelProfileDuplicate').addEventListener('click', function () {
+                    addProfile(true);
+                });
+                page.querySelector('#ModelProfileRemove').addEventListener('click', removeProfile);
+
+                // Keeps the option label in step with the name as it is typed, so the
+                // list never shows a profile under a name the editor has replaced.
+                page.querySelector('#ProfileName').addEventListener('input', function () {
+                    var profile = activeProfile();
+                    if (!profile) {
+                        return;
+                    }
+
+                    profile.Name = this.value.trim();
+                    var select = page.querySelector('#ModelProfileSelect');
+                    var option = select.options[select.selectedIndex];
+                    if (option) {
+                        option.textContent = describeProfile(profile);
+                    }
+                });
 
                 page.querySelector('#CuratorScopeBar').addEventListener('click', onScopeBarClick);
 
