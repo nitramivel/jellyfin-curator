@@ -296,6 +296,119 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal("Landscape", settings[1]!["ViewMode"]!.GetValue<string>());
         }
 
+        // ---- the fields Home Screen Sections sets for itself ----
+
+        /// <summary>
+        /// A new entry must carry every field Home Screen Sections would have set,
+        /// not only the two Curator owns. An absent field is not "left alone" — it
+        /// deserializes to the CLR default, which made every row Curator created
+        /// arrive switched off and asking for between zero and zero items.
+        /// </summary>
+        [Fact]
+        public void SectionSettings_NewEntryIsEnabledAndAsksForOneItem()
+        {
+            var config = JsonNode.Parse("""{"SectionSettings":[]}""")!;
+
+            Assert.True(SectionConfigMerger.MergeSectionSettings(
+                config, [new DesiredSection("curator-a", "Cerebral Sci-Fi", 12)]));
+
+            var entry = config["SectionSettings"]!.AsArray()[0]!;
+            Assert.True(entry["Enabled"]!.GetValue<bool>());
+            Assert.True(entry["AllowUserOverride"]!.GetValue<bool>());
+            Assert.Equal(1, entry["LowerLimit"]!.GetValue<int>());
+            Assert.Equal(1, entry["UpperLimit"]!.GetValue<int>());
+            Assert.False(entry["HideWatchedItems"]!.GetValue<bool>());
+            Assert.Equal(500, entry["OrderIndex"]!.GetValue<int>());
+            Assert.Equal("Portrait", entry["ViewMode"]!.GetValue<string>());
+        }
+
+        /// <summary>
+        /// The rows an older version already wrote have to be healed, or they stay
+        /// switched off forever — nothing else ever revisits them.
+        /// </summary>
+        [Fact]
+        public void SectionSettings_HealARowLeftIncompleteByAnOlderVersion()
+        {
+            var config = JsonNode.Parse("""
+                {"SectionSettings":[
+                  {"SectionId":"curator-a","Enabled":false,"AllowUserOverride":false,
+                   "LowerLimit":0,"UpperLimit":0,"OrderIndex":500,"ViewMode":"Portrait"}
+                ]}
+                """)!;
+
+            Assert.True(SectionConfigMerger.MergeSectionSettings(
+                config, [new DesiredSection("curator-a", "Cerebral Sci-Fi", 12)]));
+
+            var entry = config["SectionSettings"]!.AsArray()[0]!;
+            Assert.True(entry["Enabled"]!.GetValue<bool>());
+            Assert.Equal(1, entry["LowerLimit"]!.GetValue<int>());
+            Assert.Equal(1, entry["UpperLimit"]!.GetValue<int>());
+        }
+
+        /// <summary>
+        /// Switching a row off by hand is a legitimate thing to do and must survive
+        /// the next run. Only the zero/zero fingerprint — which Home Screen Sections
+        /// never writes — is treated as ours to overwrite.
+        /// </summary>
+        [Fact]
+        public void SectionSettings_ARowTheUserDisabledStaysDisabled()
+        {
+            var config = JsonNode.Parse("""
+                {"SectionSettings":[
+                  {"SectionId":"curator-a","Enabled":false,"AllowUserOverride":true,
+                   "LowerLimit":1,"UpperLimit":3,"OrderIndex":500,"ViewMode":"Portrait"}
+                ]}
+                """)!;
+
+            SectionConfigMerger.MergeSectionSettings(
+                config, [new DesiredSection("curator-a", "Cerebral Sci-Fi", 12)]);
+
+            var entry = config["SectionSettings"]!.AsArray()[0]!;
+            Assert.False(entry["Enabled"]!.GetValue<bool>());
+            Assert.Equal(1, entry["LowerLimit"]!.GetValue<int>());
+            Assert.Equal(3, entry["UpperLimit"]!.GetValue<int>());
+        }
+
+        /// <summary>
+        /// Healing is not a reason to rewrite a file that is already correct — a
+        /// write fires Collection Sections' ConfigurationChanged and re-registers
+        /// every section.
+        /// </summary>
+        [Fact]
+        public void SectionSettings_AHealthyRowReportsNoChange()
+        {
+            var config = JsonNode.Parse("""
+                {"SectionSettings":[
+                  {"SectionId":"curator-a","Enabled":true,"AllowUserOverride":true,
+                   "LowerLimit":1,"UpperLimit":1,"OrderIndex":500,"ViewMode":"Portrait",
+                   "HideWatchedItems":false}
+                ]}
+                """)!;
+
+            Assert.False(SectionConfigMerger.MergeSectionSettings(
+                config, [new DesiredSection("curator-a", "Cerebral Sci-Fi", 12)]));
+        }
+
+        /// <summary>
+        /// The repair is keyed on the Curator prefix like everything else here, so a
+        /// foreign section sitting at zero/zero is none of our business.
+        /// </summary>
+        [Fact]
+        public void SectionSettings_DoNotHealForeignSections()
+        {
+            var config = JsonNode.Parse("""
+                {"SectionSettings":[
+                  {"SectionId":"myplugin-a","Enabled":false,"LowerLimit":0,"UpperLimit":0}
+                ]}
+                """)!;
+
+            SectionConfigMerger.MergeSectionSettings(config, []);
+
+            var entry = config["SectionSettings"]!.AsArray()[0]!;
+            Assert.False(entry["Enabled"]!.GetValue<bool>());
+            Assert.Equal(0, entry["LowerLimit"]!.GetValue<int>());
+        }
+
         [Fact]
         public void SectionSettings_LeaveOtherPluginsSectionsAlone()
         {
@@ -355,14 +468,26 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
-        public void SectionSettings_AlreadyCorrect_ReportNoChange()
+        public void SectionSettings_AnEntryMissingItsLimitsIsHealed()
         {
+            // This shape — SectionId, OrderIndex and ViewMode and nothing else — is
+            // what older versions wrote, and it was the bug: the absent fields
+            // deserialize to Enabled=false with both limits at 0. It used to be
+            // asserted here as "already correct". It is not, and reporting no change
+            // would leave the row switched off forever, since nothing else revisits
+            // it. See SectionSettings_AHealthyRowReportsNoChange for the real
+            // no-change contract.
             var config = JsonNode.Parse("""
                 {"SectionSettings":[{"SectionId":"curator-a","OrderIndex":500,"ViewMode":"Portrait"}]}
                 """)!;
 
-            Assert.False(SectionConfigMerger.MergeSectionSettings(
+            Assert.True(SectionConfigMerger.MergeSectionSettings(
                 config, [new DesiredSection("curator-a", "Mine", 12)]));
+
+            var entry = config["SectionSettings"]!.AsArray()[0]!;
+            Assert.True(entry["Enabled"]!.GetValue<bool>());
+            Assert.Equal(1, entry["LowerLimit"]!.GetValue<int>());
+            Assert.Equal(1, entry["UpperLimit"]!.GetValue<int>());
         }
 
         [Fact]

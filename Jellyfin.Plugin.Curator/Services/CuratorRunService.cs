@@ -714,6 +714,47 @@ namespace Jellyfin.Plugin.Curator.Services
             }
         }
 
+        /// <summary>
+        /// Re-publishes the home screen rows from the stored categories, without an
+        /// LLM call.
+        /// </summary>
+        /// <remarks>
+        /// A full run does this at the end, but a run costs money and takes minutes,
+        /// so it is a poor way to fix rows that have drifted. They do drift: the
+        /// integration is a merge into two other plugins' configuration, and either
+        /// can be edited by hand or rewritten by its own plugin between runs.
+        /// Only categories that actually hold a playlist get a row, exactly as in a
+        /// full run — the two share <see cref="IHomeScreenIntegrationService"/>, so
+        /// they cannot disagree about what a row is.
+        /// </remarks>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>True when the integration reported success.</returns>
+        public async Task<bool> SyncHomeScreenAsync(CancellationToken cancellationToken)
+        {
+            var config = Plugin.Instance?.Configuration
+                ?? throw new InvalidOperationException("Curator: plugin configuration unavailable.");
+
+            var targetUsers = ResolveTargetUsers(config);
+            if (targetUsers.Count == 0)
+            {
+                _logger.LogWarning("Curator: no target users resolved; nothing to sync");
+                return false;
+            }
+
+            var categories = _categoryStore.GetAll();
+            var synced = await _homeScreenService
+                .SyncSectionsAsync(categories, targetUsers, cancellationToken)
+                .ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Curator: home screen sync {Outcome} — {Count} stored categor(ies), {Users} user(s)",
+                synced ? "completed" : "did not run",
+                categories.Count,
+                targetUsers.Count);
+
+            return synced;
+        }
+
         private IReadOnlyList<Guid> ResolveTargetUsers(PluginConfiguration config)
         {
             if (config.TargetUsers.Length > 0)

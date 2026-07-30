@@ -111,6 +111,16 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         RunLogSummary? Current();
 
         /// <summary>
+        /// One run reduced to what the configuration page shows when its row is
+        /// expanded: the scan, the discovery pass, one line per viewer, category
+        /// counts and the call table, with every prompt body stripped.
+        /// </summary>
+        /// <param name="runId">The run.</param>
+        /// <param name="userNames">Display names by user ID, for the per-viewer rows.</param>
+        /// <returns>The detail, or null when no such run exists.</returns>
+        RunDetail? Detail(Guid runId, IReadOnlyDictionary<Guid, string>? userNames = null);
+
+        /// <summary>
         /// Reads one run's whole document as raw JSON, exactly as stored.
         /// </summary>
         /// <param name="runId">The run ID.</param>

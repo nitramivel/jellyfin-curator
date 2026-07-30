@@ -48,6 +48,7 @@ Jellyfin.Plugin.Curator/
 │   ├── ItemReducer.cs        # BaseItem -> MediaItemRecord
 │   ├── SeriesActivityRollup.cs   # Episode watch data -> series watch depth
 │   ├── RunFailure.cs         # Host teardown vs. a real fault
+│   ├── LibraryPathFilter.cs  # Drops items orphaned by a removed library folder
 │   ├── CategoryIdentity.cs   # Matches a reconciled category to a stored definition
 │   ├── CategoryRetention.cs  # Which stored categories to prune when over a cap
 │   ├── Models/CategoryLimits.cs  # The one value the prompt AND the Reconciler read
@@ -162,9 +163,20 @@ counterintuitive; do not "correct" them from memory.
   AllowUserOverride, LowerLimit, UpperLimit, OrderIndex, ViewMode,
   HideWatchedItems }`, where `ViewMode` is `Landscape` / `Portrait` / `Square`.
   Collection Sections has no fields for either, so a section registered through
-  it lands on whatever default this plugin assigns. Curator writes `OrderIndex`
-  and `ViewMode` only, keyed on `SectionId` (not `UniqueId` as in Collection
-  Sections), and leaves every other field alone.
+  it lands on whatever default this plugin assigns. Curator owns `OrderIndex`
+  and `ViewMode`, keyed on `SectionId` (not `UniqueId` as in Collection
+  Sections), and leaves every other field on an **existing** entry alone.
+- **"Leave every other field alone" does not apply to an entry being created.**
+  An absent field is not left alone — it deserializes to the CLR default, so a
+  new entry carrying only `SectionId`, `OrderIndex` and `ViewMode` arrives
+  `Enabled=false` with `LowerLimit` and `UpperLimit` at 0: a row switched off
+  and asking for no items. Measured on the owner's server, 40 of 46 Curator
+  rows were in that state while every non-Curator row sat at `Enabled=true`,
+  1 and 1. New entries now seed the fields Home Screen Sections sets for
+  itself. Both limits at 0 is Curator's fingerprint — that plugin never writes
+  it — so `RepairIncompleteEntry` heals exactly that shape and nothing else; a
+  row with real limits keeps whatever the user set, `Enabled` included, because
+  switching a row off by hand must survive the next run.
 - Per-user enablement: `GET`/`POST /ModularHomeViews/UserSettings` with
   `{ UserId, EnabledSections, LockedSections, DefaultEnabledSections }`.
 - A section must be **registered before it can be enabled**, or the ID references
@@ -200,6 +212,18 @@ Playlists are still built. Never throw out of home screen integration.
   watches television read as a viewer who had watched nothing.
 - Library scan query shape: `Recursive = true`, `IsVirtualItem = false` (excludes
   missing-episode stubs).
+- **`IsVirtualItem = false` does not exclude items orphaned by a removed library
+  folder.** Jellyfin keeps the database row when a library folder is deleted or
+  its mount is renamed: same path, `LocationType=FileSystem`, a media source,
+  and it still comes back from `GetItemsResult`. It is indistinguishable from a
+  real item and plays back as nothing. Measured on the owner's server, 36 of 298
+  movies and series sat under `/storage/`, a mount that no longer exists — 12%
+  of what went to the model was unplayable, and three of the ten members of one
+  category were ghosts. `LibraryScanner` now filters on
+  `Core/LibraryPathFilter.IsInsideLibrary` against
+  `ILibraryManager.GetVirtualFolders()`. It fails **open**: with no readable
+  roots everything is kept, because emptying the library is a far worse failure
+  than a few dead rows.
 - **Installing or updating any plugin restarts the host in the same process.**
   Jellyfin sends shutdown notifications, logs `Disposing "CoreAppHost"`, then
   rebuilds and reports `Startup complete` a second or two later — same PID, same

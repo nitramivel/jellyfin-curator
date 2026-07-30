@@ -200,6 +200,43 @@ namespace Jellyfin.Plugin.Curator.Api
         /// <response code="200">The run record.</response>
         /// <response code="404">No such run.</response>
         /// <returns>The run document.</returns>
+        /// <summary>
+        /// Re-publishes the home screen rows from the stored categories, without an
+        /// LLM call and without spending anything.
+        /// </summary>
+        /// <response code="200">Sync ran; the body says whether it succeeded.</response>
+        /// <returns>Whether the integration reported success.</returns>
+        [HttpPost("HomeScreen/Sync")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<bool>> SyncHomeScreen()
+        {
+            return Ok(await _runService.SyncHomeScreenAsync(HttpContext.RequestAborted).ConfigureAwait(false));
+        }
+
+        /// <summary>
+        /// One run reduced to what the configuration page shows when its row is
+        /// expanded.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately not the run file, which carries every prompt and response in
+        /// full and runs to hundreds of kilobytes. Fetch that from
+        /// <c>Runs/{runId}</c> when you actually want it.
+        /// </remarks>
+        /// <param name="runId">The run.</param>
+        /// <response code="200">The run detail.</response>
+        /// <response code="404">No such run.</response>
+        /// <returns>The detail.</returns>
+        [HttpGet("Runs/{runId}/Detail")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public ActionResult<RunDetail> GetRunDetail([FromRoute] Guid runId)
+        {
+            var names = _userManager.GetUsers().ToDictionary(u => u.Id, u => u.Username);
+            return _runLogStore.Detail(runId, names) is { } detail
+                ? Ok(detail)
+                : NotFound();
+        }
+
         [HttpGet("Runs/{runId}")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
