@@ -8,6 +8,7 @@ using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
 using Jellyfin.Plugin.Curator.Services.Playlists;
 using Jellyfin.Plugin.Curator.Services.Runs;
+using Jellyfin.Plugin.Curator.Services.Summaries;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
@@ -95,6 +96,40 @@ namespace Jellyfin.Plugin.Curator.Api
         Guid? CurrentRunId,
         RunLogSummary? CurrentRun);
 
+    /// <summary>Coverage of the condensed-summary cache, for the Summaries tab.</summary>
+    /// <param name="IsRunning">Whether a distillation pass is in progress.</param>
+    /// <param name="Progress">How far that pass has got, 0-100.</param>
+    /// <param name="StoredCount">How many items have a condensed summary.</param>
+    /// <param name="OriginalChars">Total length of the overviews those summaries replaced.</param>
+    /// <param name="CondensedChars">Total length of the summaries themselves.</param>
+    /// <param name="UsedInRuns">Whether category runs are currently sending them.</param>
+    /// <param name="LastResult">What the last completed pass did, or null if none has run.</param>
+    public sealed record SummaryStatus(
+        bool IsRunning,
+        double Progress,
+        int StoredCount,
+        long OriginalChars,
+        long CondensedChars,
+        bool UsedInRuns,
+        SummaryRunResult? LastResult);
+
+    /// <summary>One stored summary beside the overview it replaced.</summary>
+    /// <param name="ItemId">The Jellyfin item ID.</param>
+    /// <param name="Title">The item's title at distillation time.</param>
+    /// <param name="Text">The condensed summary.</param>
+    /// <param name="Length">Length of the condensed summary.</param>
+    /// <param name="SourceLength">Length of the overview it replaced.</param>
+    /// <param name="ModelId">The model that produced it.</param>
+    /// <param name="CreatedAt">When it was produced (UTC).</param>
+    public sealed record SummarySample(
+        Guid ItemId,
+        string Title,
+        string Text,
+        int Length,
+        int SourceLength,
+        string? ModelId,
+        DateTime CreatedAt);
+
     /// <summary>
     /// Admin API backing the configuration page: run status, the category list,
     /// and the manual-run trigger.
@@ -107,6 +142,8 @@ namespace Jellyfin.Plugin.Curator.Api
         private readonly CuratorRunService _runService;
         private readonly ICategoryStore _categoryStore;
         private readonly IRunLogStore _runLogStore;
+        private readonly ISummaryStore _summaryStore;
+        private readonly SummaryDistillService _distillService;
         private readonly ICuratorPlaylistService _playlistService;
         private readonly IUserManager _userManager;
         private readonly ILibraryManager _libraryManager;
@@ -116,6 +153,8 @@ namespace Jellyfin.Plugin.Curator.Api
             CuratorRunService runService,
             ICategoryStore categoryStore,
             IRunLogStore runLogStore,
+            ISummaryStore summaryStore,
+            SummaryDistillService distillService,
             ICuratorPlaylistService playlistService,
             IUserManager userManager,
             ILibraryManager libraryManager,
@@ -124,6 +163,8 @@ namespace Jellyfin.Plugin.Curator.Api
             _runService = runService;
             _categoryStore = categoryStore;
             _runLogStore = runLogStore;
+            _summaryStore = summaryStore;
+            _distillService = distillService;
             _playlistService = playlistService;
             _userManager = userManager;
             _libraryManager = libraryManager;
@@ -316,6 +357,136 @@ namespace Jellyfin.Plugin.Curator.Api
             }
 
             return Accepted();
+        }
+
+        /// <summary>
+        /// Reports coverage of the condensed-summary cache and what the last pass did.
+        /// </summary>
+        /// <response code="200">Status retrieved.</response>
+        /// <returns>The summary status.</returns>
+        [HttpGet("Summaries/Status")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<SummaryStatus> GetSummaryStatus()
+        {
+            var stored = _summaryStore.GetAll();
+            var config = Plugin.Instance?.Configuration;
+
+            var originalChars = stored.Values.Sum(s => (long)s.SourceLength);
+            var condensedChars = stored.Values.Sum(s => (long)(s.Text?.Length ?? 0));
+
+            return new SummaryStatus(
+                _distillService.IsRunning,
+                Math.Round(_distillService.Progress, 1),
+                stored.Count,
+                originalChars,
+                condensedChars,
+                config?.UseCondensedSummaries ?? false,
+                _distillService.LastResult);
+        }
+
+        /// <summary>
+        /// Lists stored summaries alongside the overview each replaced.
+        /// </summary>
+        /// <param name="limit">How many to return.</param>
+        /// <response code="200">Summaries listed.</response>
+        /// <returns>The summaries, newest first.</returns>
+        [HttpGet("Summaries")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<IReadOnlyList<SummarySample>> GetSummaries([FromQuery] int limit = 40)
+        {
+            var capped = Math.Clamp(limit, 1, 500);
+
+            var samples = _summaryStore.GetAll().Values
+                .OrderByDescending(s => s.CreatedAt)
+                .Take(capped)
+                .Select(s => new SummarySample(
+                    s.ItemId,
+                    s.Title ?? "(unknown)",
+                    s.Text,
+                    s.Text?.Length ?? 0,
+                    s.SourceLength,
+                    s.ModelId,
+                    s.CreatedAt))
+                .ToList();
+
+            return samples;
+        }
+
+        /// <summary>
+        /// Starts a condensed-summary pass.
+        /// </summary>
+        /// <remarks>
+        /// Fire and forget for the same reason a category run is: a first pass over
+        /// a large library is many minutes of paid calls, far past any HTTP timeout.
+        /// Progress is readable from <c>Summaries/Status</c>.
+        /// </remarks>
+        /// <param name="force">Redo every item rather than only new and changed ones.</param>
+        /// <param name="profileId">
+        /// The model profile to use for this pass, overriding the saved choice.
+        /// Lets the picker on the Summaries tab take effect without saving first;
+        /// blank or unknown falls back to the configured profile.
+        /// </param>
+        /// <response code="202">Pass started.</response>
+        /// <response code="409">A pass is already in progress.</response>
+        /// <returns>An action result.</returns>
+        [HttpPost("Summaries/Distill")]
+        [ProducesResponseType(StatusCodes.Status202Accepted)]
+        [ProducesResponseType(StatusCodes.Status409Conflict)]
+        public ActionResult StartDistill(
+            [FromQuery] bool force = false,
+            [FromQuery] string? profileId = null)
+        {
+            if (_distillService.IsRunning)
+            {
+                return Conflict("A Curator summary pass is already in progress.");
+            }
+
+            var config = Plugin.Instance?.Configuration;
+            if (config is null)
+            {
+                return Conflict("Curator configuration is unavailable.");
+            }
+
+            // See StartRun for why the execution context is suppressed: without it
+            // this task inherits the request's scoped IServiceProvider and dies on
+            // the first pooled DbContext it touches after the response is sent.
+            using (ExecutionContext.SuppressFlow())
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _distillService
+                            .DistillAsync(config, null, force, CancellationToken.None, profileId)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Curator: summary pass failed — {Message}", ex.Message);
+                    }
+                });
+            }
+
+            return Accepted();
+        }
+
+        /// <summary>
+        /// Deletes every stored condensed summary.
+        /// </summary>
+        /// <remarks>
+        /// Safe by construction: the summaries are a Curator-side cache and the
+        /// library's own overviews were never modified, so this restores the
+        /// original prompt behaviour exactly rather than losing anything.
+        /// </remarks>
+        /// <response code="200">Summaries cleared.</response>
+        /// <returns>How many were removed.</returns>
+        [HttpDelete("Summaries")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<int> ClearSummaries()
+        {
+            var removed = _summaryStore.Clear();
+            _logger.LogInformation("Curator: cleared {Removed} condensed summary/summaries", removed);
+            return removed;
         }
 
         /// <summary>

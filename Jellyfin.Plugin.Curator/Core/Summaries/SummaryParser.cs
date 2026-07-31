@@ -1,0 +1,169 @@
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
+using Jellyfin.Plugin.Curator.Core.Llm;
+using Jellyfin.Plugin.Curator.Core.Models;
+
+namespace Jellyfin.Plugin.Curator.Core.Summaries
+{
+    /// <summary>
+    /// One accepted summary, already mapped back to its item.
+    /// </summary>
+    /// <param name="Item">The item the summary describes.</param>
+    /// <param name="Text">The condensed text, trimmed to the configured budget.</param>
+    public sealed record ParsedSummary(MediaItemRecord Item, string Text);
+
+    /// <summary>
+    /// The outcome of parsing one distillation response.
+    /// </summary>
+    /// <param name="Summaries">Accepted summaries.</param>
+    /// <param name="DiscardedCount">Entries dropped for a bad index, a duplicate, or empty text.</param>
+    /// <param name="TrimmedCount">Summaries the model returned over budget, which were cut.</param>
+    /// <param name="MissingCount">Items in the batch the model returned nothing for.</param>
+    public sealed record SummaryParseResult(
+        IReadOnlyList<ParsedSummary> Summaries,
+        int DiscardedCount,
+        int TrimmedCount,
+        int MissingCount);
+
+    /// <summary>
+    /// Strict parser for distillation responses.
+    ///
+    /// <para>
+    /// Enforces the same invariant as <see cref="ProposalParser"/>: the model works
+    /// in batch-local integer indexes and never sees a Jellyfin ID, so an index
+    /// outside the batch is discarded rather than resolved. A model cannot attach a
+    /// summary to an item that was not in front of it.
+    /// </para>
+    /// </summary>
+    public static class SummaryParser
+    {
+        /// <summary>
+        /// Parses a distillation response against the batch that produced it.
+        /// </summary>
+        /// <param name="responseText">The model's text output.</param>
+        /// <param name="batch">The batch the response describes; indexes map into it.</param>
+        /// <param name="maxLength">The character budget; longer summaries are cut at a word boundary.</param>
+        /// <returns>Accepted summaries and discard counts.</returns>
+        /// <exception cref="FormatException">The response has no parseable object of the required shape.</exception>
+        public static SummaryParseResult Parse(
+            string responseText,
+            IReadOnlyList<MediaItemRecord> batch,
+            int maxLength)
+        {
+            ArgumentNullException.ThrowIfNull(responseText);
+            ArgumentNullException.ThrowIfNull(batch);
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxLength, 20);
+
+            var json = JsonResponse.ExtractObject(responseText);
+
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(json);
+            }
+            catch (JsonException ex)
+            {
+                throw new FormatException("Model response is not valid JSON.", ex);
+            }
+
+            using (document)
+            {
+                if (document.RootElement.ValueKind != JsonValueKind.Object
+                    || !document.RootElement.TryGetProperty("summaries", out var summaries)
+                    || summaries.ValueKind != JsonValueKind.Array)
+                {
+                    throw new FormatException("Model response lacks a top-level \"summaries\" array.");
+                }
+
+                var accepted = new List<ParsedSummary>();
+                var seen = new HashSet<int>();
+                var discarded = 0;
+                var trimmed = 0;
+
+                foreach (var entry in summaries.EnumerateArray())
+                {
+                    if (entry.ValueKind != JsonValueKind.Object
+                        || !entry.TryGetProperty("i", out var indexElement)
+                        || indexElement.ValueKind != JsonValueKind.Number
+                        || !indexElement.TryGetInt32(out var index))
+                    {
+                        discarded++;
+                        continue;
+                    }
+
+                    // The invariant: outside the batch is not a summary we can place.
+                    if (index < 0 || index >= batch.Count || !seen.Add(index))
+                    {
+                        discarded++;
+                        continue;
+                    }
+
+                    var text = entry.TryGetProperty("s", out var textElement)
+                        && textElement.ValueKind == JsonValueKind.String
+                            ? textElement.GetString()?.Trim()
+                            : null;
+
+                    if (string.IsNullOrWhiteSpace(text))
+                    {
+                        discarded++;
+                        continue;
+                    }
+
+                    text = Clean(text);
+                    if (text.Length > maxLength)
+                    {
+                        text = TrimToBudget(text, maxLength);
+                        trimmed++;
+                    }
+
+                    accepted.Add(new ParsedSummary(batch[index], text));
+                }
+
+                return new SummaryParseResult(accepted, discarded, trimmed, batch.Count - accepted.Count);
+            }
+        }
+
+        /// <summary>
+        /// Strips the wrappers models add despite being told not to.
+        /// </summary>
+        /// <remarks>
+        /// Cheap to do and it protects the cache: a stray pair of quotes or a
+        /// markdown bullet would be stored once and then sent on every run
+        /// afterwards, so a cosmetic slip becomes permanent if it is not caught here.
+        /// </remarks>
+        private static string Clean(string text)
+        {
+            var cleaned = text.Trim();
+
+            if (cleaned.StartsWith("- ", StringComparison.Ordinal)
+                || cleaned.StartsWith("* ", StringComparison.Ordinal))
+            {
+                cleaned = cleaned[2..].TrimStart();
+            }
+
+            if (cleaned.Length >= 2
+                && cleaned[0] == '"'
+                && cleaned[^1] == '"')
+            {
+                cleaned = cleaned[1..^1].Trim();
+            }
+
+            return cleaned;
+        }
+
+        /// <summary>
+        /// Cuts an over-long summary at a word boundary.
+        /// </summary>
+        private static string TrimToBudget(string text, int maxLength)
+        {
+            var cut = text.LastIndexOf(' ', maxLength - 1);
+            if (cut <= 0)
+            {
+                cut = maxLength - 1;
+            }
+
+            return text[..cut].TrimEnd(' ', ',', ';', ':', '-', '—');
+        }
+    }
+}

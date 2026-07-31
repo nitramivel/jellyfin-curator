@@ -53,7 +53,10 @@ Jellyfin.Plugin.Curator/
 │   ├── CategoryRetention.cs  # Which stored categories to prune when over a cap
 │   ├── Models/CategoryLimits.cs  # The one value the prompt AND the Reconciler read
 │   ├── Llm/                  # Batcher, PromptBuilder, ProposalParser,
-│   │                         #   ModelProfiles (list migration + resolution)
+│   │                         #   ModelProfiles (list migration + resolution),
+│   │                         #   JsonResponse (shared model-output unwrapping)
+│   ├── Summaries/            # SummaryPlan (what needs distilling, staleness by
+│   │                         #   source hash), SummaryPromptBuilder, SummaryParser
 │   ├── Reconciliation/       # Reconciler, StringSimilarity
 │   ├── Playlists/            # PlaylistSyncDecision (the ownership decision table)
 │   ├── HomeScreen/           # SectionConfigMerger (JSON merge for both integrations)
@@ -67,6 +70,8 @@ Jellyfin.Plugin.Curator/
 │   │                         #   TransientHttpRetry (shared 429/5xx backoff), factory,
 │   │                         #   CategoryProposalService (batch loop, token budget)
 │   ├── Categories/           # ICategoryStore — one JSON file per category
+│   ├── Summaries/            # ISummaryStore (one file for the whole set) +
+│   │                         #   SummaryDistillService (the condensing pass)
 │   ├── Runs/                 # IRunLogStore — one JSON file per run: every step,
 │   │                         #   every prompt and response, written incrementally
 │   ├── Playlists/            # CuratorPlaylistService — create/update/delete, tagging
@@ -84,8 +89,8 @@ test.
 ## Hard rules
 
 These are invariants, not preferences. Breaking one produces a plugin that
-silently misbehaves. (Rules 1-9 predate the model profile list; rule 10 was
-added with it.)
+silently misbehaves. (Rules 1-9 predate the model profile list; rule 10 came with
+it, and rule 11 with condensed summaries.)
 
 1. **The model never sees Jellyfin GUIDs.** `PromptBuilder` assigns batch-local
    integer indexes; `ProposalParser` discards any index outside `0..n-1` and maps
@@ -163,7 +168,19 @@ added with it.)
    list, and the config page blanks them on the next save so migration happens
    exactly once. Migration is deliberately *only* for an empty list — re-importing
    them afterwards would resurrect a deleted profile on every run.
-11. **Ask before adding dependencies** beyond the Jellyfin packages and an
+11. **Condensed summaries are a cache, never a write-back.** The distillation pass
+   reads Jellyfin's `Overview`, stores a short rewrite in
+   `data/curator/summaries.json`, and substitutes it *on the way out of*
+   `LibraryScanner`. Nothing ever writes to the library, so clearing the store
+   restores the previous behaviour exactly and the originals cannot be damaged —
+   say this plainly in any UI that offers to delete them. Two traps:
+   `SummaryDistillService` must scan with `ItemReducer.NoOverviewLimit`, because
+   distilling the reducer's 300-character cut would store a compression of the
+   first 300 characters forever with nothing downstream able to tell; and
+   `SummaryPlan` keys staleness on a hash of the source overview, which is the only
+   thing that makes a second pass free and stops a metadata refresh leaving a
+   summary describing the wrong film.
+12. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 
@@ -310,10 +327,15 @@ Playlists are still built. Never throw out of home screen integration.
   must call `captureProfileEditor()` first or the outgoing profile's edits are
   lost. `normalizeProfiles()` is a hand-mirror of
   `Core/Llm/ModelProfiles.Normalize` — change one, change both.
-- **Settings live on four tabs**: Model (profiles, request, spend), Library
+- **A new `ResponseShape` needs a schema in BOTH structured-output providers.**
+  `OpenAiChatProvider` and `GoogleProvider` each branch `BuildResponseSchema` on
+  the shape, in deliberately separate dialects. They used to hardcode the
+  categories schema regardless, so adding a shape without touching them forces the
+  model to answer in the wrong JSON — which looks like a parser bug.
+- **Settings live on five tabs**: Model (profiles, request, spend), Library
   (what is sent and who for), Categories (the two pools' size and count), Home
-  screen (rows). A fifth tab, Runs, is not part of the settings form — the save
-  row hides on it. Put a new setting where its *subject* is, not where it is
+  screen (rows), Summaries (the condensing pass and its settings). A sixth tab,
+  Runs, is not part of the settings form — the save row hides on it. Put a new setting where its *subject* is, not where it is
   technically enforced.
 - **Option order in a `<select>` is load-bearing.** `setEnumSelect` falls back to
   matching by index when a stored config carries the numeric enum value, so

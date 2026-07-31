@@ -27,7 +27,11 @@ namespace Jellyfin.Plugin.Curator.Services.Library
         }
 
         /// <inheritdoc />
-        public IReadOnlyList<MediaItemRecord> ScanLibrary(bool includeEpisodes, string? surfacedCollections = null)
+        public IReadOnlyList<MediaItemRecord> ScanLibrary(
+            bool includeEpisodes,
+            string? surfacedCollections = null,
+            int maxOverviewLength = ItemReducer.DefaultMaxOverviewLength,
+            IReadOnlyDictionary<Guid, string>? condensedSummaries = null)
         {
             var kinds = includeEpisodes
                 ? new[] { BaseItemKind.Movie, BaseItemKind.Series, BaseItemKind.Episode }
@@ -47,6 +51,7 @@ namespace Jellyfin.Plugin.Curator.Services.Library
             var records = new List<MediaItemRecord>(items.Count);
             var skipped = 0;
             var orphaned = 0;
+            var condensedUsed = 0;
             foreach (var item in items)
             {
                 // A library folder that was removed or remounted leaves its items
@@ -58,7 +63,7 @@ namespace Jellyfin.Plugin.Curator.Services.Library
                     continue;
                 }
 
-                var record = ItemReducer.Reduce(item);
+                var record = ItemReducer.Reduce(item, maxOverviewLength);
                 if (record is null)
                 {
                     skipped++;
@@ -68,6 +73,17 @@ namespace Jellyfin.Plugin.Curator.Services.Library
                 if (collections.TryGetValue(item.Id, out var names))
                 {
                     record = record with { Collections = names };
+                }
+
+                // Substituted on the way out, never written back: Jellyfin's own
+                // overview stays exactly as the metadata provider left it, and
+                // deleting every summary restores the previous behaviour exactly.
+                if (condensedSummaries is not null
+                    && condensedSummaries.TryGetValue(item.Id, out var condensed)
+                    && !string.IsNullOrWhiteSpace(condensed))
+                {
+                    record = record with { Overview = condensed };
+                    condensedUsed++;
                 }
 
                 records.Add(record);
@@ -83,11 +99,13 @@ namespace Jellyfin.Plugin.Curator.Services.Library
             }
 
             _logger.LogInformation(
-                "Library scan: {Count} items reduced ({Skipped} skipped, {Orphaned} outside the library), episodes {Episodes}",
+                "Library scan: {Count} items reduced ({Skipped} skipped, {Orphaned} outside the library), "
+                + "episodes {Episodes}, {Condensed} using a condensed summary",
                 records.Count,
                 skipped,
                 orphaned,
-                includeEpisodes ? "included" : "excluded");
+                includeEpisodes ? "included" : "excluded",
+                condensedUsed);
 
             return records;
         }

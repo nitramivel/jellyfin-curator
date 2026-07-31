@@ -179,7 +179,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 {
                     maxOutputTokens = request.MaxOutputTokens,
                     responseMimeType = "application/json",
-                    responseSchema = BuildResponseSchema(),
+                    responseSchema = BuildResponseSchema(request.Shape),
                 };
             }
 
@@ -187,7 +187,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             {
                 maxOutputTokens = request.MaxOutputTokens,
                 responseMimeType = "application/json",
-                responseSchema = BuildResponseSchema(),
+                responseSchema = BuildResponseSchema(request.Shape),
                 thinkingConfig = new { thinkingBudget = 0 },
             };
         }
@@ -203,8 +203,13 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// the only one: every other provider still depends on the prose contract, so
         /// changing one without the other silently splits the two apart.
         /// </remarks>
-        private static object BuildResponseSchema()
+        private static object BuildResponseSchema(ResponseShape shape)
         {
+            if (shape == ResponseShape.Summaries)
+            {
+                return BuildSummarySchema();
+            }
+
             var category = new
             {
                 type = "OBJECT",
@@ -236,6 +241,43 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 },
                 required = new[] { "categories" },
                 propertyOrdering = new[] { "categories" },
+            };
+        }
+
+        /// <summary>
+        /// The condensed-summary contract in Gemini's dialect.
+        /// </summary>
+        /// <remarks>
+        /// Separate from the OpenAI builder for the reason the class comment already
+        /// gives: the dialects look alike and are not. Uppercase type names here, no
+        /// <c>additionalProperties</c>, and <c>propertyOrdering</c> so the index is
+        /// generated before the text — a model that writes the summary first has to
+        /// hold the index in mind across the whole sentence, and that is where
+        /// off-by-one answers come from.
+        /// </remarks>
+        private static object BuildSummarySchema()
+        {
+            var summary = new
+            {
+                type = "OBJECT",
+                properties = new
+                {
+                    i = new { type = "INTEGER", description = "The item's integer index from the input list." },
+                    s = new { type = "STRING", description = "The compressed description." },
+                },
+                required = new[] { "i", "s" },
+                propertyOrdering = new[] { "i", "s" },
+            };
+
+            return new
+            {
+                type = "OBJECT",
+                properties = new
+                {
+                    summaries = new { type = "ARRAY", items = summary },
+                },
+                required = new[] { "summaries" },
+                propertyOrdering = new[] { "summaries" },
             };
         }
 

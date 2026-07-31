@@ -23,6 +23,9 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
 
         /// <summary>The above plus {"selected":[string]} — one viewer's pass.</summary>
         PersonalCategories = 1,
+
+        /// <summary>{"summaries":[{"i":int,"s":string}]} — the condensed-summary pass.</summary>
+        Summaries = 2,
     }
 
     /// <summary>
