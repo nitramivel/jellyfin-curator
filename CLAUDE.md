@@ -96,8 +96,8 @@ test.
 
 These are invariants, not preferences. Breaking one produces a plugin that
 silently misbehaves. (Rules 1-9 predate the model profile list; rule 10 came with
-it, rule 11 with condensed summaries, and rule 12 with the recommendation
-playlist.)
+it, rule 11 with condensed summaries, rule 12 with the recommendation playlist,
+and rules 13-14 with scheduling and tag consolidation.)
 
 1. **The model never sees Jellyfin GUIDs.** `PromptBuilder` assigns batch-local
    integer indexes; `ProposalParser` discards any index outside `0..n-1` and maps
@@ -206,7 +206,19 @@ playlist.)
    something other than what runs. `ScheduleTranslator` is the whole conversion and
    is round-trip tested — what the page saves must be what it reads back, or the
    settings drift every time they are opened.
-14. **Ask before adding dependencies** beyond the Jellyfin packages and an
+14. **Two settings govern tags and they are not interchangeable.**
+   `MaxTagsPerItem` takes the first N of the **raw** scraped list and defaults to 0;
+   `ConsolidateTags` has the distillation pass keep however many genuinely describe
+   the item, with `MaxConsolidatedTags` as a **ceiling and never a target** — a
+   fixed count is exactly what the raw setting already did badly. Consolidation
+   happens in the same model call as the summary, and `SummaryPlan` queues an item
+   whose summary is current but whose tags are missing, so switching it on is
+   incremental rather than a full redo. An item with no scraped tags is never
+   queued: the answer can only ever be empty and queueing it would re-buy a summary
+   every pass. When `SendConsolidatedTags` is on the run service raises the
+   effective tag cap, because `MaxTagsPerItem` is normally 0 and would otherwise
+   substitute the consolidated tags onto every record and then write none of them.
+15. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 
@@ -381,10 +393,14 @@ reconcile, build playlists, publish rows. Items 1 and 2 of the old "unverified"
 list — the loopback API key header and the Collection Sections config
 round-trip — are confirmed working. What remains:
 
-1. **Category name churn.** Measured across three runs, ZERO category names
-   survived to the next run (0 of 16, then 0 of 33). Identity now falls back to
-   member similarity so a rename keeps its row, but that fix has not yet been
-   observed across two real runs. Check `category.renamed` steps in the run log.
+1. ~~**Category name churn.**~~ **Resolved and measured.** Names still never
+   survive, but identity falling back to member similarity works: `category.renamed`
+   ran 9 → 18 → 20 across three consecutive runs with none created fresh, so renames
+   now keep their rows. What remains is *row* churn rather than identity churn — the
+   model coins genuinely different threads each run (one run retired 24 categories),
+   which `CategoryRetirementGraceRuns` softens by waiting several runs before a
+   category loses its row, and `CategoryRetention` orders removal by `MissedRuns`
+   so the longest-unproposed go first.
 2. ~~**Shared-category distribution.**~~ **Decided by the owner and implemented:
    shared means shared.** Every target user receives every shared category, and
    the viewer pass only invents. The `"selected"` field is gone from the personal

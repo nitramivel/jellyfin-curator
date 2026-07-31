@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Jellyfin.Plugin.Curator.Core.Llm;
 using Jellyfin.Plugin.Curator.Core.Models;
@@ -11,7 +12,15 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
     /// </summary>
     /// <param name="Item">The item the summary describes.</param>
     /// <param name="Text">The condensed text, trimmed to the configured budget.</param>
-    public sealed record ParsedSummary(MediaItemRecord Item, string Text);
+    /// <param name="Tags">
+    /// Consolidated tags, however many the model judged applied. Empty both when
+    /// tags were not requested and when the model correctly found none worth
+    /// keeping — the caller distinguishes those by whether it asked.
+    /// </param>
+    public sealed record ParsedSummary(
+        MediaItemRecord Item,
+        string Text,
+        IReadOnlyList<string> Tags);
 
     /// <summary>
     /// The outcome of parsing one distillation response.
@@ -44,12 +53,18 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         /// <param name="responseText">The model's text output.</param>
         /// <param name="batch">The batch the response describes; indexes map into it.</param>
         /// <param name="maxLength">The character budget; longer summaries are cut at a word boundary.</param>
+        /// <param name="tagCeiling">
+        /// The most consolidated tags to keep per item; 0 ignores tags entirely.
+        /// A ceiling only — the model chooses how many below it to return, and
+        /// clipping here is a guard against a runaway answer, not a target.
+        /// </param>
         /// <returns>Accepted summaries and discard counts.</returns>
         /// <exception cref="FormatException">The response has no parseable object of the required shape.</exception>
         public static SummaryParseResult Parse(
             string responseText,
             IReadOnlyList<MediaItemRecord> batch,
-            int maxLength)
+            int maxLength,
+            int tagCeiling = 0)
         {
             ArgumentNullException.ThrowIfNull(responseText);
             ArgumentNullException.ThrowIfNull(batch);
@@ -117,11 +132,54 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
                         trimmed++;
                     }
 
-                    accepted.Add(new ParsedSummary(batch[index], text));
+                    accepted.Add(new ParsedSummary(batch[index], text, ReadTags(entry, tagCeiling)));
                 }
 
                 return new SummaryParseResult(accepted, discarded, trimmed, batch.Count - accepted.Count);
             }
+        }
+
+        /// <summary>
+        /// Reads the consolidated tag list off one entry.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately tolerant of the model returning nothing: an item whose
+        /// scraped tags are all production trivia genuinely has no tags worth
+        /// keeping, and the prompt says so. An empty list here is a real answer,
+        /// which is why nothing tops it up to a minimum.
+        /// </remarks>
+        private static IReadOnlyList<string> ReadTags(JsonElement entry, int ceiling)
+        {
+            if (ceiling <= 0
+                || !entry.TryGetProperty("t", out var tags)
+                || tags.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var kept = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var tag in tags.EnumerateArray())
+            {
+                if (kept.Count >= ceiling)
+                {
+                    break;
+                }
+
+                if (tag.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var value = tag.GetString()?.Trim().Trim('"', '\'').ToLowerInvariant();
+                if (!string.IsNullOrWhiteSpace(value) && seen.Add(value))
+                {
+                    kept.Add(value);
+                }
+            }
+
+            return kept;
         }
 
         /// <summary>
@@ -153,17 +211,50 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         }
 
         /// <summary>
-        /// Cuts an over-long summary at a word boundary.
+        /// Words a summary must never end on.
+        /// </summary>
+        /// <remarks>
+        /// Cutting at any word boundary produced real stored summaries ending
+        /// "…pure pop energy racing to a" and "…a secret that" — 11% of a measured
+        /// 232-item pass. The reader of these is a model being asked to judge tone,
+        /// and a sentence that stops mid-clause reads as a different, vaguer
+        /// sentence rather than a shorter one. Backing off to the last word that can
+        /// legitimately end a phrase costs a few characters and buys a whole thought.
+        /// </remarks>
+        private static readonly HashSet<string> DanglingWords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "a", "an", "the", "and", "or", "but", "to", "of", "in", "on", "at", "by", "for",
+            "with", "from", "into", "onto", "over", "under", "as", "that", "which", "who",
+            "whose", "while", "when", "where", "after", "before", "between", "through",
+            "its", "it", "his", "her", "their", "this", "these", "those", "is", "are", "was",
+            "were", "be", "been", "than", "then", "so", "yet", "via", "amid", "against", "about",
+        };
+
+        /// <summary>
+        /// Cuts an over-long summary back to the last word that can end a phrase.
         /// </summary>
         private static string TrimToBudget(string text, int maxLength)
         {
             var cut = text.LastIndexOf(' ', maxLength - 1);
             if (cut <= 0)
             {
-                cut = maxLength - 1;
+                // One enormous word. Nothing sensible to preserve, so cut it hard
+                // rather than returning something over budget.
+                return text[..(maxLength - 1)];
             }
 
-            return text[..cut].TrimEnd(' ', ',', ';', ':', '-', '—');
+            var words = text[..cut].Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+
+            // Drop trailing connectives until the summary ends on a word that
+            // carries meaning. Stop before emptying it: a stub is worse than a
+            // slightly awkward ending.
+            while (words.Count > 3
+                && DanglingWords.Contains(words[^1].Trim(',', ';', ':', '-', '—', '.')))
+            {
+                words.RemoveAt(words.Count - 1);
+            }
+
+            return string.Join(' ', words).TrimEnd(' ', ',', ';', ':', '-', '—');
         }
     }
 }

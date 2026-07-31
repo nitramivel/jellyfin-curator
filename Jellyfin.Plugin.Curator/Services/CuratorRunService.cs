@@ -261,7 +261,8 @@ namespace Jellyfin.Plugin.Curator.Services
                 config.IncludeEpisodes,
                 config.SurfacedCollections,
                 ItemReducer.DefaultMaxOverviewLength,
-                condensed);
+                condensed,
+                config.SendConsolidatedTags);
             if (records.Count == 0)
             {
                 _logger.LogWarning("Curator: library scan produced no items; nothing to categorize");
@@ -300,7 +301,14 @@ namespace Jellyfin.Plugin.Curator.Services
                 modelProfile.OutputCostPerMillion,
                 modelProfile.CachedInputCostPerMillion,
                 config.UseBatchApi,
-                config.MaxTagsPerItem,
+
+                // MaxTagsPerItem governs the RAW scraped list and is normally 0, so
+                // leaving it in charge would substitute consolidated tags onto every
+                // record and then write none of them. Consolidated lists are already
+                // short, so the ceiling they were built under is the right cap.
+                config.SendConsolidatedTags
+                    ? Math.Max(config.MaxTagsPerItem, Math.Max(1, config.MaxConsolidatedTags))
+                    : config.MaxTagsPerItem,
                 sharedLimits,
                 personalLimits);
 
@@ -507,7 +515,7 @@ namespace Jellyfin.Plugin.Curator.Services
 
             Report(progress, runLog, 85);
 
-            await RetireMissingCategoriesAsync(allCategoryIds, runLog, cancellationToken).ConfigureAwait(false);
+            await RetireMissingCategoriesAsync(config, allCategoryIds, runLog, cancellationToken).ConfigureAwait(false);
 
             await EnforceCategoryCapsAsync(config, runLog, cancellationToken).ConfigureAwait(false);
 
@@ -666,9 +674,11 @@ namespace Jellyfin.Plugin.Curator.Services
         /// Never fatal. A summary cache is an optimisation, and a run that cannot
         /// read one must still happen — just at the old prompt size.
         /// </remarks>
-        private IReadOnlyDictionary<Guid, string>? LoadCondensedSummaries(PluginConfiguration config)
+        private IReadOnlyDictionary<Guid, CondensedSummary>? LoadCondensedSummaries(PluginConfiguration config)
         {
-            if (!config.UseCondensedSummaries)
+            // Either switch alone is reason to read the store: summaries and tags are
+            // built together but sent independently.
+            if (!config.UseCondensedSummaries && !config.SendConsolidatedTags)
             {
                 return null;
             }
@@ -684,7 +694,13 @@ namespace Jellyfin.Plugin.Curator.Services
                     return null;
                 }
 
-                return stored.ToDictionary(pair => pair.Key, pair => pair.Value.Text);
+                // Overviews are only substituted when that switch is on; the record
+                // carries both and the scanner picks what it was told to use.
+                return config.UseCondensedSummaries
+                    ? stored
+                    : stored.ToDictionary(
+                        pair => pair.Key,
+                        pair => pair.Value with { Text = string.Empty });
             }
             catch (Exception ex)
             {
@@ -865,31 +881,78 @@ namespace Jellyfin.Plugin.Curator.Services
         /// the same identity rather than creating a duplicate.
         /// </summary>
         private async Task RetireMissingCategoriesAsync(
+            PluginConfiguration config,
             HashSet<Guid> liveCategoryIds,
             IRunLog runLog,
             CancellationToken cancellationToken)
         {
-            foreach (var stale in _categoryStore.GetAll().Where(c => !liveCategoryIds.Contains(c.Id)))
+            var grace = Math.Max(0, config.CategoryRetirementGraceRuns);
+
+            foreach (var stored in _categoryStore.GetAll())
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (stale.UserPlaylists.TrueForAll(link => link.PlaylistId is null))
+                // Claimed by this run: the clock goes back to zero.
+                if (liveCategoryIds.Contains(stored.Id))
+                {
+                    if (stored.MissedRuns != 0)
+                    {
+                        stored.MissedRuns = 0;
+                        _categoryStore.Save(stored);
+                    }
+
+                    continue;
+                }
+
+                stored.MissedRuns++;
+                _categoryStore.Save(stored);
+
+                if (stored.UserPlaylists.TrueForAll(link => link.PlaylistId is null))
                 {
                     continue;
                 }
 
+                // Grace. The model coins largely different threads each run, so a
+                // category going missing once usually means the run phrased things
+                // differently rather than the taste having changed — and stripping
+                // the row immediately makes it flicker out and back weekly. Waiting
+                // costs nothing: the row stays, and a category that really is gone
+                // still loses it, just a run or two later.
+                if (stored.MissedRuns <= grace)
+                {
+                    _logger.LogInformation(
+                        "Curator: category '{Category}' was not proposed this run ({Missed} of {Grace} allowed); keeping its row for now",
+                        stored.Name,
+                        stored.MissedRuns,
+                        grace);
+
+                    runLog.Step(
+                        "category.missed",
+                        $"Category '{stored.Name}' was not proposed this run; row kept ({stored.MissedRuns} of {grace} allowed)",
+                        new Dictionary<string, object?>
+                        {
+                            ["categoryId"] = stored.Id.ToString(),
+                            ["name"] = stored.Name,
+                            ["missedRuns"] = stored.MissedRuns,
+                            ["graceRuns"] = grace,
+                        });
+                    continue;
+                }
+
                 _logger.LogInformation(
-                    "Curator: category '{Category}' was not proposed this run; removing its playlists but keeping the definition",
-                    stale.Name);
-                await _playlistService.RemoveCategoryPlaylistsAsync(stale, cancellationToken).ConfigureAwait(false);
+                    "Curator: category '{Category}' has not been proposed for {Missed} runs; removing its playlists but keeping the definition",
+                    stored.Name,
+                    stored.MissedRuns);
+                await _playlistService.RemoveCategoryPlaylistsAsync(stored, cancellationToken).ConfigureAwait(false);
 
                 runLog.Step(
                     "category.retired",
-                    $"Category '{stale.Name}' was not proposed this run; playlists removed, definition kept",
+                    $"Category '{stored.Name}' has not been proposed for {stored.MissedRuns} runs; playlists removed, definition kept",
                     new Dictionary<string, object?>
                     {
-                        ["categoryId"] = stale.Id.ToString(),
-                        ["name"] = stale.Name,
+                        ["categoryId"] = stored.Id.ToString(),
+                        ["name"] = stored.Name,
+                        ["missedRuns"] = stored.MissedRuns,
                     });
             }
         }

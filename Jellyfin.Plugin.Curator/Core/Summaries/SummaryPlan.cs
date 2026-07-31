@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using Jellyfin.Plugin.Curator.Core.Models;
@@ -33,6 +34,13 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
 
             /// <summary>The caller asked for everything to be redone.</summary>
             Forced = 2,
+
+            /// <summary>
+            /// The summary is current but tag consolidation has not been run for this
+            /// item — the state every stored summary is in the first time tags are
+            /// switched on.
+            /// </summary>
+            TagsMissing = 3,
         }
 
         /// <summary>One item that needs distilling, and why.</summary>
@@ -63,12 +71,22 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         /// call to make the prompt no smaller.
         /// </param>
         /// <param name="force">Redo every item that has an overview, ignoring what is stored.</param>
+        /// <param name="consolidateTags">
+        /// Whether tags are being consolidated as well. When true, an item whose
+        /// summary is current but whose tags were never consolidated — or whose
+        /// scraped tags have changed since — is queued again.
+        /// <para>
+        /// This is what makes switching tags on incremental rather than a full
+        /// redo: only the items actually missing tags are paid for.
+        /// </para>
+        /// </param>
         /// <returns>The plan.</returns>
         public static Plan Create(
             IReadOnlyList<MediaItemRecord> items,
             IReadOnlyDictionary<Guid, CondensedSummary> existing,
             int minSourceLength,
-            bool force = false)
+            bool force = false,
+            bool consolidateTags = false)
         {
             ArgumentNullException.ThrowIfNull(items);
             ArgumentNullException.ThrowIfNull(existing);
@@ -113,10 +131,60 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
                     continue;
                 }
 
+                // Tags are consolidated in the same call as the summary, so an item
+                // needing only tags still costs a full entry in a batch. It is
+                // queued anyway: the alternative is a second pass over the same
+                // items, which would cost more.
+                if (consolidateTags && NeedsTags(item, stored))
+                {
+                    work.Add(new SummaryTask(item, SummaryReason.TagsMissing));
+                    continue;
+                }
+
                 upToDate++;
             }
 
             return new Plan(work, upToDate, tooShort, noOverview);
+        }
+
+        /// <summary>
+        /// Whether this item's tags still need consolidating.
+        /// </summary>
+        /// <remarks>
+        /// An item with no scraped tags at all is never queued for tags: there is
+        /// nothing to consolidate, and queueing it would re-buy a summary every
+        /// single pass for an answer that can only ever be empty.
+        /// </remarks>
+        private static bool NeedsTags(MediaItemRecord item, CondensedSummary stored)
+        {
+            if (item.Tags.Count == 0)
+            {
+                return false;
+            }
+
+            return stored.TagSourceHash is null
+                || !string.Equals(stored.TagSourceHash, HashTags(item.Tags), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Hashes a scraped tag list so a re-scrape can be detected.
+        /// </summary>
+        /// <param name="tags">The raw tags.</param>
+        /// <returns>A short hex digest.</returns>
+        public static string HashTags(IReadOnlyList<string> tags)
+        {
+            ArgumentNullException.ThrowIfNull(tags);
+
+            // Order-insensitive: metadata providers do not promise a stable order,
+            // and a reshuffle is not a change worth paying a model to re-read.
+            var ordered = tags
+                .Select(t => t.Trim().ToLowerInvariant())
+                .Where(t => t.Length > 0)
+                .OrderBy(t => t, StringComparer.Ordinal);
+
+            // Separated by a unit separator, which no tag can contain, so ["ab","c"]
+            // and ["a","bc"] cannot hash alike.
+            return HashOverview(string.Join('\u001f', ordered));
         }
 
         /// <summary>

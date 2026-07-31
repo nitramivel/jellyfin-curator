@@ -186,7 +186,10 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                 existing = _store.GetAll();
             }
 
-            var plan = SummaryPlan.Create(items, existing, config.SummaryMinSourceLength, force);
+            var wantTags = config.ConsolidateTags;
+            var tagCeiling = wantTags ? Math.Max(1, config.MaxConsolidatedTags) : 0;
+            var plan = SummaryPlan.Create(
+                items, existing, config.SummaryMinSourceLength, force, wantTags);
             Report(progress, 2);
 
             _logger.LogInformation(
@@ -205,7 +208,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
 
             var batches = Batcher.Split([.. plan.Work.Select(w => w.Item)], config.SummaryBatchSize);
             var maxLength = Math.Max(20, config.CondensedSummaryMaxLength);
-            var system = SummaryPromptBuilder.BuildSystemPrompt(maxLength);
+            var system = SummaryPromptBuilder.BuildSystemPrompt(maxLength, tagCeiling);
             var conversationId = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
 
             long inputTokens = 0;
@@ -224,7 +227,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                 {
                     var request = new LlmRequest(
                         system,
-                        SummaryPromptBuilder.BuildUserPrompt(batch),
+                        SummaryPromptBuilder.BuildUserPrompt(batch, wantTags),
                         string.Empty,
                         config.MaxOutputTokens,
                         ResponseShape.Summaries,
@@ -244,7 +247,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                             batches.Count);
                     }
 
-                    var parsed = SummaryParser.Parse(result.Text, batch, maxLength);
+                    var parsed = SummaryParser.Parse(result.Text, batch, maxLength, tagCeiling);
                     var written = parsed.Summaries.Select(s => new CondensedSummary
                     {
                         ItemId = s.Item.Id,
@@ -254,6 +257,14 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                         CreatedAt = DateTime.UtcNow,
                         Title = s.Item.Name,
                         SourceLength = s.Item.Overview?.Length ?? 0,
+                        Tags = s.Tags,
+
+                        // Stamped only when tags were actually asked for. Recording a
+                        // hash for a pass that never looked at tags would tell the
+                        // next planner they were done when they were not.
+                        TagSourceHash = wantTags && s.Item.Tags.Count > 0
+                            ? SummaryPlan.HashTags(s.Item.Tags)
+                            : null,
                     }).ToList();
 
                     // Saved per batch, not at the end. A pass over a large library is

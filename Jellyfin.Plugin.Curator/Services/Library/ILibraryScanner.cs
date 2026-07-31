@@ -25,11 +25,17 @@ namespace Jellyfin.Plugin.Curator.Services.Library
         /// on the record, which is how a distilled library reaches the model. Jellyfin's
         /// own overview is never modified — the substitution happens on the way out.
         /// </param>
+        /// <param name="useCondensedTags">
+        /// Whether an item's consolidated tags replace its scraped ones. Independent
+        /// of the overview substitution: the two are built together but sending them
+        /// is two separate decisions.
+        /// </param>
         /// <returns>The reduced records, in library enumeration order.</returns>
         IReadOnlyList<MediaItemRecord> ScanLibrary(
             bool includeEpisodes,
             string? surfacedCollections = null,
             int maxOverviewLength = ItemReducer.DefaultMaxOverviewLength,
-            IReadOnlyDictionary<Guid, string>? condensedSummaries = null);
+            IReadOnlyDictionary<Guid, CondensedSummary>? condensedSummaries = null,
+            bool useCondensedTags = false);
     }
 }

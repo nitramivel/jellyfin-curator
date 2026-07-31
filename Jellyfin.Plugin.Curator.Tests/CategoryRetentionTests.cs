@@ -53,6 +53,52 @@ namespace Jellyfin.Plugin.Curator.Tests
             return category;
         }
 
+        /// <summary>
+        /// A live category the model has gone <paramref name="missed"/> consecutive
+        /// runs without re-proposing. It still has a row only because it has not run
+        /// out of grace yet.
+        /// </summary>
+        private static CategoryDefinition Missed(string name, int createdDay, int updatedDay, int missed)
+        {
+            var category = Live(name, createdDay, updatedDay);
+            category.MissedRuns = missed;
+            return category;
+        }
+
+        [Fact]
+        public void AmongLiveCategories_TheLongestUnProposedGoesFirst()
+        {
+            // Two categories can carry the same UpdatedAt from the same run and still
+            // differ completely in how current they are: one was claimed by this run,
+            // the other is three runs into its grace period. Dates cannot see that.
+            var stored = new[]
+            {
+                Missed("drifting", 0, 5, missed: 3),
+                Missed("current", 0, 5, missed: 0),
+                Missed("slipping", 0, 5, missed: 1),
+            };
+
+            var removed = CategoryRetention.SelectForRemoval(stored, maxShared: 2, maxPersonal: 0);
+
+            Assert.Equal(["drifting"], Names(removed));
+        }
+
+        [Fact]
+        public void AnEmptyCategoryStillGoesBeforeALongUnProposedLiveOne()
+        {
+            // The tiers must not swap: a category showing nobody anything is cheaper
+            // to lose than one that is still a row, however stale it looks.
+            var stored = new[]
+            {
+                Missed("live but drifting", 0, 5, missed: 9),
+                Category("empty but current", 0, 5),
+            };
+
+            var removed = CategoryRetention.SelectForRemoval(stored, maxShared: 1, maxPersonal: 0);
+
+            Assert.Equal(["empty but current"], Names(removed));
+        }
+
         [Fact]
         public void UnderTheCap_NothingIsRemoved()
         {

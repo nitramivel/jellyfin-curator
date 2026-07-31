@@ -150,6 +150,21 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public int MaxSharedCategories { get; set; } = 10;
 
         /// <summary>
+        /// Gets or sets how many consecutive runs a category may go un-proposed
+        /// before it loses its home screen row. 0 retires it immediately.
+        /// <para>
+        /// The model coins largely different threads each run — measured on a real
+        /// library, one run matched 20 categories to existing definitions only
+        /// through member similarity and retired 24 more. Retiring on the first miss
+        /// means a row disappears and usually returns the next week, so the home
+        /// screen flickers without the taste having changed. Waiting a couple of runs
+        /// costs nothing: a category that really has gone still loses its row, just
+        /// later.
+        /// </para>
+        /// </summary>
+        public int CategoryRetirementGraceRuns { get; set; } = 2;
+
+        /// <summary>
         /// Gets or sets the most items one category may contain. 0 means no limit.
         /// <para>
         /// Applies to both pools — a category is a row on a home screen either way,
@@ -346,6 +361,42 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// </para>
         /// </summary>
         public int SummaryMinSourceLength { get; set; } = 140;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the distillation pass also
+        /// consolidates each item's scraped tags.
+        /// <para>
+        /// Done in the same model call as the summary, so switching it on costs one
+        /// pass over the items that do not have consolidated tags yet rather than a
+        /// whole second pipeline.
+        /// </para>
+        /// </summary>
+        public bool ConsolidateTags { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets the most consolidated tags one item may keep.
+        /// <para>
+        /// A ceiling, never a target. The point of consolidation is that the count
+        /// varies with the item — a title with one clear texture keeps one tag and a
+        /// dense one keeps several — which is exactly what the old
+        /// <see cref="MaxTagsPerItem"/> could not do, since taking the first N keeps
+        /// whatever the scraper happened to order first regardless of whether it
+        /// means anything.
+        /// </para>
+        /// </summary>
+        public int MaxConsolidatedTags { get; set; } = 6;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether runs send the consolidated tags
+        /// alongside each item.
+        /// <para>
+        /// Separate from <see cref="ConsolidateTags"/> on purpose: building them and
+        /// sending them are different decisions, and the useful order is to build,
+        /// look at what came back on the Summaries tab, and only then start paying
+        /// prompt tokens for them.
+        /// </para>
+        /// </summary>
+        public bool SendConsolidatedTags { get; set; } = false;
 
         /// <summary>
         /// Gets or sets the <see cref="ModelProfile.Id"/> used for distillation.

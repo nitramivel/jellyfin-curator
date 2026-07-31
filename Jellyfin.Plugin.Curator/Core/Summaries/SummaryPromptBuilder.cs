@@ -34,23 +34,86 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         /// Builds the distillation system prompt.
         /// </summary>
         /// <param name="maxLength">The character budget for one summary.</param>
+        /// <param name="tagCeiling">
+        /// The most consolidated tags an item may keep, or 0 to leave tags out of
+        /// the pass entirely. This is a ceiling and never a target — the whole point
+        /// is that the model keeps however many genuinely apply.
+        /// </param>
         /// <returns>The system prompt.</returns>
-        public static string BuildSystemPrompt(int maxLength)
+        public static string BuildSystemPrompt(int maxLength, int tagCeiling = 0)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(maxLength, 20);
 
-            return SystemPromptTemplate.Replace(
-                MaxLengthToken,
-                maxLength.ToString(CultureInfo.InvariantCulture),
-                StringComparison.Ordinal);
+            var body = tagCeiling > 0
+                ? SystemPromptTemplate.Replace(TagSectionToken, TagSection, StringComparison.Ordinal)
+                    .Replace(OutputToken, TagOutput, StringComparison.Ordinal)
+                : SystemPromptTemplate.Replace(TagSectionToken, string.Empty, StringComparison.Ordinal)
+                    .Replace(OutputToken, PlainOutput, StringComparison.Ordinal);
+
+            return body
+                .Replace(MaxLengthToken, maxLength.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
+                .Replace(TagCeilingToken, tagCeiling.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
         }
+
+        /// <summary>The placeholder the tag instructions are spliced into.</summary>
+        private const string TagSectionToken = "{TAG_SECTION}";
+
+        /// <summary>The placeholder the output contract is spliced into.</summary>
+        private const string OutputToken = "{OUTPUT}";
+
+        /// <summary>The placeholder the tag ceiling is spliced into.</summary>
+        private const string TagCeilingToken = "{TAG_CEILING}";
+
+        /// <summary>
+        /// The tag half of the task, added only when tags are being consolidated.
+        /// </summary>
+        /// <remarks>
+        /// Written to resist the obvious failure, which is the model returning
+        /// exactly the ceiling every time. A fixed count is what the old
+        /// take-the-first-N setting already did badly; the value here is that a
+        /// film with one clear texture keeps one word and a dense one keeps six.
+        /// </remarks>
+        private const string TagSection =
+            """
+
+            Each item also carries a "tags" list scraped from a metadata provider. Consolidate it.
+
+            Keep only tags that describe what watching the thing is LIKE — its mood, texture, or the kind of
+            story it tells. Throw away production trivia (aftercreditsstinger, based on novel or book, sequel,
+            remake, 3d animation), release facts, cast and crew facts, franchise names, place names, decades,
+            and award labels. Where several tags say the same thing, keep the one that says it best rather
+            than all of them.
+
+            Keep HOWEVER MANY genuinely apply, up to {TAG_CEILING}. This is a ceiling, not a target, and
+            returning {TAG_CEILING} for everything is the mistake to avoid: a title with one clear texture
+            should come back with one tag, a dense one with several. An item whose tags are all trivia should
+            come back with an empty list — that is a correct answer, not a failure.
+
+            Lower case, and keep each tag's own wording rather than inventing new vocabulary.
+            """;
+
+        private const string PlainOutput =
+            """
+            {"summaries":[{"i":0,"s":"..."},{"i":1,"s":"..."}]}
+            """;
+
+        private const string TagOutput =
+            """
+            {"summaries":[{"i":0,"s":"...","t":["...","..."]},{"i":1,"s":"...","t":[]}]}
+            """;
 
         private const string SystemPromptTemplate =
             """
             You compress film and television descriptions for a recommendation system. You are given a
             numbered list of titles, each with the description its metadata provider wrote.
 
-            Rewrite each one in at most {MAX_LENGTH} characters.
+            Rewrite each one as a COMPLETE phrase of at most {MAX_LENGTH} characters.
+
+            Complete is the part people get wrong. Do not write until you reach the limit and stop — compose
+            something that already fits and finishes its thought. A rewrite that ends "...racing to a" or
+            "...a secret that" is worse than one half the length, because the reader is judging tone and a
+            sentence cut mid-clause reads as vaguer rather than shorter. If a thought will not fit, pick a
+            smaller thought. Shorter and whole always beats longer and cut.
 
             What matters is that the rewrite still carries the FEEL of the thing — its tone, its mood, its
             texture, the kind of experience watching it is. A later step reads only your version and has to
@@ -60,15 +123,16 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
 
             Rules:
             - Reference items ONLY by their integer index from the input. Return one entry per input item.
-            - At most {MAX_LENGTH} characters each. Shorter is fine when the title is slight.
+            - At most {MAX_LENGTH} characters each, and never ending on a word like "a", "the", "to", "that"
+              or "with" — that is the sign you ran out of room instead of choosing what to say.
             - Write a description, not a review: no verdict on quality, no star ratings, no "a must-see".
             - Do not begin with the title, and do not begin every entry the same way.
             - Keep concrete texture over abstraction — "sun-bleached and cruel" beats "atmospheric".
             - No spoilers for endings, and no character names unless the name IS the point.
             - Plain prose. No markdown, no quotes around the summary, no trailing full stop needed.
-
+            {TAG_SECTION}
             Respond with a single JSON object and nothing else — no prose, no code fences:
-            {"summaries":[{"i":0,"s":"..."},{"i":1,"s":"..."}]}
+            {OUTPUT}
             """;
 
         /// <summary>
@@ -81,8 +145,9 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         /// would bake the truncation permanently into the cache.
         /// </remarks>
         /// <param name="batch">The items to distill.</param>
+        /// <param name="includeTags">Whether each item's scraped tag list is sent for consolidation.</param>
         /// <returns>The user prompt.</returns>
-        public static string BuildUserPrompt(IReadOnlyList<MediaItemRecord> batch)
+        public static string BuildUserPrompt(IReadOnlyList<MediaItemRecord> batch, bool includeTags = false)
         {
             ArgumentNullException.ThrowIfNull(batch);
 
@@ -90,7 +155,7 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             sb.AppendLine("Descriptions to compress:");
             for (var i = 0; i < batch.Count; i++)
             {
-                sb.AppendLine(WriteItemLine(i, batch[i]));
+                sb.AppendLine(WriteItemLine(i, batch[i], includeTags));
             }
 
             sb.Append("Return the compressed version of all ")
@@ -99,7 +164,7 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             return sb.ToString();
         }
 
-        private static string WriteItemLine(int index, MediaItemRecord item)
+        private static string WriteItemLine(int index, MediaItemRecord item, bool includeTags)
         {
             using var buffer = new MemoryStream();
             using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions
@@ -125,6 +190,20 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
                     foreach (var genre in item.Genres)
                     {
                         writer.WriteStringValue(genre);
+                    }
+
+                    writer.WriteEndArray();
+                }
+
+                // The whole scraped list goes out, unfiltered and uncapped: deciding
+                // which of these earn their place is exactly the judgement being
+                // asked for, and pre-trimming would make it on the model's behalf.
+                if (includeTags && item.Tags.Count > 0)
+                {
+                    writer.WriteStartArray("tags");
+                    foreach (var tag in item.Tags)
+                    {
+                        writer.WriteStringValue(tag);
                     }
 
                     writer.WriteEndArray();
