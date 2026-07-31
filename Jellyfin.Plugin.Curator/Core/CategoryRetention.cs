@@ -59,6 +59,15 @@ namespace Jellyfin.Plugin.Curator.Core
         /// recently.
         /// </para>
         /// <para>
+        /// Among categories that all still hold a row, the ones the model has gone
+        /// longest without re-proposing go first. Two categories can share an
+        /// <see cref="CategoryDefinition.UpdatedAt"/> from the same run and still
+        /// differ completely in how current they are — one was claimed by this run,
+        /// the other is three runs into its grace period and only still has a row
+        /// because it has not run out of grace yet. Date alone cannot see that;
+        /// <see cref="CategoryDefinition.MissedRuns"/> can.
+        /// </para>
+        /// <para>
         /// "Oldest" within each group is the least recently
         /// <see cref="CategoryDefinition.UpdatedAt"/>, not the earliest created. A
         /// category the model re-proposes every run has an old creation date and is
@@ -85,6 +94,7 @@ namespace Jellyfin.Plugin.Curator.Core
 
             var ordered = pool
                 .OrderByDescending(IsEmpty)
+                .ThenByDescending(c => c.MissedRuns)
                 .ThenBy(c => c.UpdatedAt)
                 .ThenBy(c => c.CreatedAt)
                 .ToList();

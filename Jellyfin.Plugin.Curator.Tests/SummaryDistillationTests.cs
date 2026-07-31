@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Summaries;
 using Xunit;
@@ -262,6 +263,253 @@ namespace Jellyfin.Plugin.Curator.Tests
                 90);
 
             Assert.Equal("fenced", Assert.Single(result.Summaries).Text);
+        }
+
+        // ---- not ending mid-phrase ----
+
+        [Theory]
+        [InlineData("Black-and-white burst of Beatlemania chaos: wit, chase, and pure pop energy racing to a")]
+        [InlineData("Glossy bee courtroom farce and city adventure after one graduate sues humanity for")]
+        [InlineData("Neon-rain noir; a weary hunter retires replicants in a smog future that questions who")]
+        [InlineData("Bleached vast silence and holographic loneliness as a new hunter chases a secret that")]
+        public void Parse_DoesNotLeaveASummaryEndingOnADanglingWord(string overLong)
+        {
+            // Verbatim from a real 232-item pass, where 11% ended like this. The
+            // reader is a model judging tone, and a sentence cut mid-clause reads as
+            // vaguer rather than shorter.
+            var result = SummaryParser.Parse(
+                JsonSerializer.Serialize(new { summaries = new[] { new { i = 0, s = overLong } } }),
+                Batch,
+                60);
+
+            var text = Assert.Single(result.Summaries).Text;
+            var last = text.Split(' ')[^1].ToLowerInvariant();
+
+            Assert.DoesNotContain(last, new[] { "a", "an", "the", "to", "for", "that", "who", "with", "of", "and" });
+            Assert.True(text.Length <= 60, $"'{text}' is {text.Length} chars");
+        }
+
+        [Fact]
+        public void Parse_KeepsAShortSummaryEvenIfItEndsAwkwardly()
+        {
+            // Backing off must not eat a summary down to a stub; under budget it is
+            // left exactly as written.
+            const string text = "Warm mockumentary of underfunded teachers outshining the";
+
+            var result = SummaryParser.Parse(
+                JsonSerializer.Serialize(new { summaries = new[] { new { i = 0, s = text } } }),
+                Batch,
+                200);
+
+            Assert.Equal(text, Assert.Single(result.Summaries).Text);
+        }
+
+        [Fact]
+        public void Prompt_TellsTheModelToFinishItsThought()
+        {
+            // The bigger cause of the 11%: only 7% were actually at the cap, so the
+            // model was writing to the limit and stopping rather than composing to fit.
+            var system = SummaryPromptBuilder.BuildSystemPrompt(90);
+
+            Assert.Contains("COMPLETE", system, StringComparison.Ordinal);
+            Assert.Contains("Shorter and whole always beats longer and cut", system, StringComparison.Ordinal);
+        }
+
+        // ---- tag consolidation ----
+
+        private static MediaItemRecord Tagged(params string[] tags) => new()
+        {
+            Id = Guid.NewGuid(),
+            Kind = MediaKind.Movie,
+            Name = "Tagged",
+            Overview = LongOverview,
+            Tags = tags,
+        };
+
+        [Fact]
+        public void Prompt_LeavesTagsOutEntirelyWhenTheCeilingIsZero()
+        {
+            var system = SummaryPromptBuilder.BuildSystemPrompt(90, tagCeiling: 0);
+
+            Assert.DoesNotContain("Consolidate", system, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"t\"", system, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_AsksForHoweverManyTagsApplyRatherThanAFixedCount()
+        {
+            // The whole point over the old take-the-first-N setting.
+            var system = SummaryPromptBuilder.BuildSystemPrompt(90, tagCeiling: 6);
+
+            Assert.Contains("HOWEVER MANY genuinely apply, up to 6", system, StringComparison.Ordinal);
+            Assert.Contains("ceiling, not a target", system, StringComparison.Ordinal);
+            Assert.Contains("\"t\":[", system, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_SendsTheWholeScrapedTagListUnfiltered()
+        {
+            // Pre-trimming would make the judgement being asked for on the model's behalf.
+            var item = Tagged("aftercreditsstinger", "bleak", "based on novel or book", "sardonic");
+
+            var prompt = SummaryPromptBuilder.BuildUserPrompt([item], includeTags: true);
+
+            Assert.Contains("aftercreditsstinger", prompt, StringComparison.Ordinal);
+            Assert.Contains("sardonic", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_OmitsTagsWhenNotConsolidatingThem()
+        {
+            var prompt = SummaryPromptBuilder.BuildUserPrompt([Tagged("bleak")], includeTags: false);
+
+            Assert.DoesNotContain("bleak", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Parse_KeepsAVaryingNumberOfTagsPerItem()
+        {
+            var json = JsonSerializer.Serialize(new
+            {
+                summaries = new object[]
+                {
+                    new { i = 0, s = "dense", t = new[] { "bleak", "sardonic", "slow-burn" } },
+                    new { i = 1, s = "thin", t = new[] { "cheerful" } },
+                },
+            });
+
+            var result = SummaryParser.Parse(json, Batch, 90, tagCeiling: 6);
+
+            Assert.Equal(3, result.Summaries.First(s => s.Text == "dense").Tags.Count);
+            Assert.Single(result.Summaries.First(s => s.Text == "thin").Tags);
+        }
+
+        [Fact]
+        public void Parse_AcceptsAnEmptyTagListAsARealAnswer()
+        {
+            // An item whose scraped tags are all production trivia genuinely has
+            // none worth keeping. Nothing may top it up to a minimum.
+            var result = SummaryParser.Parse(
+                """{"summaries":[{"i":0,"s":"only trivia","t":[]}]}""",
+                Batch,
+                90,
+                tagCeiling: 6);
+
+            Assert.Empty(Assert.Single(result.Summaries).Tags);
+        }
+
+        [Fact]
+        public void Parse_ClipsARunawayTagListToTheCeiling()
+        {
+            var many = Enumerable.Range(0, 40).Select(i => "tag" + i).ToArray();
+            var json = JsonSerializer.Serialize(new
+            {
+                summaries = new[] { new { i = 0, s = "x", t = many } },
+            });
+
+            var result = SummaryParser.Parse(json, Batch, 90, tagCeiling: 6);
+
+            Assert.Equal(6, Assert.Single(result.Summaries).Tags.Count);
+        }
+
+        [Fact]
+        public void Parse_NormalisesAndDeduplicatesTags()
+        {
+            var result = SummaryParser.Parse(
+                """{"summaries":[{"i":0,"s":"x","t":["Bleak"," bleak ","SARDONIC",""]}]}""",
+                Batch,
+                90,
+                tagCeiling: 6);
+
+            Assert.Equal(["bleak", "sardonic"], Assert.Single(result.Summaries).Tags);
+        }
+
+        [Fact]
+        public void Parse_IgnoresTagsWhenTheyWereNotAskedFor()
+        {
+            var result = SummaryParser.Parse(
+                """{"summaries":[{"i":0,"s":"x","t":["bleak"]}]}""",
+                Batch,
+                90,
+                tagCeiling: 0);
+
+            Assert.Empty(Assert.Single(result.Summaries).Tags);
+        }
+
+        [Fact]
+        public void Plan_QueuesAnItemWhoseSummaryIsCurrentButHasNoTagsYet()
+        {
+            // The state every stored summary is in the first time tags are switched
+            // on. Without this, enabling tags would need a full Redo all.
+            var item = Tagged("bleak", "sardonic");
+            var existing = new Dictionary<Guid, CondensedSummary>
+            {
+                [item.Id] = Stored(item, LongOverview),
+            };
+
+            var plan = SummaryPlan.Create([item], existing, 140, force: false, consolidateTags: true);
+
+            Assert.Equal(SummaryPlan.SummaryReason.TagsMissing, Assert.Single(plan.Work).Reason);
+        }
+
+        [Fact]
+        public void Plan_LeavesThatItemAloneWhenTagsAreNotWanted()
+        {
+            var item = Tagged("bleak");
+            var existing = new Dictionary<Guid, CondensedSummary>
+            {
+                [item.Id] = Stored(item, LongOverview),
+            };
+
+            Assert.Empty(SummaryPlan.Create([item], existing, 140, force: false, consolidateTags: false).Work);
+        }
+
+        [Fact]
+        public void Plan_NeverQueuesAnItemThatHasNoScrapedTagsToConsolidate()
+        {
+            // Queueing it would re-buy a summary on every pass for an answer that can
+            // only ever be empty.
+            var item = Item("No tags", LongOverview);
+            var existing = new Dictionary<Guid, CondensedSummary>
+            {
+                [item.Id] = Stored(item, LongOverview),
+            };
+
+            Assert.Empty(SummaryPlan.Create([item], existing, 140, force: false, consolidateTags: true).Work);
+        }
+
+        [Fact]
+        public void Plan_RequeuesWhenTheScrapedTagsThemselvesChanged()
+        {
+            var item = Tagged("bleak", "sardonic");
+            var stored = Stored(item, LongOverview) with
+            {
+                TagSourceHash = SummaryPlan.HashTags(["something", "else"]),
+            };
+
+            var plan = SummaryPlan.Create(
+                [item],
+                new Dictionary<Guid, CondensedSummary> { [item.Id] = stored },
+                140,
+                force: false,
+                consolidateTags: true);
+
+            Assert.Equal(SummaryPlan.SummaryReason.TagsMissing, Assert.Single(plan.Work).Reason);
+        }
+
+        [Fact]
+        public void HashTags_IgnoresOrderAndCase()
+        {
+            // Metadata providers do not promise a stable order, and a reshuffle is not
+            // worth paying a model to re-read.
+            Assert.Equal(SummaryPlan.HashTags(["a", "b"]), SummaryPlan.HashTags(["B", "A"]));
+            Assert.NotEqual(SummaryPlan.HashTags(["a", "b"]), SummaryPlan.HashTags(["a", "b", "c"]));
+        }
+
+        [Fact]
+        public void HashTags_DoesNotConfuseDifferentSplits()
+        {
+            Assert.NotEqual(SummaryPlan.HashTags(["ab", "c"]), SummaryPlan.HashTags(["a", "bc"]));
         }
 
         [Fact]

@@ -523,6 +523,19 @@
                             </div>
                         </div>
                         <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="CategoryRetirementGraceRuns">Runs of grace before a row is dropped</label>
+                            <input id="CategoryRetirementGraceRuns" name="CategoryRetirementGraceRuns" type="number"
+                                   min="0" max="20" class="emby-input" />
+                            <div class="fieldDescription">
+                                The model coins largely different threads each run, so a category going missing
+                                once usually means the run phrased things differently rather than your taste having
+                                changed. Dropping its row immediately makes the home screen flicker — the row
+                                vanishes and is back the next week. This waits that many runs before a category
+                                loses its row; it still goes eventually if it really has gone. 0 drops it
+                                immediately, which is how Curator behaved before this setting existed.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="MaxSharedCategories">Max shared categories</label>
                             <input id="MaxSharedCategories" name="MaxSharedCategories" type="number" min="0" max="200" class="emby-input" />
                             <div class="fieldDescription">
@@ -761,6 +774,47 @@
                                 Unlike the category batch size this costs nothing in quality — each item is
                                 summarized on its own, so a batch boundary cannot hide a connection. Lower it if
                                 the log reports responses cut off by the output cap.
+                            </div>
+                        </div>
+
+                        <h3 class="sectionTitle">Tag consolidation</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            Scraped keyword lists run to about eighteen values an item and are mostly production
+                            trivia — <code>aftercreditsstinger</code>, <code>based on novel or book</code>,
+                            <code>sequel</code> — mixed with a handful of real mood words. This keeps
+                            <strong>however many genuinely describe the thing</strong> and throws the rest away.
+                            Not a fixed count: a title with one clear texture keeps one tag, a dense one keeps
+                            several, and an item whose tags are all trivia correctly keeps none.
+                        </p>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="ConsolidateTags" name="ConsolidateTags" />
+                                <span>Consolidate tags while condensing</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Done in the same model call as the summary, so turning this on costs one pass over
+                                the items that do not have consolidated tags yet — not a full redo.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxConsolidatedTags">Most tags to keep per item</label>
+                            <input id="MaxConsolidatedTags" name="MaxConsolidatedTags" type="number" min="1" max="30"
+                                   class="emby-input" />
+                            <div class="fieldDescription">
+                                A ceiling, not a target — most items should come back with fewer.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="SendConsolidatedTags"
+                                       name="SendConsolidatedTags" />
+                                <span>Send consolidated tags with the item data</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                A separate decision from building them, and the useful order is to build first,
+                                look at what came back below, and only then start paying prompt tokens for them.
+                                This overrides <em>Tags per item</em> on the Library tab, which governs the raw
+                                scraped list.
                             </div>
                         </div>
 
@@ -1435,13 +1489,17 @@
                 }
 
                 var rows = samples.map(function (s) {
+                    var tags = (s.Tags && s.Tags.length)
+                        ? s.Tags.map(escapeHtml).join(', ')
+                        : '<span style="opacity:0.4;">—</span>';
                     return '<tr><td>' + escapeHtml(s.Title) + '</td>'
                         + '<td>' + escapeHtml(s.Text) + '</td>'
+                        + '<td>' + tags + '</td>'
                         + '<td class="curatorNum">' + escapeHtml(s.SourceLength + ' → ' + s.Length) + '</td></tr>';
                 }).join('');
 
                 container.innerHTML = '<div class="curatorTableScroll"><table class="curatorDataTable">'
-                    + '<thead><tr><th>Title</th><th>Condensed summary</th>'
+                    + '<thead><tr><th>Title</th><th>Condensed summary</th><th>Tags</th>'
                     + '<th class="curatorNum">Chars</th></tr></thead>'
                     + '<tbody>' + rows + '</tbody></table></div>';
             }
@@ -2514,6 +2572,10 @@
                     page.querySelector('#MaxRecommendations').value = config.MaxRecommendations;
                     page.querySelector('#RecommendationsIncludeWatched').checked = config.RecommendationsIncludeWatched;
                     page.querySelector('#UseCondensedSummaries').checked = config.UseCondensedSummaries;
+                    page.querySelector('#ConsolidateTags').checked = config.ConsolidateTags;
+                    page.querySelector('#MaxConsolidatedTags').value = config.MaxConsolidatedTags;
+                    page.querySelector('#SendConsolidatedTags').checked = config.SendConsolidatedTags;
+                    page.querySelector('#CategoryRetirementGraceRuns').value = config.CategoryRetirementGraceRuns;
                     page.querySelector('#CondensedSummaryMaxLength').value = config.CondensedSummaryMaxLength;
                     page.querySelector('#SummaryMinSourceLength').value = config.SummaryMinSourceLength;
                     page.querySelector('#SummaryBatchSize').value = config.SummaryBatchSize;
@@ -2585,6 +2647,10 @@
                     config.MaxRecommendations = parseInt(page.querySelector('#MaxRecommendations').value, 10);
                     config.RecommendationsIncludeWatched = page.querySelector('#RecommendationsIncludeWatched').checked;
                     config.UseCondensedSummaries = page.querySelector('#UseCondensedSummaries').checked;
+                    config.ConsolidateTags = page.querySelector('#ConsolidateTags').checked;
+                    config.MaxConsolidatedTags = parseInt(page.querySelector('#MaxConsolidatedTags').value, 10);
+                    config.SendConsolidatedTags = page.querySelector('#SendConsolidatedTags').checked;
+                    config.CategoryRetirementGraceRuns = parseInt(page.querySelector('#CategoryRetirementGraceRuns').value, 10);
                     config.CondensedSummaryMaxLength = parseInt(page.querySelector('#CondensedSummaryMaxLength').value, 10);
                     config.SummaryMinSourceLength = parseInt(page.querySelector('#SummaryMinSourceLength').value, 10);
                     config.SummaryBatchSize = parseInt(page.querySelector('#SummaryBatchSize').value, 10);

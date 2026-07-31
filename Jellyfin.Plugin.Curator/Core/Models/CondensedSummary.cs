@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Jellyfin.Plugin.Curator.Core.Models
 {
@@ -32,6 +33,28 @@ namespace Jellyfin.Plugin.Curator.Core.Models
         /// </para>
         /// </summary>
         public required string SourceHash { get; init; }
+
+        /// <summary>
+        /// Gets the consolidated tags for this item: the scraped keyword list
+        /// reduced to the few that actually describe watching it.
+        /// <para>
+        /// Deliberately <em>not</em> a fixed count. A scraped list runs to about
+        /// eighteen values an item and is mostly production trivia
+        /// (aftercreditsstinger, based on novel or book, sequel) mixed with a
+        /// handful of real mood words. Taking the first N keeps whatever the
+        /// scraper happened to order first; asking for however many genuinely
+        /// apply lets a richly-textured film keep six and a thin one keep two.
+        /// Empty when tag consolidation has not been run for this item.
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<string> Tags { get; init; } = [];
+
+        /// <summary>
+        /// Gets the hash of the raw tag list these were consolidated from, so a
+        /// re-scrape that changes the keywords can be detected the same way a
+        /// rewritten overview is. Null when tags were never consolidated.
+        /// </summary>
+        public string? TagSourceHash { get; init; }
 
         /// <summary>Gets the model that produced this text.</summary>
         public string? ModelId { get; init; }

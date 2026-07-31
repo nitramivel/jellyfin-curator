@@ -31,7 +31,8 @@ namespace Jellyfin.Plugin.Curator.Services.Library
             bool includeEpisodes,
             string? surfacedCollections = null,
             int maxOverviewLength = ItemReducer.DefaultMaxOverviewLength,
-            IReadOnlyDictionary<Guid, string>? condensedSummaries = null)
+            IReadOnlyDictionary<Guid, CondensedSummary>? condensedSummaries = null,
+            bool useCondensedTags = false)
         {
             var kinds = includeEpisodes
                 ? new[] { BaseItemKind.Movie, BaseItemKind.Series, BaseItemKind.Episode }
@@ -52,6 +53,7 @@ namespace Jellyfin.Plugin.Curator.Services.Library
             var skipped = 0;
             var orphaned = 0;
             var condensedUsed = 0;
+            var condensedTags = 0;
             foreach (var item in items)
             {
                 // A library folder that was removed or remounted leaves its items
@@ -79,11 +81,22 @@ namespace Jellyfin.Plugin.Curator.Services.Library
                 // overview stays exactly as the metadata provider left it, and
                 // deleting every summary restores the previous behaviour exactly.
                 if (condensedSummaries is not null
-                    && condensedSummaries.TryGetValue(item.Id, out var condensed)
-                    && !string.IsNullOrWhiteSpace(condensed))
+                    && condensedSummaries.TryGetValue(item.Id, out var condensed))
                 {
-                    record = record with { Overview = condensed };
-                    condensedUsed++;
+                    if (!string.IsNullOrWhiteSpace(condensed.Text))
+                    {
+                        record = record with { Overview = condensed.Text };
+                        condensedUsed++;
+                    }
+
+                    // Only when there is something to swap in. An item the model
+                    // judged had no tags worth keeping should fall back to nothing
+                    // rather than to eighteen lines of production trivia.
+                    if (useCondensedTags && condensed.Tags.Count > 0)
+                    {
+                        record = record with { Tags = [.. condensed.Tags] };
+                        condensedTags++;
+                    }
                 }
 
                 records.Add(record);
@@ -100,12 +113,13 @@ namespace Jellyfin.Plugin.Curator.Services.Library
 
             _logger.LogInformation(
                 "Library scan: {Count} items reduced ({Skipped} skipped, {Orphaned} outside the library), "
-                + "episodes {Episodes}, {Condensed} using a condensed summary",
+                + "episodes {Episodes}, {Condensed} using a condensed summary, {Tagged} using consolidated tags",
                 records.Count,
                 skipped,
                 orphaned,
                 includeEpisodes ? "included" : "excluded",
-                condensedUsed);
+                condensedUsed,
+                condensedTags);
 
             return records;
         }

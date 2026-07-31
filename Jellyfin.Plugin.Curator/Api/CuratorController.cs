@@ -155,6 +155,7 @@ namespace Jellyfin.Plugin.Curator.Api
     /// <param name="ItemId">The Jellyfin item ID.</param>
     /// <param name="Title">The item's title at distillation time.</param>
     /// <param name="Text">The condensed summary.</param>
+    /// <param name="Tags">Consolidated tags, however many the model judged applied.</param>
     /// <param name="Length">Length of the condensed summary.</param>
     /// <param name="SourceLength">Length of the overview it replaced.</param>
     /// <param name="ModelId">The model that produced it.</param>
@@ -163,6 +164,7 @@ namespace Jellyfin.Plugin.Curator.Api
         Guid ItemId,
         string Title,
         string Text,
+        IReadOnlyList<string> Tags,
         int Length,
         int SourceLength,
         string? ModelId,
@@ -546,6 +548,7 @@ namespace Jellyfin.Plugin.Curator.Api
                     s.ItemId,
                     s.Title ?? "(unknown)",
                     s.Text,
+                    s.Tags,
                     s.Text?.Length ?? 0,
                     s.SourceLength,
                     s.ModelId,

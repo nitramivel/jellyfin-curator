@@ -80,6 +80,22 @@ namespace Jellyfin.Plugin.Curator.Core.Models
         public List<UserPlaylistLink> UserPlaylists { get; set; } = [];
 
         /// <summary>
+        /// Gets or sets how many consecutive runs have failed to re-propose this
+        /// category. Reset to 0 the moment a run claims it again.
+        /// <para>
+        /// The model coins largely different threads each run — measured, 20 of one
+        /// run's categories matched an existing definition only through member
+        /// similarity, and 24 more were retired outright. Stripping a category's
+        /// playlists the first run it goes missing means a home screen row vanishes
+        /// and, more often than not, comes back next week: the row flickers rather
+        /// than the taste changing. This counter buys a category a few runs of grace
+        /// before it loses its row, and orders the retention cap so the categories
+        /// that have been absent longest go first.
+        /// </para>
+        /// </summary>
+        public int MissedRuns { get; set; }
+
+        /// <summary>
         /// Gets the link for a user, creating it if absent.
         /// </summary>
         /// <param name="userId">The user.</param>
