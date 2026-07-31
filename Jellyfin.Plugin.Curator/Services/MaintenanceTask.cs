@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Curator.Services
 {
     /// <summary>
-    /// The scheduled task entry point: "Curator: Clean Up and Sync".
+    /// The scheduled task entry point: "Clean Up and Sync", under the Curator category.
     /// </summary>
     /// <remarks>
     /// Daily by default, and free — nothing in here calls a model. Two reasons it
@@ -31,7 +31,7 @@ namespace Jellyfin.Plugin.Curator.Services
         }
 
         /// <inheritdoc />
-        public string Name => "Curator: Clean Up and Sync";
+        public string Name => "Clean Up and Sync";
 
         /// <inheritdoc />
         public string Key => "CuratorMaintenance";

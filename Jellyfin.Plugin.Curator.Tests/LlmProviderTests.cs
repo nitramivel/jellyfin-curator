@@ -867,6 +867,108 @@ namespace Jellyfin.Plugin.Curator.Tests
                 item.GetProperty("propertyOrdering").EnumerateArray().Select(e => e.GetString()).ToList());
         }
 
+        /// <summary>
+        /// The bug this pair exists for. Two passes put their whole prompt in the
+        /// cacheable prefix and hand over an empty suffix — the distillation pass and
+        /// the recommendation re-rank. The builders guarded an empty *prefix* and not
+        /// an empty *suffix*, so Anthropic got a content block with no text and
+        /// rejected the request outright: "text content blocks must be non-empty".
+        /// Measured on a live server — 195 items, every batch 400ing, 0 distilled,
+        /// $0.00, on a model that simply had not been used for that pass before.
+        /// </summary>
+        [Fact]
+        public async Task Anthropic_AnEmptySuffix_SendsOneBlockRatherThanAnEmptyOne()
+        {
+            var handler = new StubHandler(AnthropicResponse);
+            var provider = new AnthropicProvider(new HttpClient(handler), "claude-opus-5", "sk-test", null, false);
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "THE WHOLE PROMPT", string.Empty, 4096),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var content = body.RootElement.GetProperty("messages")[0].GetProperty("content");
+
+            var block = Assert.Single(content.EnumerateArray());
+            Assert.Equal("THE WHOLE PROMPT", block.GetProperty("text").GetString());
+            Assert.All(
+                content.EnumerateArray(),
+                b => Assert.False(string.IsNullOrEmpty(b.GetProperty("text").GetString())));
+        }
+
+        [Fact]
+        public async Task Anthropic_AnEmptySuffix_DoesNotPayTheCacheWritePremium()
+        {
+            // The split exists to mark the part that repeats across calls. A caller
+            // that puts everything in the prefix is saying there is nothing to reuse,
+            // and marking it anyway would pay 2x on the write for every batch of a
+            // pass whose prompt is different every time.
+            var handler = new StubHandler(AnthropicResponse);
+            var provider = new AnthropicProvider(new HttpClient(handler), "claude-opus-5", "sk-test", null, false);
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "THE WHOLE PROMPT", string.Empty, 4096),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var block = Assert.Single(
+                body.RootElement.GetProperty("messages")[0].GetProperty("content").EnumerateArray());
+
+            Assert.False(block.TryGetProperty("cache_control", out _));
+        }
+
+        [Fact]
+        public async Task Anthropic_ARealSplit_StillMarksThePrefixForCaching()
+        {
+            var handler = new StubHandler(AnthropicResponse);
+            var provider = new AnthropicProvider(new HttpClient(handler), "claude-opus-5", "sk-test", null, false);
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var content = body.RootElement.GetProperty("messages")[0].GetProperty("content")
+                .EnumerateArray().ToList();
+
+            Assert.Equal(2, content.Count);
+            Assert.Equal("1h", content[0].GetProperty("cache_control").GetProperty("ttl").GetString());
+            Assert.False(content[1].TryGetProperty("cache_control", out _));
+        }
+
+        [Fact]
+        public async Task Google_AnEmptySuffix_SendsOnePartRatherThanAnEmptyOne()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "THE WHOLE PROMPT", string.Empty, 4096),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var parts = body.RootElement.GetProperty("contents")[0].GetProperty("parts");
+
+            Assert.Equal("THE WHOLE PROMPT", Assert.Single(parts.EnumerateArray()).GetProperty("text").GetString());
+        }
+
+        [Fact]
+        public async Task ARequestWithNoUserPromptAtAllIsRefusedBeforeItIsSent()
+        {
+            // Not a provider quirk to absorb — a request with no user content is a
+            // caller bug, and a clear exception beats a 400 from three vendors.
+            var anthropic = new AnthropicProvider(
+                new HttpClient(new StubHandler(AnthropicResponse)), "claude-opus-5", "sk-test", null, false);
+            var google = new GoogleProvider(
+                new HttpClient(new StubHandler(GoogleResponse)), "gemini-2.5-flash", "AIza-test");
+            var empty = new LlmRequest("SYSTEM", string.Empty, string.Empty, 4096);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => anthropic.CompleteAsync(empty, CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => google.CompleteAsync(empty, CancellationToken.None));
+        }
+
         [Fact]
         public async Task Grok_RecommendationOrderSchema_MatchesTheParserContract()
         {

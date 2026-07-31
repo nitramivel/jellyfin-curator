@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Curator.Services
 {
     /// <summary>
-    /// The scheduled task entry point: "Curator: Refresh Recommendations".
+    /// The scheduled task entry point: "Refresh Recommendations", under the Curator category.
     /// </summary>
     /// <remarks>
     /// Every six hours by default, and free — no model call. It has its own cadence
@@ -32,7 +32,7 @@ namespace Jellyfin.Plugin.Curator.Services
         }
 
         /// <inheritdoc />
-        public string Name => "Curator: Refresh Recommendations";
+        public string Name => "Refresh Recommendations";
 
         /// <inheritdoc />
         public string Key => "CuratorRefreshRecommendations";

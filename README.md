@@ -101,10 +101,10 @@ Leave any of them blank to use the default profile.
 
 | Category setting | Description |
 |---|---|
-| **Items per shared row — fewest / most** | The size range for categories from the library-wide pass, `6` to `25` by default. Both ends are written into the prompt, so the model aims at the size it will be judged by. **The floor is the number that actually moves row length** — on a measured run all 60 categories came back at 5–10 items against a ceiling of 20, so the model sits near the floor it is given and the ceiling goes unused |
+| **Items per row** | The size range for a row, `6` to `25` by default. The two pools sit side by side on the tab, each asked the same two questions — how big is a row, and how many rows — with a sentence underneath reading the numbers back. Both ends are written into the prompt, so the model aims at the size it will be judged by. **The floor is the number that actually moves row length** — on a measured run all 60 categories came back at 5–10 items against a ceiling of 20, so the model sits near the floor it is given and the ceiling goes unused |
 | **Items per personal row — fewest / most** | The same range for categories invented for a single viewer. Kept separate because a personal category is grounded in one person's history rather than the whole library, so this is the end to lower if invented categories start being padded or discarded |
-| **Max shared / personal categories** | How many categories **one run** may propose. Told to the model as well as applied afterwards: a cap the model cannot see is one it cannot aim at — given no target count, one model returned 23 categories covering 78% of the library while another returned 5 covering 10%, from an identical prompt |
-| **Rows to keep in total / per viewer** | How large a library of rows may accumulate **across** runs, as opposed to how many one run may propose. Set these above the per-run numbers to let good threads build up: with the two tied, every full run deletes something to make room, and a row deleted by the cap loses its identity and returns as a brand-new row rather than the one you had. **0 keeps them tied**, which is how Curator behaved before the settings were separated |
+| **New rows per run** | How many categories **one run** may propose. Told to the model as well as applied afterwards: a cap the model cannot see is one it cannot aim at — given no target count, one model returned 23 categories covering 78% of the library while another returned 5 covering 10%, from an identical prompt |
+| **Rows kept in total / per viewer** | How large a library of rows may accumulate **across** runs, as opposed to how many one run may propose. Set these above the per-run numbers to let good threads build up: with the two equal, every full run deletes something to make room, and a row deleted by the cap loses its identity and returns as a brand-new row rather than the one you had. The tab warns you when the two numbers are set that way |
 | **Min watched items to personalize** | How many items a user must have watched before they get a personalization pass. Defaults to 2; users below it are skipped before the request is sent and receive the shared categories instead. 0 personalizes everyone |
 | **Send every collection an item belongs to** | On by default. Each item carries the full list of collections holding it, so the model sees how you have already grouped your library. The trade-off is that a franchise collection ("Marvel", "Star Wars Collection") reads as a ready-made category — the one shape the prompt spends a paragraph telling the model not to propose, and which it now names directly rather than relying on the input being pre-filtered. Turn it off to send only the collections you name below |
 | **Collections to tell the model about** | Only used when the box above is unticked. Comma-separated names, `Oscar Nominees, Oscar Winners` by default |
@@ -170,6 +170,8 @@ All of them skip or no-op while a run is in progress — a run rewrites the same
 
 This plugin fails quietly by design: both home screen integrations degrade silently, a run dies mid-flight whenever installing any plugin tears the host down, and library rows outlive their folders. From the outside all of those look identical to "Curator stopped working".
 
+It runs daily, and there is a **Health check now** button on the Schedule tab beside *Clean up and sync now* — it reads only and calls no model, so it is free to press as often as you like. The line beneath the buttons says when it last ran and what it found.
+
 The health panel reports what it can actually diagnose — a prerequisite plugin gone, a run that has stopped happening, ghost items, model profiles without keys, categories holding no playlist, tag consolidation producing nothing, and a distillation pass that lost most of its items. It is deliberately shy: a panel that reports normal operation as a problem gets ignored, so a late run is not a stalled one and a manual-only schedule is never reported at all.
 
 ### Output
@@ -194,7 +196,7 @@ Cache reads are charged, not free. Providers that report cached tokens inside th
 
 They are readable over the API too — `GET /Curator/Runs` for the list, `GET /Curator/Runs/{runId}` for one run's whole record.
 
-Runs happen weekly by default via the **Curator: Generate Categories** scheduled task (adjust the schedule under **Dashboard → Scheduled Tasks**), or on demand from the **Generate categories now** button on the configuration page. Only one run happens at a time.
+Runs happen weekly by default via the **Generate Categories** scheduled task (grouped under *Curator*) (adjust the schedule under **Dashboard → Scheduled Tasks**), or on demand from the **Generate categories now** button on the configuration page. Only one run happens at a time.
 
 While a run is going the page shows a progress bar with a live cost breakdown, and the last five runs sit beneath it as expandable rows — the scan, the discovery pass, one line per viewer, what happened to the category set, and every model call with its duration, tokens, cache reads and cost. The complete run file is one link away.
 
@@ -256,7 +258,7 @@ If you'd rather approve categories before they go live, disable **Auto-enable se
 2. Switch to the **Catalog** tab — Curator now appears under General. Click it and press **Install**.
 3. Restart Jellyfin when prompted.
 4. Open Curator's configuration page, choose a provider and model, and enter your API key (or base URL for a local endpoint).
-5. Run the **Curator: Generate Categories** scheduled task manually for a first pass, and watch the server log — every run logs its token count and estimated cost at INFO.
+5. Run the **Generate Categories** scheduled task manually for a first pass, and watch the server log — every run logs its token count and estimated cost at INFO.
 
 ### Install manually (folder drop)
 

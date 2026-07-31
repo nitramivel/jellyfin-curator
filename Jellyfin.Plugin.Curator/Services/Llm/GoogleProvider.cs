@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -152,18 +153,39 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             new { category = "HARM_CATEGORY_DANGEROUS_CONTENT", threshold = "OFF" },
         ];
 
+        /// <summary>
+        /// Splits the user prompt into parts, skipping any that are empty.
+        /// </summary>
+        /// <remarks>
+        /// Same rule as the Anthropic builder, for the same reason: two passes hand
+        /// this an empty suffix by design, and an empty part is at best wasted and at
+        /// worst rejected. Anthropic returns a 400 for exactly this and took a whole
+        /// 195-item distillation pass down with it.
+        /// </remarks>
         private static object[] BuildParts(LlmRequest request)
         {
-            if (string.IsNullOrEmpty(request.CacheablePrefix))
+            var hasPrefix = !string.IsNullOrEmpty(request.CacheablePrefix);
+            var hasSuffix = !string.IsNullOrEmpty(request.VariableSuffix);
+
+            if (!hasPrefix && !hasSuffix)
             {
-                return [new { text = request.VariableSuffix }];
+                throw new InvalidOperationException(
+                    "Curator: an LLM request must carry some user prompt; both the cacheable prefix and the variable suffix are empty.");
             }
 
-            return
-            [
-                new { text = request.CacheablePrefix },
-                new { text = request.VariableSuffix },
-            ];
+            var parts = new List<object>(2);
+
+            if (hasPrefix)
+            {
+                parts.Add(new { text = request.CacheablePrefix });
+            }
+
+            if (hasSuffix)
+            {
+                parts.Add(new { text = request.VariableSuffix });
+            }
+
+            return [.. parts];
         }
 
         private object BuildGenerationConfig(LlmRequest request)
