@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.4.6.0",
+        "changelog": "Adds a daily 'Clean Up and Sync' scheduled task that calls no model and costs nothing: it reconciles categories against the playlists that actually exist, republishes home screen rows, rebuilds each viewer's recommendation playlist against their current watch activity, and drops condensed summaries for items that have left the library. Rebuilding recommendations nightly matters because they rank by what a viewer has not watched, so they go stale as soon as somebody watches something. Also adds a Schedule tab putting every Curator task's cadence in one place \u2014 manual, every N hours, daily at a time, or weekly on a day \u2014 written through Jellyfin's own task manager so it stays in step with Dashboard > Scheduled Tasks.",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.6.0/curator_0.4.6.0.zip",
+        "checksum": "d4f31e92ac6820f6f35a79e425cf02ce",
+        "timestamp": "2026-07-31T02:12:17Z"
+      },
+      {
         "version": "0.4.5.0",
         "changelog": "Adds a per-viewer recommendation playlist, ordered most recommended first, built by merging the categories each viewer already has. It costs no extra model call. Every viewer gets a playlist with the same configurable name \u2014 Jellyfin playlists are per-user, so one name serves everybody \u2014 which makes it usable as the source for a spotlight banner such as the Media Bar plugin. Unwatched items always rank above watched ones, so the head of the list stays discovery; favourites lead the rewatch tail. Configure it under Home screen.",
         "targetAbi": "10.11.11.0",
