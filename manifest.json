@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.4.8.0",
+        "changelog": "Adds a daily Health Check task that looks for the ways Curator goes quietly wrong \u2014 runs that have stopped happening, a missing prerequisite plugin, library rows pointing at folders that no longer exist, a summary cache switched on but incomplete \u2014 and reports each with what to do about it, on a new panel at the top of the Schedule tab. It reads only and costs nothing. Recommendation playlists also get their own six-hourly task and a Generate now button beside their settings, moving out of the daily cleanup pass: they rank by what a viewer has not watched, so they go stale as soon as somebody watches something and want a much shorter cadence than reconciling playlists does.",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.8.0/curator_0.4.8.0.zip",
+        "checksum": "c2f6672a581d010805c2356f89c6938a",
+        "timestamp": "2026-07-31T05:35:50Z"
+      },
+      {
         "version": "0.4.7.0",
         "changelog": "Fixes condensed summaries that ended mid-phrase \u2014 measured at 11% of a real pass \u2014 by asking the model to compose something that already fits rather than writing to the limit and stopping, and by trimming back past trailing connectives. Home screen rows stop flickering: a category now keeps its row for a few runs when the model does not re-propose it, instead of losing it immediately and usually getting it back the next week. And tag consolidation arrives on the Summaries tab: scraped keyword lists are reduced to however many tags genuinely describe an item, which is a ceiling and not a fixed count, with a separate switch for sending them with the item data. Re-condense to pick up the summary fix.",
         "targetAbi": "10.11.11.0",
