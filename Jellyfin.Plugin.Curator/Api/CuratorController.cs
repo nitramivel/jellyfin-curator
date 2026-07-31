@@ -7,6 +7,7 @@ using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Scheduling;
 using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
+using Jellyfin.Plugin.Curator.Services.Health;
 using Jellyfin.Plugin.Curator.Services.Playlists;
 using Jellyfin.Plugin.Curator.Services.Runs;
 using Jellyfin.Plugin.Curator.Services.Summaries;
@@ -184,6 +185,7 @@ namespace Jellyfin.Plugin.Curator.Api
         private readonly IRunLogStore _runLogStore;
         private readonly ISummaryStore _summaryStore;
         private readonly SummaryDistillService _distillService;
+        private readonly HealthService _healthService;
         private readonly ICuratorPlaylistService _playlistService;
         private readonly IUserManager _userManager;
         private readonly ILibraryManager _libraryManager;
@@ -196,6 +198,7 @@ namespace Jellyfin.Plugin.Curator.Api
             IRunLogStore runLogStore,
             ISummaryStore summaryStore,
             SummaryDistillService distillService,
+            HealthService healthService,
             ICuratorPlaylistService playlistService,
             IUserManager userManager,
             ILibraryManager libraryManager,
@@ -207,6 +210,7 @@ namespace Jellyfin.Plugin.Curator.Api
             _runLogStore = runLogStore;
             _summaryStore = summaryStore;
             _distillService = distillService;
+            _healthService = healthService;
             _playlistService = playlistService;
             _userManager = userManager;
             _libraryManager = libraryManager;
@@ -400,6 +404,40 @@ namespace Jellyfin.Plugin.Curator.Api
             }
 
             return Accepted();
+        }
+
+        /// <summary>
+        /// Rebuilds every viewer's recommendation playlist now.
+        /// </summary>
+        /// <remarks>
+        /// Synchronous, unlike a run or a distil pass: no network calls happen, so
+        /// it finishes well inside an HTTP timeout and the page shows the result.
+        /// </remarks>
+        /// <response code="200">Refreshed.</response>
+        /// <returns>How many playlists were rebuilt, or -1 when a run is in progress.</returns>
+        [HttpPost("Recommendations/Refresh")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<int>> RefreshRecommendations()
+        {
+            return await _runService.RefreshRecommendationsAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Reports the plugin's health: the ways it goes quietly wrong.
+        /// </summary>
+        /// <response code="200">Checked.</response>
+        /// <returns>The findings, most severe first.</returns>
+        [HttpGet("Health")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<HealthReport> GetHealth()
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config is null)
+            {
+                return Conflict("Curator configuration is unavailable.");
+            }
+
+            return _healthService.Check(config);
         }
 
         /// <summary>

@@ -63,6 +63,7 @@ Jellyfin.Plugin.Curator/
 │   │                         #   into one ranked list; per-user playlist identity)
 │   ├── Scheduling/           # ScheduleSpec + ScheduleTranslator (the page's one
 │   │                         #   cadence <-> Jellyfin's trigger list)
+│   ├── Health/               # HealthCheck (facts in, findings out — pure)
 │   ├── HomeScreen/           # SectionConfigMerger (JSON merge for both integrations)
 │   └── Models/               # MediaItemRecord, CategoryProposal, ReconciledCategory,
 │                             #   CategoryDefinition, UserActivity
@@ -70,7 +71,9 @@ Jellyfin.Plugin.Curator/
 │   ├── CuratorRunService.cs  # The end-to-end run; both entry points call this
 │   ├── GenerateCategoriesTask.cs   # IScheduledTask, weekly default
 │   ├── DistillSummariesTask.cs     # IScheduledTask, daily default
-│   ├── MaintenanceTask.cs          # IScheduledTask, daily; reconcile + refresh + prune
+│   ├── MaintenanceTask.cs          # IScheduledTask, daily; reconcile + prune
+│   ├── RefreshRecommendationsTask.cs # IScheduledTask, 6-hourly; per-viewer rows
+│   ├── HealthCheckTask.cs          # IScheduledTask, daily; read-only diagnosis
 │   ├── Library/              # LibraryScanner, UserActivityProvider
 │   ├── Llm/                  # ILlmProvider + Anthropic/Google/Grok/OpenAI/compatible,
 │   │                         #   TransientHttpRetry (shared 429/5xx backoff), factory,
@@ -97,7 +100,8 @@ test.
 These are invariants, not preferences. Breaking one produces a plugin that
 silently misbehaves. (Rules 1-9 predate the model profile list; rule 10 came with
 it, rule 11 with condensed summaries, rule 12 with the recommendation playlist,
-and rules 13-14 with scheduling and tag consolidation.)
+rules 13-14 with scheduling and tag consolidation, and 15-16 with the task set
+and the health check.)
 
 1. **The model never sees Jellyfin GUIDs.** `PromptBuilder` assigns batch-local
    integer indexes; `ProposalParser` discards any index outside `0..n-1` and maps
@@ -218,7 +222,26 @@ and rules 13-14 with scheduling and tag consolidation.)
    every pass. When `SendConsolidatedTags` is on the run service raises the
    effective tag cap, because `MaxTagsPerItem` is normally 0 and would otherwise
    substitute the consolidated tags onto every record and then write none of them.
-15. **Ask before adding dependencies** beyond the Jellyfin packages and an
+15. **Four scheduled tasks, one job each.** Generate Categories (weekly, the only
+   one that costs money), Condense Summaries (daily), Refresh Recommendations
+   (6-hourly), Clean Up and Sync (daily), Health Check (daily). The recommendation
+   refresh deliberately does **not** live in the maintenance task any more: it
+   tracks watch activity and wants a far shorter cadence than reconciling
+   playlists does, and having two tasks rebuild the same playlists was duplicate
+   work. Everything except Generate Categories is free and calls no model, so
+   cadence there is a taste decision rather than a spending one. All four skip or
+   no-op while a run is in progress — a run rewrites the same playlists and
+   definitions, and racing it loses work.
+16. **The health check exists because this plugin fails silently.** Both
+   integrations degrade quietly by design, a run dies mid-flight whenever
+   installing any plugin tears the host down, and library rows outlive their
+   folder. From the outside all of these look identical to "Curator stopped
+   working". `Core/Health/HealthCheck` is pure — facts in, findings out — so the
+   judgements are testable without a server, and it must stay shy: a panel that
+   reports normal operation as a problem gets ignored, which is worse than no
+   panel. That is why a late run is not a stalled one and a manual-only schedule
+   is never reported at all.
+17. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 

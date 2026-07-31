@@ -14,6 +14,18 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
     public interface IHomeScreenIntegrationService
     {
         /// <summary>
+        /// Whether each prerequisite plugin is currently loaded.
+        /// </summary>
+        /// <remarks>
+        /// Exposed for the health check. Both integrations degrade silently by
+        /// design — a missing one logs and returns false rather than throwing — so
+        /// from the outside an uninstalled prerequisite looks exactly like Curator
+        /// having stopped working. This is how that gets named instead of guessed at.
+        /// </remarks>
+        /// <returns>Loaded state for Collection Sections and Home Screen Sections.</returns>
+        (bool CollectionSections, bool HomeScreenSections) GetPrerequisites();
+
+        /// <summary>
         /// Syncs the home screen so exactly the given categories appear as rows.
         /// Degrades gracefully: if the prerequisite plugins are missing or their
         /// endpoints fail, this logs clearly and returns rather than throwing —

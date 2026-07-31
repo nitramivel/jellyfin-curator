@@ -298,6 +298,10 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             }
         }
 
+        /// <inheritdoc />
+        public (bool CollectionSections, bool HomeScreenSections) GetPrerequisites()
+            => (IsPluginLoaded("CollectionSections"), IsPluginLoaded("HomeScreenSections"));
+
         /// <summary>
         /// Detects a loaded plugin by assembly name, so a missing prerequisite is
         /// reported clearly instead of surfacing as an HTTP 404.

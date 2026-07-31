@@ -1020,23 +1020,61 @@ namespace Jellyfin.Plugin.Curator.Services
             // home screen rows at the end of it.
             var sync = await SyncPlaylistsAsync(cancellationToken).ConfigureAwait(false);
 
-            var targetUsers = ResolveTargetUsers(config);
-            var refreshed = await BuildRecommendationsAsync(config, targetUsers, null, cancellationToken)
-                .ConfigureAwait(false);
-
+            // Recommendations are refreshed by their own task now, on a much shorter
+            // cadence than this one — they track watch activity, which changes
+            // through the day. Doing it here as well would be duplicate work for a
+            // result that is already minutes old.
             var prunedSummaries = PruneSummaries();
 
             _logger.LogInformation(
                 "Curator maintenance: {Rebuilt} playlist(s) rebuilt, {RemovedCategories} empty categor(ies) removed, "
-                + "{RemovedPlaylists} orphaned playlist(s) deleted, {Refreshed} recommendation playlist(s) refreshed, "
-                + "{Pruned} stale summary/summaries pruned",
+                + "{RemovedPlaylists} orphaned playlist(s) deleted, {Pruned} stale summary/summaries pruned",
                 sync.CategoriesRebuilt,
                 sync.CategoriesRemoved,
                 sync.PlaylistsRemoved,
-                refreshed,
                 prunedSummaries);
 
-            return new MaintenanceResult(false, sync, refreshed, prunedSummaries);
+            return new MaintenanceResult(false, sync, 0, prunedSummaries);
+        }
+
+        /// <summary>
+        /// Rebuilds every target viewer's recommendation playlist against their
+        /// current watch activity. No model call.
+        /// </summary>
+        /// <remarks>
+        /// Its own entry point, and its own scheduled task, because it wants a very
+        /// different cadence from anything else here. The ranking is driven by what
+        /// a viewer has <em>not</em> watched, so it goes stale the moment somebody
+        /// watches something — several times a day is reasonable, where a category
+        /// run is weekly because it costs money.
+        /// <para>
+        /// Skips while a run is in progress: a run rebuilds these itself at the end,
+        /// and the two racing would have one overwrite the other's work half-done.
+        /// </para>
+        /// </remarks>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>How many playlists were rebuilt; -1 when skipped.</returns>
+        public async Task<int> RefreshRecommendationsAsync(CancellationToken cancellationToken)
+        {
+            if (IsRunning)
+            {
+                _logger.LogInformation(
+                    "Curator: a run is in progress and rebuilds these itself; skipping the recommendation refresh");
+                return -1;
+            }
+
+            var config = Plugin.Instance?.Configuration
+                ?? throw new InvalidOperationException("Curator: plugin configuration unavailable.");
+
+            if (!config.RecommendationPlaylists)
+            {
+                _logger.LogInformation("Curator: recommendation playlists are switched off; nothing to refresh");
+                return 0;
+            }
+
+            var targetUsers = ResolveTargetUsers(config);
+            return await BuildRecommendationsAsync(config, targetUsers, null, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         /// <summary>

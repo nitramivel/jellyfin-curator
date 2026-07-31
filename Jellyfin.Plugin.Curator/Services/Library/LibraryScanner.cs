@@ -27,6 +27,29 @@ namespace Jellyfin.Plugin.Curator.Services.Library
         }
 
         /// <inheritdoc />
+        public LibraryHealth Inspect()
+        {
+            var items = _libraryManager.GetItemsResult(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Movie, BaseItemKind.Series],
+                Recursive = true,
+                IsVirtualItem = false,
+            }).Items;
+
+            var roots = LibraryRoots();
+            var orphaned = 0;
+            foreach (var item in items)
+            {
+                if (!LibraryPathFilter.IsInsideLibrary(item.Path, roots))
+                {
+                    orphaned++;
+                }
+            }
+
+            return new LibraryHealth(items.Count - orphaned, orphaned);
+        }
+
+        /// <inheritdoc />
         public IReadOnlyList<MediaItemRecord> ScanLibrary(
             bool includeEpisodes,
             string? surfacedCollections = null,
