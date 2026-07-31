@@ -269,6 +269,55 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.False(ModelProfiles.Normalize(reloaded).Changed);
         }
 
+        /// <summary>
+        /// Thinking lives on the profile, so one model can be kept as two profiles —
+        /// one that reasons and one that does not — and pointed at different passes.
+        /// Thinking counts against the output cap, and on a measured distillation
+        /// pass it took most of the budget and cost 185 items.
+        /// </summary>
+        [Theory]
+        [InlineData(ThinkingMode.Inherit, true, true)]
+        [InlineData(ThinkingMode.Inherit, false, false)]
+        [InlineData(ThinkingMode.On, false, true)]
+        [InlineData(ThinkingMode.Off, true, false)]
+        public void AProfilesThinkingOverridesTheGlobalSetting(ThinkingMode mode, bool global, bool expected)
+        {
+            var profile = new ModelProfile { Id = "a", Model = "m", Thinking = mode };
+
+            Assert.Equal(expected, profile.ThinkingResolved(global));
+        }
+
+        [Fact]
+        public void AProfileFollowsTheGlobalSettingUntilToldOtherwise()
+        {
+            // Back-compat: nothing stored for the new field, so every existing
+            // profile keeps behaving exactly as it did.
+            var profile = new ModelProfile { Id = "a", Model = "m" };
+
+            Assert.Equal(ThinkingMode.Inherit, profile.Thinking);
+            Assert.True(profile.ThinkingResolved(globalEnableThinking: true));
+            Assert.False(profile.ThinkingResolved(globalEnableThinking: false));
+        }
+
+        [Fact]
+        public void ThinkingSurvivesAConfigRoundTrip()
+        {
+            // XmlSerializer drops what it has no property for, and a thinking setting
+            // silently reverting to the global would be invisible until a bill.
+            var config = new PluginConfiguration
+            {
+                ModelProfiles = [new ModelProfile { Id = "a", Name = "cheap", Model = "m", Thinking = ThinkingMode.Off }],
+                DefaultModelProfileId = "a",
+            };
+
+            var serializer = new System.Xml.Serialization.XmlSerializer(typeof(PluginConfiguration));
+            using var writer = new System.IO.StringWriter();
+            serializer.Serialize(writer, config);
+            var reloaded = Deserialize(writer.ToString());
+
+            Assert.Equal(ThinkingMode.Off, Assert.Single(reloaded.ModelProfiles).Thinking);
+        }
+
         [Theory]
         [InlineData("a", "first")]
         [InlineData("", "second")]

@@ -35,10 +35,11 @@ The bet is that the interesting gap in the Jellyfin ecosystem isn't *more ways t
 ```mermaid
 flowchart LR
     A["📚 Scan<br/><i>library → compact records</i>"] --> B["📦 Batch"]
-    B --> C["🤖 Propose<br/><i>model suggests categories</i>"]
+    B --> C["🤖 Propose<br/><i>discovery + per-viewer passes</i>"]
     C --> D["🔀 Reconcile<br/><i>merge · filter · cap</i>"]
     D --> E["🎵 Build<br/><i>ordered playlists</i>"]
     E --> F["🏠 Home screen rows"]
+    S["✍️ Condense<br/><i>overviews → tone, cached</i>"] -.-> A
 ```
 
 **1. Scan.** Every movie and series in the library is collected and reduced to a compact record: title, year, genres, tags, official rating, runtime, community rating, a truncated overview, and its Jellyfin item ID. No file paths or account details are ever sent. Watch history stays local too, with one opt-out exception: when **personalized playlists** are enabled (the default for playlist output), each target user's watch activity — played state, play count, favorites, personal rating — is attached so the model can shape categories to their taste. Television counts: Jellyfin records playback against episodes and leaves a series' own watch history empty, so episode plays are rolled up onto the parent series and reach the model as watch depth ("140 of 201 episodes"). Without that, anyone who mostly watches TV reads as someone who has watched nothing. Turn the toggle off and nothing about viewing behavior leaves the server.
@@ -67,22 +68,46 @@ Items orphaned by a removed or renamed library folder never reach the model. Jel
 
 Set in the plugin's configuration page:
 
-| Setting | Description |
+Curator keeps a **list of model profiles** rather than one set of credentials. A profile is everything needed to call one model — provider, model id, its own API key, an optional base URL, **its own prices**, and whether it thinks — and different parts of a run can be pointed at different profiles.
+
+Pricing lives on the profile because a list you switch between turns "remember to change the prices when you change provider" from an occasional mistake into the normal case.
+
+| Per-profile setting | Description |
 |---|---|
 | **Provider** | Anthropic (Claude), Google (Gemini), xAI (Grok), OpenAI (GPT), or any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter). Google and Grok constrain the model to this plugin's exact response shape, so a malformed answer cannot lose a batch — prefer their own entries over reaching them through the OpenAI-compatible endpoint, which gives that up |
 | **Model** | The model identifier to use |
 | **API key** | Stored in the plugin configuration; optional for local OpenAI-compatible servers |
 | **Base URL** | Optional override for self-hosted or proxied endpoints; required for the OpenAI-compatible provider (e.g. `http://localhost:11434/v1`) |
-| **Batch size** | Items per request. **0 (the default) sends the whole library in one request** — raise it off 0 only if you hit context limits |
-| **Max output tokens** | Output cap per request. Raise it if batch responses get truncated |
-| **Min / max shared category size and count** | The floor and ceiling for categories from the library-wide pass. Defaults: at least 4 items, at most 10 categories |
-| **Min / max personal category size and count** | The same two limits for categories invented for a single viewer, defaulting to the same 4 and 10. Kept as separate settings so the pools can diverge: a personal category is grounded in one person's history rather than the whole library, so this is the floor to lower if invented categories start being discarded on size |
-| **Max items per category** | Ceiling on how many items one category may hold, across both pools. Default 20. Members are ranked strongest-first, so the excess is trimmed off the tail rather than the category being dropped — and Collection Sections only renders the first 16 of a row anyway. 0 means no limit |
-| **Min watched items to personalize** | How many items a user must have watched before they get a personalization pass. Defaults to 2; users below it are skipped before the request is sent and receive the shared categories instead. 0 personalizes everyone |
-| **Token budget** | Hard cap per run, so a large library can't run up an unexpected bill |
-| **Input / output cost per million** | Your provider's prices, used only for the estimated-cost log line; leave at 0 to log token counts alone. **Update these when you switch provider** — they are plain numbers, not looked up, so Anthropic's prices left in place while running Gemini make every cost figure wrong |
+| **Let this model think** | Follow the global setting, always, or never. Thinking counts against the output cap, so this is worth setting per profile: on a measured distillation pass it took most of the budget and cut three batches off mid-JSON, while the discovery pass with thinking *off* returned one usable category instead of twenty. Keeping the same model as two profiles — one thinking, one not — is how a run reasons where reasoning pays and stops where it does not |
+| **Input / output cost per million** | That profile's prices, used only for the estimated-cost log line; leave at 0 to log token counts alone |
 | **Cached input cost per million** | What the provider charges for input served from its prompt cache. **Blank means half the input price** — deliberately conservative, since it errs high rather than reporting a run as cheaper than it was. Anthropic bills cache reads at a tenth of the input rate; others are nearer a half, so set this explicitly on Anthropic |
-| **Collections to tell the model about** | Comma-separated collection names, `Oscar Nominees, Oscar Winners` by default. An item in one is labelled with it in the item list, so the model can weigh "this won an Oscar" as evidence about a film. Keep the list short: naming a franchise collection here invites exactly the metadata-shaped categories the prompt otherwise warns against |
+
+**Which model runs which pass.** A run is two different jobs, and they need not use the same model:
+
+| Assignment | What it covers |
+|---|---|
+| **Discovery pass** | One call over the whole library, looking for the threads that run through it. The hard half of the job, and a single call per run — so a stronger model here costs one call's worth |
+| **Per-viewer passes** | One call for each viewer with enough history, **every run** — five of six calls on a measured run. This is the setting that actually moves the bill, and the narrower job |
+| **Summaries** | The condensing pass, on the Summaries tab |
+| **Recommendation ordering** | Only used if you switch model-ranked recommendations on |
+
+Leave any of them blank to use the default profile.
+
+| Request setting | Description |
+|---|---|
+| **Batch size** | Items per request. **0 (the default) sends the whole library in one request** — raise it off 0 only if you hit context limits |
+| **Max output tokens** | Output cap per request. Raise it if batch responses get truncated. **Thinking counts against this**, which is the usual reason a response gets cut off |
+| **Token budget** | Hard cap per run, so a large library can't run up an unexpected bill |
+
+| Category setting | Description |
+|---|---|
+| **Items per shared row — fewest / most** | The size range for categories from the library-wide pass, `6` to `25` by default. Both ends are written into the prompt, so the model aims at the size it will be judged by. **The floor is the number that actually moves row length** — on a measured run all 60 categories came back at 5–10 items against a ceiling of 20, so the model sits near the floor it is given and the ceiling goes unused |
+| **Items per personal row — fewest / most** | The same range for categories invented for a single viewer. Kept separate because a personal category is grounded in one person's history rather than the whole library, so this is the end to lower if invented categories start being padded or discarded |
+| **Max shared / personal categories** | How many categories **one run** may propose. Told to the model as well as applied afterwards: a cap the model cannot see is one it cannot aim at — given no target count, one model returned 23 categories covering 78% of the library while another returned 5 covering 10%, from an identical prompt |
+| **Rows to keep in total / per viewer** | How large a library of rows may accumulate **across** runs, as opposed to how many one run may propose. Set these above the per-run numbers to let good threads build up: with the two tied, every full run deletes something to make room, and a row deleted by the cap loses its identity and returns as a brand-new row rather than the one you had. **0 keeps them tied**, which is how Curator behaved before the settings were separated |
+| **Min watched items to personalize** | How many items a user must have watched before they get a personalization pass. Defaults to 2; users below it are skipped before the request is sent and receive the shared categories instead. 0 personalizes everyone |
+| **Send every collection an item belongs to** | On by default. Each item carries the full list of collections holding it, so the model sees how you have already grouped your library. The trade-off is that a franchise collection ("Marvel", "Star Wars Collection") reads as a ready-made category — the one shape the prompt spends a paragraph telling the model not to propose, and which it now names directly rather than relying on the input being pre-filtered. Turn it off to send only the collections you name below |
+| **Collections to tell the model about** | Only used when the box above is unticked. Comma-separated names, `Oscar Nominees, Oscar Winners` by default |
 | **Portrait row threshold** | Rows with at least this many items render as portrait posters; shorter rows render as landscape. Default 10. 0 makes every row portrait |
 
 **Grok** talks the OpenAI wire format at `https://api.x.ai/v1`, with `response_format: json_schema` in strict mode — so valid JSON is an API guarantee, as with Gemini. Needs `grok-2-1212` or newer for that. Cached input and reasoning tokens are read from the usage detail blocks, so cache hits and thinking spend show up in the run log. Rate limits and transient 5xx are retried with backoff.
@@ -91,10 +116,61 @@ xAI's prompt caching is automatic and needs no configuration, but **cache entrie
 
 The Google provider is built for unattended runs: the response schema makes valid JSON an API guarantee, safety filtering is turned off (the prompt is a list of your own films and their synopses, and a blocked response costs a whole pass), rate limits and transient 5xx are retried with backoff honouring `Retry-After`, and thinking tokens are reported separately so a truncated response tells you whether to raise the output cap or shrink the batch. Implicit context caching works without configuration — the item list is sent as a stable leading part, and cache hits show up in the run log.
 
-The two ceilings are enforced on what is **kept**, not only on what each run produces. When a pool is over its cap, the oldest categories are deleted — definition and playlists together — until it fits, so lowering a cap takes effect on the categories already stored. "Oldest" means least recently produced by a run, not earliest created: a category the model re-proposes every time is the last thing to go, and long-dead leftovers are the first.
+Retention is enforced on what is **kept**, using the "rows to keep" numbers rather than the per-run caps. When a pool is over its cap the excess is deleted — definition and playlists together — so lowering a cap takes effect on the categories already stored. Categories holding no playlist go first: one showing nobody anything is the cheapest thing in the pool to lose, however recent it looks. After that it is oldest-first, meaning least recently produced by a run rather than earliest created — a category the model re-proposes every time is the last thing to go.
 
 > [!IMPORTANT]
 > **A note on what gets sent.** Curator transmits your library's titles and metadata to whatever provider you configure — and, when personalized playlists are enabled, each target user's watch activity too. With a hosted provider, that means a third party sees a list of everything you own and how you watch it. If that's not acceptable, disable personalization, or point Curator at a local model using the base URL override — then nothing leaves your network.
+
+### Condensed summaries and tags
+
+Metadata providers write overviews for a reader, not for a model: a paragraph of plot mechanics where what matters is tone. The **Summaries** tab runs a separate pass that rewrites each overview as one short, tone-carrying phrase and caches the result.
+
+It is a **cache, never a write-back**. Nothing is written to your library, so clearing the store restores the previous behaviour exactly and the originals cannot be damaged. Staleness is keyed on a hash of the source overview, so a second pass over an unchanged library is free and a metadata refresh cannot leave a summary describing the wrong film.
+
+| Setting | Description |
+|---|---|
+| **Use condensed summaries** | Substitute the short rewrite for the provider's overview on the way to the model |
+| **Max length** | The character budget for one summary. The prompt asks for a *complete* phrase inside it rather than a sentence cut off at the limit |
+| **Minimum source length** | Overviews shorter than this are left alone — distilling them would spend a call to make the prompt no smaller |
+| **Consolidate tags while condensing** | Scraped tag lists average ~18 values an item and are mostly production trivia. This keeps only the ones describing what watching the thing is *like*. Done in the same call as the summary, and **after** it: the model writes the rewrite first, then keeps the tags that agree with the reading it just committed to, so one judgement drives both. Decided separately you get a summary calling something quietly devastating beside a tag list saying "action" |
+| **Most tags to keep per item** | A ceiling, never a target — a title with one clear texture should come back with one tag |
+| **Let it coin a tag when nothing in the list fits** | Off by default, for consistency rather than quality: free coinage produces near-synonyms (*melancholy, melancholic, wistful, quietly sad*) describing four films as four textures instead of one. The scraped list is a shared vocabulary imposed for free |
+
+A batch the model answers badly is **split and retried**, not written off. An unusable answer is halved — usually the output cap cutting the JSON mid-object, which a smaller request simply does not hit — and a partial answer is retried for the items it missed. Bounded at three attempts, because every retry is a paid call.
+
+### Recommendation playlist
+
+One long playlist per viewer, ordered most-recommended first, built by merging the categories that viewer already has. Intended for a spotlight banner such as the Media Bar plugin, or any row that takes a playlist name.
+
+**Which items appear costs nothing** — no model call. Every category already carries the model's own ranking of its members, so the information needed is already bought and stored. What the merge adds is the two things one category cannot express: that an item turning up in several of a viewer's threads is a stronger signal than topping any one of them, and that a recommendation is mainly about what they have *not* watched. A viewer's own categories count 1.6× a shared one.
+
+| Setting | Description |
+|---|---|
+| **Playlist name** | Every viewer gets a playlist with this same name — Jellyfin playlists are per-user, so one name in one setting serves everybody. **This is the name to give the Media Bar plugin** |
+| **Length** | How many items the playlist holds. A spotlight bar cycles, so a long list keeps it from repeating |
+| **Include watched** | Keep items already played, always sorted below everything unwatched |
+| **Have a model choose the order** | Off by default, and **the only part of this playlist that costs money**. Membership is unaffected; a model reads the top of the shortlist and decides what this viewer should see first — leading with the strongest fit and varying the mood as the row goes rather than stacking six bleak films together, which a weighted sum cannot do. **One call per eligible viewer per refresh**, against a task that runs 6-hourly by default. If a call fails or the answer is unusable the weighted order is kept, so the worst case is a wasted call rather than a broken row |
+| **How many to order** | Only the top of the list is sent, 30 by default. A row is seen a few items at a time, so ordering the head buys nearly all the value for a fraction of the tokens |
+
+### Scheduled tasks
+
+Five tasks, one job each, all editable from the **Schedule** tab (which writes through Jellyfin's own task manager, so **Dashboard → Scheduled Tasks** shows the same values and either page can edit them):
+
+| Task | Default | Costs money |
+|---|---|---|
+| **Generate Categories** | Weekly | **Yes** — the only one that calls a model as a matter of course |
+| **Condense Summaries** | Daily | Only for items not already distilled |
+| **Refresh Recommendations** | 6-hourly | Only if model-ranked ordering is on |
+| **Clean Up and Sync** | Daily | No |
+| **Health Check** | Daily | No |
+
+All of them skip or no-op while a run is in progress — a run rewrites the same playlists and definitions, and racing it loses work.
+
+### Health check
+
+This plugin fails quietly by design: both home screen integrations degrade silently, a run dies mid-flight whenever installing any plugin tears the host down, and library rows outlive their folders. From the outside all of those look identical to "Curator stopped working".
+
+The health panel reports what it can actually diagnose — a prerequisite plugin gone, a run that has stopped happening, ghost items, model profiles without keys, categories holding no playlist, tag consolidation producing nothing, and a distillation pass that lost most of its items. It is deliberately shy: a panel that reports normal operation as a problem gets ignored, so a late run is not a stalled one and a manual-only schedule is never reported at all.
 
 ### Output
 
@@ -108,7 +184,7 @@ The two ceilings are enforced on what is **kept**, not only on what each run pro
 
 ### Run logs
 
-Every run writes a complete record to `{data}/curator/runs/run_<timestamp>_<id>.json`, separate from the category files. One file per run, containing the settings it ran under, every step in order, and **every LLM prompt and response in full** — including the attempts that failed, which are usually the interesting ones. The file is written as the run progresses, so a run that dies part-way still leaves everything up to the point it stopped.
+Every paid pass writes a complete record to `{data}/curator/runs/run_<timestamp>_<id>.json`, separate from the category files — the category run and the distillation pass alike, distinguished by the trigger recorded in the file. One file per run, containing the settings it ran under, every step in order, and **every LLM prompt and response in full** — including the attempts that failed, which are usually the interesting ones. The file is written as the run progresses, so a run that dies part-way still leaves everything up to the point it stopped.
 
 Repeated prompt bodies are stored once and referenced by hash: the item list is byte-identical across every pass of a run, so a six-pass run records it once rather than six times. The newest 50 runs are kept and older files are rotated away. API keys are never written to a run log.
 

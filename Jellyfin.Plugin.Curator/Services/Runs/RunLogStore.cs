@@ -71,7 +71,10 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         }
 
         /// <inheritdoc />
-        public IRunLog Begin(string trigger, IReadOnlyDictionary<string, object?> settings)
+        public IRunLog Begin(
+            string trigger,
+            IReadOnlyDictionary<string, object?> settings,
+            bool trackAsCurrent = true)
         {
             ArgumentNullException.ThrowIfNull(settings);
 
@@ -101,7 +104,10 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             // not only once it ends — a run that dies without ever finishing is
             // exactly the one worth having a log of.
             log.Flush();
-            _current = log;
+            if (trackAsCurrent)
+            {
+                _current = log;
+            }
             Prune();
             return log;
         }

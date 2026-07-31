@@ -109,6 +109,11 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// <param name="activity">Per-item watch activity for the target user, or null for a non-personalized run.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <param name="runLog">Recorder for this run; defaults to recording nothing.</param>
+        /// <param name="existing">
+        /// The shared rows the library already has, so the pass can reuse a name
+        /// rather than coining a new one for a thread it already found. Null or empty
+        /// sends nothing, which is how this behaved before the list was passed.
+        /// </param>
         /// <returns>The aggregated result.</returns>
         public async Task<ProposalRunResult> ProposeAsync(
             ILlmProvider provider,
@@ -116,7 +121,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             ProposalRunSettings settings,
             IReadOnlyDictionary<Guid, UserActivity>? activity = null,
             CancellationToken cancellationToken = default,
-            IRunLog? runLog = null)
+            IRunLog? runLog = null,
+            IReadOnlyList<ExistingCategory>? existing = null)
         {
             ArgumentNullException.ThrowIfNull(provider);
             ArgumentNullException.ThrowIfNull(records);
@@ -128,7 +134,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             if (settings.UseBatchApi && provider is IBatchLlmProvider batchProvider)
             {
                 return await ProposeViaBatchApiAsync(
-                    provider, batchProvider, batches, settings, activity, cancellationToken, log).ConfigureAwait(false);
+                    provider, batchProvider, batches, settings, existing, cancellationToken, log).ConfigureAwait(false);
             }
 
             var proposals = new List<CategoryProposal>();
@@ -158,7 +164,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 var request = new LlmRequest(
                     PromptBuilder.BuildSystemPrompt(settings.Shared),
                     PromptBuilder.BuildItemList(batch, settings.MaxTagsPerItem),
-                    PromptBuilder.BuildActivitySection(batch, activity),
+                    PromptBuilder.BuildDiscoverySuffix(existing ?? [], batch.Count),
                     settings.MaxOutputTokens,
                     ResponseShape.Categories,
                     log.RunId.ToString("N"));
@@ -405,7 +411,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             IBatchLlmProvider batchProvider,
             IReadOnlyList<IReadOnlyList<MediaItemRecord>> batches,
             ProposalRunSettings settings,
-            IReadOnlyDictionary<Guid, UserActivity>? activity,
+            IReadOnlyList<ExistingCategory>? existing,
             CancellationToken cancellationToken,
             IRunLog log)
         {
@@ -418,7 +424,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     new LlmRequest(
                         PromptBuilder.BuildSystemPrompt(settings.Shared),
                         PromptBuilder.BuildItemList(batch, settings.MaxTagsPerItem),
-                        PromptBuilder.BuildActivitySection(batch, activity),
+                        PromptBuilder.BuildDiscoverySuffix(existing ?? [], batch.Count),
                         settings.MaxOutputTokens,
                         ResponseShape.Categories,
                         log.RunId.ToString("N"))));

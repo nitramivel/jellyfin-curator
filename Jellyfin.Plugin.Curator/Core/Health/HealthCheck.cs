@@ -64,7 +64,12 @@ namespace Jellyfin.Plugin.Curator.Core.Health
         int TargetUserCount = 0,
         int RecommendationPlaylistCount = 0,
         int CategoriesWithoutPlaylist = 0,
-        int TotalCategories = 0);
+        int TotalCategories = 0,
+        bool ConsolidateTags = false,
+        int StoredSummaries = 0,
+        int SummariesWithTags = 0,
+        int LastSummaryPassDistilled = 0,
+        int LastSummaryPassFailed = 0);
 
     /// <summary>
     /// Looks for the ways Curator goes quietly wrong.
@@ -113,6 +118,8 @@ namespace Jellyfin.Plugin.Curator.Core.Health
             CheckIntegrations(facts, findings);
             CheckLibrary(facts, findings);
             CheckSummaries(facts, findings);
+            CheckTagConsolidation(facts, findings);
+            CheckSummaryFailures(facts, findings);
             CheckOutputs(facts, findings);
 
             findings.Sort((a, b) => b.Severity.CompareTo(a.Severity));
@@ -230,6 +237,69 @@ namespace Jellyfin.Plugin.Curator.Core.Health
                 "These are left behind when a library folder is removed or a mount is renamed. Curator keeps them "
                 + "away from the model, but they still show in Jellyfin and play back as nothing. A library scan "
                 + "in Jellyfin clears them."));
+        }
+
+        /// <summary>
+        /// Tag consolidation switched on and producing nothing.
+        /// </summary>
+        /// <remarks>
+        /// This shipped broken and ran for weeks. The response schema forbade the
+        /// very field the prompt asked for, so the model had nowhere legal to put the
+        /// tags and every item came back with an empty list — no error, no warning,
+        /// nothing in any log. The cost was paid on every pass. A check this blunt
+        /// would have caught it the first day: a feature that is on, has run, and has
+        /// produced zero output across the whole library is not a subtle judgement.
+        /// <para>
+        /// Deliberately requires a decent sample. A handful of items whose scraped
+        /// tags were all production trivia genuinely produce nothing, and that is a
+        /// correct answer rather than a fault.
+        /// </para>
+        /// </remarks>
+        private static void CheckTagConsolidation(HealthFacts facts, List<HealthFinding> findings)
+        {
+            const int EnoughToJudge = 20;
+
+            if (!facts.ConsolidateTags
+                || facts.StoredSummaries < EnoughToJudge
+                || facts.SummariesWithTags > 0)
+            {
+                return;
+            }
+
+            findings.Add(new HealthFinding(
+                "summaries.notags",
+                HealthSeverity.Warning,
+                "Tag consolidation is on but no item has any tags",
+                $"All {facts.StoredSummaries} stored summaries came back with an empty tag list. Consolidation "
+                + "costs part of every distillation call whether or not it produces anything, so this is spend "
+                + "buying nothing. It usually means the model is not answering in the shape the pass expects — "
+                + "check a recent summaries run in the Runs tab and look at what actually came back."));
+        }
+
+        /// <summary>
+        /// A distillation pass that lost most of what it was paid for.
+        /// </summary>
+        /// <remarks>
+        /// Measured: one pass distilled 27 items of 212 and the other 185 were
+        /// written off after every one of them had been paid for. The only outward
+        /// sign was a summary count that stopped climbing.
+        /// </remarks>
+        private static void CheckSummaryFailures(HealthFacts facts, List<HealthFinding> findings)
+        {
+            var attempted = facts.LastSummaryPassDistilled + facts.LastSummaryPassFailed;
+            if (attempted == 0 || facts.LastSummaryPassFailed * 2 <= attempted)
+            {
+                return;
+            }
+
+            findings.Add(new HealthFinding(
+                "summaries.failing",
+                HealthSeverity.Warning,
+                $"The last distillation pass failed {facts.LastSummaryPassFailed} of {attempted} items",
+                "Most of that pass was paid for and thrown away. The usual cause is the response being cut off "
+                + "by the output cap — thinking counts against it, so a profile set to think on a batch this "
+                + "size will hit it. Lower the batch size, raise Max output tokens, or point the pass at a "
+                + "profile that does not think."));
         }
 
         private static void CheckSummaries(HealthFacts facts, List<HealthFinding> findings)

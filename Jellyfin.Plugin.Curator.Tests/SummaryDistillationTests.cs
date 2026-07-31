@@ -499,6 +499,43 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
+        public void Prompt_KeepsTheScrapedVocabularyByDefault()
+        {
+            // A tag is worth something only if the same tag means the same thing
+            // across items, and the scraped list is a shared vocabulary for free.
+            var system = SummaryPromptBuilder.BuildSystemPrompt(90, tagCeiling: 6);
+
+            Assert.Contains("rather than inventing new vocabulary", system, StringComparison.Ordinal);
+            Assert.DoesNotContain("you MAY coin", system, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_AllowsCoiningAWordButOnlyAsALastResort()
+        {
+            // The failure mode being guarded against is not a bad word — it is four
+            // words for one texture across four items, which is worse than the
+            // scraped list. So the permission comes with the constraint attached.
+            var system = SummaryPromptBuilder.BuildSystemPrompt(90, tagCeiling: 6, allowInventedTags: true);
+
+            Assert.Contains("you MAY coin", system, StringComparison.Ordinal);
+            Assert.Contains("last resort", system, StringComparison.Ordinal);
+            Assert.Contains("most\n            ordinary wording", system, StringComparison.Ordinal);
+            Assert.Contains("Never coin a second word", system, StringComparison.Ordinal);
+
+            // Still anchored to the scraped list first.
+            Assert.Contains("Prefer the scraped list's own wording", system, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_SaysNothingAboutVocabularyWhenTagsAreOff()
+        {
+            var system = SummaryPromptBuilder.BuildSystemPrompt(90, tagCeiling: 0, allowInventedTags: true);
+
+            Assert.DoesNotContain("vocabulary", system, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("coin", system, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
         public void Prompt_SendsTheWholeScrapedTagListUnfiltered()
         {
             // Pre-trimming would make the judgement being asked for on the model's behalf.

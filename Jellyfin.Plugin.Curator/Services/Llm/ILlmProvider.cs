@@ -41,6 +41,11 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// empty tag list for every single item.
         /// </remarks>
         SummariesWithTags = 3,
+
+        /// <summary>
+        /// {"order":[int]} — one viewer's shortlist put in a recommended order.
+        /// </summary>
+        RecommendationOrder = 4,
     }
 
     /// <summary>

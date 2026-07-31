@@ -210,6 +210,25 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 return BuildSummarySchema(shape == ResponseShape.SummariesWithTags);
             }
 
+            if (shape == ResponseShape.RecommendationOrder)
+            {
+                return new
+                {
+                    type = "OBJECT",
+                    properties = new
+                    {
+                        order = new
+                        {
+                            type = "ARRAY",
+                            description = "Every index from the shortlist, once each, best first.",
+                            items = new { type = "INTEGER" },
+                        },
+                    },
+                    required = new[] { "order" },
+                    propertyOrdering = new[] { "order" },
+                };
+            }
+
             var category = new
             {
                 type = "OBJECT",

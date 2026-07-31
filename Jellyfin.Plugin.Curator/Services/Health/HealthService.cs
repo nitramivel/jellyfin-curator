@@ -42,6 +42,7 @@ namespace Jellyfin.Plugin.Curator.Services.Health
         private readonly ILibraryScanner _libraryScanner;
         private readonly ICategoryStore _categoryStore;
         private readonly ISummaryStore _summaryStore;
+        private readonly SummaryDistillService _distillService;
         private readonly IRunLogStore _runLogStore;
         private readonly IHomeScreenIntegrationService _homeScreenService;
         private readonly ILibraryManager _libraryManager;
@@ -53,6 +54,7 @@ namespace Jellyfin.Plugin.Curator.Services.Health
             ILibraryScanner libraryScanner,
             ICategoryStore categoryStore,
             ISummaryStore summaryStore,
+            SummaryDistillService distillService,
             IRunLogStore runLogStore,
             IHomeScreenIntegrationService homeScreenService,
             ILibraryManager libraryManager,
@@ -63,6 +65,7 @@ namespace Jellyfin.Plugin.Curator.Services.Health
             _libraryScanner = libraryScanner;
             _categoryStore = categoryStore;
             _summaryStore = summaryStore;
+            _distillService = distillService;
             _runLogStore = runLogStore;
             _homeScreenService = homeScreenService;
             _libraryManager = libraryManager;
@@ -98,6 +101,7 @@ namespace Jellyfin.Plugin.Curator.Services.Health
 
             var profiles = ModelProfiles.Normalize(config).Profiles;
             var categories = _categoryStore.GetAll();
+            var summaries = _summaryStore.GetAll();
             var library = SafeInspect();
             var (collectionSections, homeScreenSections) = SafePrerequisites();
 
@@ -119,7 +123,16 @@ namespace Jellyfin.Plugin.Curator.Services.Health
                 TargetUserCount: TargetUserCount(config),
                 RecommendationPlaylistCount: CountRecommendationPlaylists(config),
                 CategoriesWithoutPlaylist: categories.Count(CategoryRetention.IsEmpty),
-                TotalCategories: categories.Count);
+                TotalCategories: categories.Count,
+                ConsolidateTags: config.ConsolidateTags,
+                StoredSummaries: summaries.Count,
+                SummariesWithTags: summaries.Values.Count(x => x.Tags.Count > 0),
+
+                // In memory, so it is empty until a pass has run since the last
+                // restart. That is the right way round: reporting a stale failure
+                // from before a restart would send someone chasing a fixed problem.
+                LastSummaryPassDistilled: _distillService.LastResult?.Distilled ?? 0,
+                LastSummaryPassFailed: _distillService.LastResult?.Failed ?? 0);
         }
 
         /// <summary>

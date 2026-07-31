@@ -11,6 +11,7 @@ using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Summaries;
 using Jellyfin.Plugin.Curator.Services.Library;
 using Jellyfin.Plugin.Curator.Services.Llm;
+using Jellyfin.Plugin.Curator.Services.Runs;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Curator.Services.Summaries
@@ -66,7 +67,8 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
     {
         private readonly ILibraryScanner _libraryScanner;
         private readonly ISummaryStore _store;
-        private readonly LlmProviderFactory _providerFactory;
+        private readonly ILlmProviderFactory _providerFactory;
+        private readonly IRunLogStore _runLogStore;
         private readonly ILogger<SummaryDistillService> _logger;
         private readonly SemaphoreSlim _lock = new(1, 1);
         private bool _disposed;
@@ -74,14 +76,40 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
         public SummaryDistillService(
             ILibraryScanner libraryScanner,
             ISummaryStore store,
-            LlmProviderFactory providerFactory,
+            ILlmProviderFactory providerFactory,
+            IRunLogStore runLogStore,
             ILogger<SummaryDistillService> logger)
         {
             _libraryScanner = libraryScanner;
             _store = store;
             _providerFactory = providerFactory;
+            _runLogStore = runLogStore;
             _logger = logger;
         }
+
+        /// <summary>
+        /// Snapshots the settings that shaped a distillation pass. No API key, for
+        /// the same reason the run's own snapshot omits it: this is the file someone
+        /// attaches to a bug report.
+        /// </summary>
+        private static IReadOnlyDictionary<string, object?> DescribeSummarySettings(
+            PluginConfiguration config,
+            ModelProfile profile,
+            SummaryPlan.Plan plan) => new Dictionary<string, object?>
+            {
+                ["modelProfile"] = profile.Name,
+                ["model"] = profile.Model,
+                ["provider"] = profile.Provider.ToString(),
+                ["thinking"] = profile.ThinkingResolved(config.EnableThinking),
+                ["maxOutputTokens"] = config.MaxOutputTokens,
+                ["batchSize"] = config.SummaryBatchSize,
+                ["maxLength"] = config.CondensedSummaryMaxLength,
+                ["minSourceLength"] = config.SummaryMinSourceLength,
+                ["consolidateTags"] = config.ConsolidateTags,
+                ["maxConsolidatedTags"] = config.MaxConsolidatedTags,
+                ["allowInventedTags"] = config.AllowInventedTags,
+                ["itemsToDistil"] = plan.Work.Count,
+            };
 
         /// <summary>Gets a value indicating whether a pass is in progress.</summary>
         public bool IsRunning => _lock.CurrentCount == 0;
@@ -199,8 +227,40 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                 plan.TooShort,
                 plan.NoOverview);
 
+            // A run log of its own. This pass writes every prompt and response the
+            // category run does, and until it did, diagnosing it meant grepping tens
+            // of megabytes of server log for the one line that survived — which is
+            // how a pass losing 185 of 212 items went unnoticed. Not tracked as the
+            // current run: that snapshot belongs to the category run (see Begin).
+            var runLog = _runLogStore.Begin(
+                force ? "summaries-forced" : "summaries",
+                DescribeSummarySettings(config, profile, plan),
+                trackAsCurrent: false);
+            runLog.SetProvider(
+                profile.Provider.ToString(),
+                provider.ModelId,
+                profile.InputCostPerMillion,
+                profile.OutputCostPerMillion,
+                profile.CachedInputCostPerMillion);
+            runLog.Step(
+                "summaries.planned",
+                $"{plan.Work.Count} to distil, {plan.UpToDate} current, {plan.TooShort} too short",
+                new Dictionary<string, object?>
+                {
+                    ["work"] = plan.Work.Count,
+                    ["upToDate"] = plan.UpToDate,
+                    ["tooShort"] = plan.TooShort,
+                    ["noOverview"] = plan.NoOverview,
+                    ["pruned"] = pruned,
+                    ["reasons"] = plan.Work
+                        .GroupBy(w => w.Reason.ToString())
+                        .ToDictionary(g => g.Key, g => (object?)g.Count()),
+                });
+
             if (plan.Work.Count == 0)
             {
+                runLog.Step("summaries.nothing", "Nothing needed distilling");
+                runLog.Complete();
                 return Finish(new SummaryRunResult(
                     0, plan.UpToDate, plan.TooShort, plan.NoOverview, 0, pruned,
                     0, 0, 0, null, provider.ModelId, profile.Name, DateTime.UtcNow, null));
@@ -208,7 +268,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
 
             var batches = Batcher.Split([.. plan.Work.Select(w => w.Item)], config.SummaryBatchSize);
             var maxLength = Math.Max(20, config.CondensedSummaryMaxLength);
-            var system = SummaryPromptBuilder.BuildSystemPrompt(maxLength, tagCeiling);
+            var system = SummaryPromptBuilder.BuildSystemPrompt(maxLength, tagCeiling, config.AllowInventedTags);
             var conversationId = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
 
             long inputTokens = 0;
@@ -253,7 +313,23 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                         wantTags ? ResponseShape.SummariesWithTags : ResponseShape.Summaries,
                         conversationId);
 
-                    var result = await provider.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+                    var startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+                    LlmResult result;
+                    try
+                    {
+                        result = await provider.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Recorded before it propagates: a call that threw is exactly
+                        // the one whose prompt someone will want to read afterwards.
+                        runLog.LlmCall(
+                            "summaries", attempt, 1, null,
+                            System.Diagnostics.Stopwatch.GetElapsedTime(startedAt),
+                            request, null, "error", ex.Message);
+                        throw;
+                    }
+
                     inputTokens += result.InputTokens;
                     outputTokens += result.OutputTokens;
                     cachedTokens += result.CacheReadTokens;
@@ -267,7 +343,24 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                             pending.Count);
                     }
 
-                    var parsed = SummaryParser.Parse(result.Text, pending, maxLength, tagCeiling);
+                    SummaryParseResult parsed;
+                    try
+                    {
+                        parsed = SummaryParser.Parse(result.Text, pending, maxLength, tagCeiling);
+                    }
+                    catch
+                    {
+                        runLog.LlmCall(
+                            "summaries", attempt, 1, null,
+                            System.Diagnostics.Stopwatch.GetElapsedTime(startedAt),
+                            request, result, "unparseable", null);
+                        throw;
+                    }
+
+                    runLog.LlmCall(
+                        "summaries", attempt, 1, null,
+                        System.Diagnostics.Stopwatch.GetElapsedTime(startedAt),
+                        request, result, "ok", null);
                     var written = parsed.Summaries.Select(s => new CondensedSummary
                     {
                         ItemId = s.Item.Id,
@@ -378,6 +471,15 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                             ex.Message,
                             halves[0].Count,
                             halves[1].Count);
+                        runLog.Step(
+                            "summaries.split",
+                            $"Unusable answer for {pending.Count} item(s); split and retried",
+                            new Dictionary<string, object?>
+                            {
+                                ["items"] = pending.Count,
+                                ["attempt"] = attempt,
+                                ["error"] = ex.Message,
+                            });
                     }
                     else
                     {
@@ -388,6 +490,14 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                             "Curator summaries: gave up on {Count} item(s) — {Message}",
                             pending.Count,
                             ex.Message);
+                        runLog.Step(
+                            "summaries.abandoned",
+                            $"Gave up on {pending.Count} item(s) — {ex.Message}",
+                            new Dictionary<string, object?>
+                            {
+                                ["items"] = pending.Count,
+                                ["titles"] = pending.Select(i => i.Name).Take(20).ToArray(),
+                            });
                     }
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or System.Net.Http.HttpRequestException or TaskCanceledException)
@@ -410,6 +520,20 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
 
             var cost = EstimateCost(profile, inputTokens, outputTokens, cachedTokens);
             LogSpend(provider.ModelId, distilled, failed, inputTokens, outputTokens, cachedTokens, cost);
+
+            runLog.Step(
+                "summaries.complete",
+                $"{distilled} distilled, {failed} failed",
+                new Dictionary<string, object?>
+                {
+                    ["distilled"] = distilled,
+                    ["failed"] = failed,
+                    ["estimatedCostUsd"] = cost,
+                });
+
+            // Failed items are recorded, not fatal: the pass stored everything it
+            // could and the log says exactly what it could not.
+            runLog.Complete();
 
             return Finish(new SummaryRunResult(
                 distilled, plan.UpToDate, plan.TooShort, plan.NoOverview, failed, pruned,

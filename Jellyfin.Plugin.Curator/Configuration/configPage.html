@@ -360,6 +360,25 @@
                                 </div>
                             </div>
 
+                            <div class="selectContainer">
+                                <label class="selectLabel" for="ProfileThinking">Let this model think</label>
+                                <select is="emby-select" id="ProfileThinking" name="ProfileThinking" class="emby-select">
+                                    <option value="0">Follow the global setting</option>
+                                    <option value="1">Always think</option>
+                                    <option value="2">Never think</option>
+                                </select>
+                                <div class="fieldDescription">
+                                    Belongs to this profile, so keeping two profiles on the same model — one that
+                                    thinks and one that does not — lets a run reason where reasoning pays and stop
+                                    where it does not. <strong>Thinking counts against the output cap</strong>, and on
+                                    a measured distillation pass it took most of the budget: 212 items, 60,938 output
+                                    tokens, three batches cut off mid-JSON and 185 items lost. Compressing a synopsis
+                                    is mechanical. Discovery is the opposite case — with thinking off it returned one
+                                    usable category instead of twenty — so point the summary pass at a profile set to
+                                    <em>Never think</em> and leave discovery on one that does.
+                                </div>
+                            </div>
+
                             <h3 class="sectionTitle" style="margin-top:1.4em;">This profile's prices</h3>
                             <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
                                 Used only to report what a run cost — they change nothing about the run itself. They
@@ -736,12 +755,11 @@
                             takes a playlist name.
                         </p>
                         <p class="fieldDescription" style="margin:-0.8em 0 1.2em;">
-                            <strong>There is no model to choose here.</strong> Nothing in this playlist is decided
-                            by a model at the time it is built — it merges categories that already exist and ranks
-                            them by watch activity, which is why it is free. The model that shapes it is the one
-                            that wrote those categories, and a viewer's own categories count 1.6&times; a shared
-                            one, so in practice it is the <em>per-viewer pass</em> model on the Model tab. Change
-                            that and this playlist changes with it on the next run.
+                            Which items appear is always decided by arithmetic over categories you have already paid
+                            for — no model call, which is why the playlist is free. The model that shapes <em>that</em>
+                            is the one that wrote the categories, and a viewer's own count 1.6&times; a shared one, so
+                            in practice the <em>per-viewer pass</em> model on the Model tab. What a model can add is
+                            the <em>order</em>, below.
                         </p>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
@@ -773,6 +791,43 @@
                             <div class="fieldDescription">
                                 How many items the playlist holds. 0 means everything the viewer's categories
                                 cover. A spotlight bar cycles, so a long list keeps it from repeating.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="ModelRankedRecommendations"
+                                       name="ModelRankedRecommendations" />
+                                <span>Have a model choose the order</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                <strong>This is the only part of this playlist that costs money.</strong> Which items
+                                appear is unaffected; a model reads the top of the shortlist and says what this viewer
+                                should be shown first, leading with the strongest fit and varying the mood as the row
+                                goes rather than stacking six bleak films together. A weighted sum cannot do that.
+                                <br /><br />
+                                <strong>Cost: one call per eligible viewer, per refresh</strong> — and Refresh
+                                Recommendations runs every six hours by default, so six viewers is 24 calls a day
+                                against a task that is currently free. Lower the cadence on the Schedule tab, point it
+                                at a cheap profile below, or both. If a call fails or the answer is unusable the
+                                weighted order is kept, so the worst case is a wasted call rather than a broken row.
+                            </div>
+                        </div>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="RecommendationModelProfileId">Model profile for ordering</label>
+                            <select is="emby-select" id="RecommendationModelProfileId" name="RecommendationModelProfileId" class="emby-select"></select>
+                            <div class="fieldDescription">
+                                Worth pointing somewhere cheap: putting a shortlist of titles in order is a far smaller
+                                job than finding threads through a whole library, and this is the most frequent call
+                                Curator makes.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxRecommendationsToRank">How many to order</label>
+                            <input id="MaxRecommendationsToRank" name="MaxRecommendationsToRank" type="number" min="0" max="500" class="emby-input" />
+                            <div class="fieldDescription">
+                                Only the top of the list is sent. A spotlight row is seen a few items at a time, so
+                                ordering the head buys nearly all the value of ordering all of it for a fraction of the
+                                tokens — the rest keeps its existing order and follows on. 0 sends the whole playlist.
                             </div>
                         </div>
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -924,6 +979,21 @@
                                 you a summary calling something quietly devastating next to a tag list saying
                                 "action". Done in one model call, so turning this on costs a single pass over the
                                 items without consolidated tags yet — not a full redo.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="AllowInventedTags" name="AllowInventedTags" />
+                                <span>Let it coin a tag when nothing in the list fits</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Off by default, and the reason is consistency rather than quality: a tag is only worth
+                                something if the same tag means the same thing across items, and free coinage produces
+                                near-synonyms — <em>melancholy, melancholic, wistful, quietly sad</em> — describing four
+                                films as four textures instead of one. The scraped list is a shared vocabulary imposed
+                                for free. Turn this on when you would rather lose that than lose a texture the metadata
+                                provider had no word for; the prompt constrains coinage to a last resort and to the
+                                plainest wording that fits, so two items with the same feel land on the same word.
                             </div>
                         </div>
                         <div class="inputContainer">
@@ -1156,7 +1226,8 @@
                             BaseUrl: config.BaseUrl || '',
                             InputCostPerMillion: config.InputCostPerMillion || 0,
                             CachedInputCostPerMillion: config.CachedInputCostPerMillion || 0,
-                            OutputCostPerMillion: config.OutputCostPerMillion || 0
+                            OutputCostPerMillion: config.OutputCostPerMillion || 0,
+                            Thinking: 0
                         });
                     }
                 }
@@ -1205,6 +1276,7 @@
                 profile.Model = page.querySelector('#Model').value.trim();
                 profile.ApiKey = page.querySelector('#ApiKey').value;
                 profile.BaseUrl = page.querySelector('#BaseUrl').value.trim();
+                profile.Thinking = page.querySelector('#ProfileThinking').value;
                 profile.InputCostPerMillion = parseFloat(page.querySelector('#InputCostPerMillion').value) || 0;
                 profile.CachedInputCostPerMillion = parseFloat(page.querySelector('#CachedInputCostPerMillion').value) || 0;
                 profile.OutputCostPerMillion = parseFloat(page.querySelector('#OutputCostPerMillion').value) || 0;
@@ -1240,6 +1312,7 @@
                 page.querySelector('#Model').value = profile.Model || '';
                 page.querySelector('#ApiKey').value = profile.ApiKey || '';
                 page.querySelector('#BaseUrl').value = profile.BaseUrl || '';
+                setEnumSelect(page.querySelector('#ProfileThinking'), profile.Thinking);
                 page.querySelector('#InputCostPerMillion').value = profile.InputCostPerMillion || 0;
                 page.querySelector('#CachedInputCostPerMillion').value = profile.CachedInputCostPerMillion || 0;
                 page.querySelector('#OutputCostPerMillion').value = profile.OutputCostPerMillion || 0;
@@ -1273,6 +1346,7 @@
             function syncPassProfileSelects() {
                 renderPassProfileSelect('#DiscoveryModelProfileId');
                 renderPassProfileSelect('#PersonalModelProfileId');
+                renderPassProfileSelect('#RecommendationModelProfileId');
             }
 
             function renderPassProfileSelect(selector, chosenId) {
@@ -1305,6 +1379,7 @@
                     Model: source ? source.Model : '',
                     ApiKey: source ? source.ApiKey : '',
                     BaseUrl: source ? source.BaseUrl : '',
+                    Thinking: source ? source.Thinking : 0,
                     InputCostPerMillion: source ? source.InputCostPerMillion : 0,
                     CachedInputCostPerMillion: source ? source.CachedInputCostPerMillion : 0,
                     OutputCostPerMillion: source ? source.OutputCostPerMillion : 0
@@ -2811,8 +2886,12 @@
                     page.querySelector('#RecommendationPlaylistName').value = config.RecommendationPlaylistName || '';
                     page.querySelector('#MaxRecommendations').value = config.MaxRecommendations;
                     page.querySelector('#RecommendationsIncludeWatched').checked = config.RecommendationsIncludeWatched;
+                    page.querySelector('#ModelRankedRecommendations').checked = config.ModelRankedRecommendations;
+                    page.querySelector('#MaxRecommendationsToRank').value = config.MaxRecommendationsToRank;
+                    renderPassProfileSelect('#RecommendationModelProfileId', config.RecommendationModelProfileId || '');
                     page.querySelector('#UseCondensedSummaries').checked = config.UseCondensedSummaries;
                     page.querySelector('#ConsolidateTags').checked = config.ConsolidateTags;
+                    page.querySelector('#AllowInventedTags').checked = config.AllowInventedTags;
                     page.querySelector('#MaxConsolidatedTags').value = config.MaxConsolidatedTags;
                     page.querySelector('#SendConsolidatedTags').checked = config.SendConsolidatedTags;
                     page.querySelector('#CategoryRetirementGraceRuns').value = config.CategoryRetirementGraceRuns;
@@ -2896,8 +2975,12 @@
                     config.RecommendationPlaylistName = page.querySelector('#RecommendationPlaylistName').value.trim();
                     config.MaxRecommendations = parseInt(page.querySelector('#MaxRecommendations').value, 10);
                     config.RecommendationsIncludeWatched = page.querySelector('#RecommendationsIncludeWatched').checked;
+                    config.ModelRankedRecommendations = page.querySelector('#ModelRankedRecommendations').checked;
+                    config.MaxRecommendationsToRank = parseInt(page.querySelector('#MaxRecommendationsToRank').value, 10);
+                    config.RecommendationModelProfileId = page.querySelector('#RecommendationModelProfileId').value;
                     config.UseCondensedSummaries = page.querySelector('#UseCondensedSummaries').checked;
                     config.ConsolidateTags = page.querySelector('#ConsolidateTags').checked;
+                    config.AllowInventedTags = page.querySelector('#AllowInventedTags').checked;
                     config.MaxConsolidatedTags = parseInt(page.querySelector('#MaxConsolidatedTags').value, 10);
                     config.SendConsolidatedTags = page.querySelector('#SendConsolidatedTags').checked;
                     config.CategoryRetirementGraceRuns = parseInt(page.querySelector('#CategoryRetirementGraceRuns').value, 10);

@@ -65,6 +65,38 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public string BaseUrl { get; set; } = string.Empty;
 
         /// <summary>
+        /// Gets or sets whether this profile lets the model think before answering.
+        /// Defaults to following the global <c>EnableThinking</c>.
+        /// </summary>
+        /// <remarks>
+        /// On the profile rather than on each pass, because "does this model think"
+        /// is part of how to call the model — the same thing the provider, key and
+        /// prices are. It also composes with per-pass model assignment: keeping one
+        /// profile that thinks and one that does not, pointed at the same model, is
+        /// how a run reasons over discovery and stops reasoning over mechanical work.
+        /// <para>
+        /// That distinction is worth having. Thinking counts against the output cap,
+        /// and on a measured distillation pass it took most of the budget — 212
+        /// items, 60,938 output tokens, three batches cut off mid-JSON, 185 items
+        /// lost. The discovery pass is the opposite case: with thinking off it
+        /// returned one usable category instead of twenty.
+        /// </para>
+        /// </remarks>
+        public ThinkingMode Thinking { get; set; } = ThinkingMode.Inherit;
+
+        /// <summary>
+        /// Resolves this profile's thinking setting against the global default.
+        /// </summary>
+        /// <param name="globalEnableThinking">The configuration-wide setting.</param>
+        /// <returns>Whether the model may think.</returns>
+        public bool ThinkingResolved(bool globalEnableThinking) => Thinking switch
+        {
+            ThinkingMode.On => true,
+            ThinkingMode.Off => false,
+            _ => globalEnableThinking,
+        };
+
+        /// <summary>
         /// Gets or sets this profile's input price in USD per million tokens, used
         /// only for the estimated-cost log line. 0 logs token counts without cost.
         /// </summary>

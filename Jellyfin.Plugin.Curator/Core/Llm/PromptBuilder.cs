@@ -17,6 +17,17 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
     /// mapped back to GUIDs internally — the model structurally cannot add an
     /// item the user does not own.
     /// </summary>
+    /// <summary>
+    /// One row the library already has, as the discovery pass needs to see it.
+    /// </summary>
+    /// <remarks>
+    /// A plain pair rather than the stored definition, so <c>Core</c> stays free of
+    /// the store's type and this can be built from anything with a name.
+    /// </remarks>
+    /// <param name="Name">The row's current name — the thing worth preserving.</param>
+    /// <param name="Description">Its one-line description, if it has one.</param>
+    public sealed record ExistingCategory(string Name, string Description);
+
     public static class PromptBuilder
     {
         /// <summary>
@@ -422,6 +433,64 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
                 sb.AppendLine();
             }
 
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Builds the variable half of the discovery pass: the rows this library
+        /// already has, and the closing instruction.
+        /// </summary>
+        /// <remarks>
+        /// The discovery pass ran without this for a long time and it was expensive.
+        /// The viewer's pass has always been told what already exists, precisely so
+        /// it does not reinvent a thread under a new name — but the shared pass, the
+        /// one that actually coins the library-wide rows, was told nothing. Measured
+        /// consequence: 0 of 16 names survived a run, then 0 of 33. Every shared row
+        /// was renamed every single run, leaving <c>CategoryIdentity</c> to rescue it
+        /// on member overlap alone, and a row it could not match died and came back
+        /// as a stranger.
+        /// <para>
+        /// Deliberately framed as permission rather than instruction. Telling a model
+        /// to reuse existing names too firmly gets a run that only ever returns the
+        /// names it was given and stops finding anything — which would trade a
+        /// churning home screen for a frozen one.
+        /// </para>
+        /// </remarks>
+        /// <param name="existing">The stored shared categories: name and description.</param>
+        /// <param name="itemCount">How many items this batch holds.</param>
+        /// <returns>The discovery suffix.</returns>
+        public static string BuildDiscoverySuffix(IReadOnlyList<ExistingCategory> existing, int itemCount)
+        {
+            ArgumentNullException.ThrowIfNull(existing);
+
+            var sb = new StringBuilder();
+
+            if (existing.Count > 0)
+            {
+                sb.AppendLine("This library already has these rows, from previous runs:");
+                foreach (var category in existing)
+                {
+                    sb.Append("- ").Append(category.Name);
+                    if (!string.IsNullOrWhiteSpace(category.Description))
+                    {
+                        sb.Append(" — ").Append(category.Description);
+                    }
+
+                    sb.AppendLine();
+                }
+
+                sb.AppendLine(
+                    "Where a thread you are proposing is one of these, REUSE ITS EXACT NAME. Keeping the name is "
+                    + "what lets the row survive rather than being deleted and rebuilt as a new one, and a viewer "
+                    + "watching their home screen sees the difference. Its membership may change freely — reusing "
+                    + "a name is not a promise to return the same items. Where a thread is genuinely something the "
+                    + "list does not already cover, name it fresh; do not force it onto an existing name, and do "
+                    + "not propose a thread only because it is listed above.");
+            }
+
+            sb.Append("Propose the categories for these ")
+              .Append(itemCount.ToString(CultureInfo.InvariantCulture))
+              .Append(" items now, as the single JSON object described.");
             return sb.ToString();
         }
 

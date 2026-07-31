@@ -38,6 +38,26 @@ namespace Jellyfin.Plugin.Curator.Configuration
     }
 
     /// <summary>
+    /// Whether a particular pass lets the model think before answering.
+    /// </summary>
+    /// <remarks>
+    /// Option order is load-bearing — the config page's <c>setEnumSelect</c> falls
+    /// back to matching by index when a stored config carries the numeric value, so
+    /// these may be relabelled but never reordered.
+    /// </remarks>
+    public enum ThinkingMode
+    {
+        /// <summary>Follow the global <see cref="PluginConfiguration.EnableThinking"/>.</summary>
+        Inherit = 0,
+
+        /// <summary>Think, whatever the global setting says.</summary>
+        On = 1,
+
+        /// <summary>Do not think, whatever the global setting says.</summary>
+        Off = 2,
+    }
+
+    /// <summary>
     /// Plugin configuration. Category definitions are NOT stored here — they live as
     /// individual JSON files in the plugin data directory behind ICategoryStore.
     /// </summary>
@@ -396,6 +416,50 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// </summary>
         public bool RecommendationsIncludeWatched { get; set; } = true;
 
+        /// <summary>
+        /// Gets or sets whether a model re-orders each viewer's shortlist. Off by
+        /// default, because it is the only part of this playlist that costs money.
+        /// </summary>
+        /// <remarks>
+        /// Selection stays arithmetic either way: which items are in play is a sum
+        /// over categories already bought, and a model adds nothing to it. What this
+        /// buys is the ordering, which is the part arithmetic is bad at — "what
+        /// should this person see first tonight" is a judgement about a spread of
+        /// moods rather than a sum of weights.
+        /// <para>
+        /// Read the cost before switching it on: <b>one call per eligible viewer per
+        /// refresh</b>, and the refresh task runs every six hours by default. Six
+        /// viewers is 24 calls a day against a task that is currently free. Lower the
+        /// cadence on the Schedule tab, or point
+        /// <see cref="RecommendationModelProfileId"/> at something cheap, or both.
+        /// </para>
+        /// </remarks>
+        public bool ModelRankedRecommendations { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets the <see cref="ModelProfile.Id"/> used to re-order
+        /// recommendations. Blank uses <see cref="DefaultModelProfileId"/>.
+        /// </summary>
+        /// <remarks>
+        /// Worth pointing somewhere cheap. Ordering a shortlist of titles is a much
+        /// smaller job than finding threads through a library, and this is the
+        /// highest-frequency call Curator makes.
+        /// </remarks>
+        public string RecommendationModelProfileId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets how many of the top-ranked candidates are sent to be
+        /// re-ordered. 0 sends the whole playlist.
+        /// </summary>
+        /// <remarks>
+        /// The cost control. A recommendation row is looked at a few items at a time,
+        /// so the ordering that matters is the top of it — sending 30 candidates and
+        /// leaving the tail in the weighted ranker's order buys nearly all the value
+        /// of sending 200. Anything beyond this keeps its existing order and is
+        /// appended.
+        /// </remarks>
+        public int MaxRecommendationsToRank { get; set; } = 30;
+
         // ---------------------------------------------------------------------
         // Condensed summaries.
         //
@@ -487,6 +551,27 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public bool SendConsolidatedTags { get; set; } = false;
 
         /// <summary>
+        /// Gets or sets whether tag consolidation may coin a word the scraped list
+        /// does not contain. Off by default.
+        /// </summary>
+        /// <remarks>
+        /// The reason it is off: a tag is only worth anything if the same tag means
+        /// the same thing across items, and free coinage produces near-synonyms —
+        /// "melancholy", "melancholic", "wistful", "quietly sad" — which describe
+        /// four films as four separate textures instead of one. Keeping the scraped
+        /// wording is a shared vocabulary imposed for free.
+        /// <para>
+        /// The reason to turn it on: the scraped list is written by a metadata
+        /// provider that never watched anything, so when nothing in it names what the
+        /// summary just said, the alternative to coining a word is dropping the
+        /// texture entirely. Constrained in the prompt to a last resort and to the
+        /// plainest available wording, which is what keeps the vocabulary from
+        /// fragmenting.
+        /// </para>
+        /// </remarks>
+        public bool AllowInventedTags { get; set; } = false;
+
+        /// <summary>
         /// Gets or sets the <see cref="ModelProfile.Id"/> used for distillation.
         /// Blank uses <see cref="DefaultModelProfileId"/>.
         /// <para>
@@ -497,6 +582,7 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// </para>
         /// </summary>
         public string SummaryModelProfileId { get; set; } = string.Empty;
+
 
         /// <summary>
         /// Gets or sets the collection names whose membership is sent to the model,
