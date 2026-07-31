@@ -168,6 +168,49 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.DoesNotContain(id.ToString("N"), prompt, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Fact]
+        public void Plan_RequeuesACorruptSummaryEvenThoughItsHashStillMatches()
+        {
+            // The repair path for summaries stored before the parser learned to strip
+            // the fragment. Their hash matches by construction, so every other check
+            // in Create() calls them current and they would be sent to the model,
+            // broken, on every run for the life of the overview.
+            var item = Item("A", LongOverview);
+            var stored = Stored(item, LongOverview) with
+            {
+                Text = "Darkly comic class infiltration, ever more tense and viciously sharp\u0027,\u0027t\u0027:[",
+            };
+
+            var plan = SummaryPlan.Create(
+                [item],
+                new Dictionary<Guid, CondensedSummary> { [item.Id] = stored },
+                minSourceLength: 20);
+
+            var task = Assert.Single(plan.Work);
+            Assert.Equal(SummaryPlan.SummaryReason.Corrupt, task.Reason);
+            Assert.Equal(0, plan.UpToDate);
+        }
+
+        [Fact]
+        public void Plan_LeavesACleanCurrentSummaryAlone()
+        {
+            // The other half of the same guard: the corruption check must not drag
+            // the whole library back into a paid pass.
+            var item = Item("A", LongOverview);
+            var stored = Stored(item, LongOverview) with
+            {
+                Text = "Darkly comic class infiltration, ever more tense and viciously sharp",
+            };
+
+            var plan = SummaryPlan.Create(
+                [item],
+                new Dictionary<Guid, CondensedSummary> { [item.Id] = stored },
+                minSourceLength: 20);
+
+            Assert.Empty(plan.Work);
+            Assert.Equal(1, plan.UpToDate);
+        }
+
         // ---- parsing ----
 
         private static readonly IReadOnlyList<MediaItemRecord> Batch =
@@ -185,6 +228,85 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal("bleak and funny", result.Summaries.First(s => s.Item.Name == "B").Text);
             Assert.Equal("warm and slight", result.Summaries.First(s => s.Item.Name == "A").Text);
             Assert.Equal(0, result.MissingCount);
+        }
+
+        /// <summary>
+        /// Real corruption from a live 232-item pass: 17 summaries were stored ending
+        /// <c>…viciously sharp','t':[</c>. The model closed the prose and began the
+        /// tag field from inside the string it was still writing, so the fragment came
+        /// back as part of a valid "s" value and nothing ever raised a parse error.
+        /// These are cached on the source hash, so an uncaught one is sent to the
+        /// model on every subsequent run for the life of the overview.
+        /// </summary>
+        [Theory]
+        [InlineData(
+            "Darkly comic class infiltration that grows ever more tense, shocking and viciously sharp\u0027,\u0027t\u0027:[",
+            "Darkly comic class infiltration that grows ever more tense, shocking and viciously sharp")]
+        [InlineData(
+            "Awkward, candid how-to films that wander into the contradictions of anxious city life\u0027,\u0027t\u0027:[",
+            "Awkward, candid how-to films that wander into the contradictions of anxious city life")]
+        [InlineData(
+            "Warm workplace sitcom of an earnest bureaucrat cheerfully battling small-town red tape\u0027,\u0027t\u0027:[",
+            "Warm workplace sitcom of an earnest bureaucrat cheerfully battling small-town red tape")]
+        public void Parse_StripsATrailingJsonFieldFragmentTheModelWroteIntoTheProse(string stored, string expected)
+        {
+            var result = SummaryParser.Parse(
+                JsonSerializer.Serialize(new
+                {
+                    summaries = new[] { new { i = 0, s = stored } },
+                }),
+                Batch,
+                200);
+
+            Assert.Equal(expected, Assert.Single(result.Summaries).Text);
+        }
+
+        [Theory]
+        [InlineData("ends on a double-quoted key\", \"t\":[")]
+        [InlineData("ends on an object open\u0027,\u0027tags\u0027:{")]
+        [InlineData("ends on a bare value\u0027,\u0027t\u0027:")]
+        public void Parse_StripsTheFragmentWhicheverQuotingTheModelUsed(string stored)
+        {
+            var result = SummaryParser.Parse(
+                JsonSerializer.Serialize(new { summaries = new[] { new { i = 0, s = stored } } }),
+                Batch,
+                200);
+
+            var text = Assert.Single(result.Summaries).Text;
+            Assert.DoesNotContain(":", text, StringComparison.Ordinal);
+            Assert.StartsWith("ends on a", text, StringComparison.Ordinal);
+        }
+
+        [Theory]
+        [InlineData("A ratio of 3:1 drives the whole thing")]
+        [InlineData("Two men, one long night: nothing goes to plan")]
+        [InlineData("Chapter 4: the reckoning, told sideways and cold")]
+        [InlineData("Grief, guilt, and a house that will not let go")]
+        public void Parse_LeavesOrdinaryProseWithPunctuationAlone(string stored)
+        {
+            // The strip is anchored to the end and narrow on purpose: a colon mid
+            // sentence is normal writing, not a leaked field.
+            var result = SummaryParser.Parse(
+                JsonSerializer.Serialize(new { summaries = new[] { new { i = 0, s = stored } } }),
+                Batch,
+                200);
+
+            Assert.Equal(stored, Assert.Single(result.Summaries).Text);
+        }
+
+        [Fact]
+        public void Parse_KeepsTheMessRatherThanReturningAStub()
+        {
+            // Stripping back to almost nothing would replace a visible problem with
+            // an invisible one — a summary too short to carry any tone at all.
+            const string Stored = "bleak\u0027,\u0027t\u0027:[";
+
+            var result = SummaryParser.Parse(
+                JsonSerializer.Serialize(new { summaries = new[] { new { i = 0, s = Stored } } }),
+                Batch,
+                200);
+
+            Assert.Equal(Stored, Assert.Single(result.Summaries).Text);
         }
 
         [Theory]
@@ -344,6 +466,36 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Contains("HOWEVER MANY genuinely apply, up to 6", system, StringComparison.Ordinal);
             Assert.Contains("ceiling, not a target", system, StringComparison.Ordinal);
             Assert.Contains("\"t\":[", system, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// The point of doing both halves in one call: the model writes the rewrite,
+        /// then picks the tags that agree with the reading it just committed to.
+        /// Without this the tag half is an independent filtering job that happens to
+        /// share a request, and the vibe never reaches the tags.
+        /// </summary>
+        [Fact]
+        public void Prompt_TiesTagChoiceToTheRewriteJustWritten()
+        {
+            var system = SummaryPromptBuilder.BuildSystemPrompt(90, tagCeiling: 6);
+
+            Assert.Contains("Do this SECOND", system, StringComparison.Ordinal);
+            Assert.Contains("let the rewrite decide", system, StringComparison.Ordinal);
+            Assert.Contains("must agree with it", system, StringComparison.Ordinal);
+            Assert.Contains("pulls against the reading", system, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_ShowsTheSummaryBeforeTheTagsInTheOutputContract()
+        {
+            // The instruction above is only honoured if "s" is generated before "t",
+            // so the example must not teach the opposite order.
+            var system = SummaryPromptBuilder.BuildSystemPrompt(90, tagCeiling: 6);
+
+            var summaryField = system.IndexOf("\"s\":", StringComparison.Ordinal);
+            var tagField = system.IndexOf("\"t\":", StringComparison.Ordinal);
+
+            Assert.True(summaryField >= 0 && tagField > summaryField);
         }
 
         [Fact]

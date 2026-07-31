@@ -207,7 +207,71 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
                 cleaned = cleaned[1..^1].Trim();
             }
 
-            return cleaned;
+            return StripTrailingFieldFragment(cleaned);
+        }
+
+        /// <summary>
+        /// Matches a summary that runs on into the start of the next JSON field.
+        /// </summary>
+        /// <remarks>
+        /// Anchored to the end and deliberately narrow: a quote, a comma, a short
+        /// bare key, a colon, and optionally the start of a value. It must not fire
+        /// on ordinary prose, so the key is capped at 12 characters and the whole
+        /// thing has to sit at the very end of the text.
+        /// </remarks>
+        private static readonly System.Text.RegularExpressions.Regex FieldFragment =
+            new(
+                """['"]?\s*,\s*['"]?[a-zA-Z_][a-zA-Z0-9_]{0,11}['"]?\s*:\s*[\[\{'"]?\s*$""",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        /// <summary>
+        /// Whether a summary carries a trailing JSON field fragment.
+        /// </summary>
+        /// <remarks>
+        /// Public because <see cref="SummaryPlan"/> needs it: summaries are cached on
+        /// the source hash, so one already stored with a fragment is current by every
+        /// other measure and would never be redistilled. Re-queueing it is what makes
+        /// the fix reach the summaries that were corrupted before it existed, without
+        /// anyone having to clear the store by hand.
+        /// </remarks>
+        /// <param name="text">The stored summary text.</param>
+        /// <returns>Whether it ends in a leaked field fragment.</returns>
+        public static bool CarriesFieldFragment(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return false;
+            }
+
+            var match = FieldFragment.Match(text);
+            return match.Success && match.Index > 0;
+        }
+
+        /// <summary>
+        /// Cuts a trailing JSON field fragment off a summary.
+        /// </summary>
+        /// <remarks>
+        /// Observed on a live run: 17 of 232 stored summaries ended
+        /// <c>…viciously sharp','t':[</c> — the model closing the prose and starting
+        /// the tag field from inside the string it was still writing, so the fragment
+        /// arrived as part of a perfectly valid <c>s</c> value and no parse error was
+        /// ever raised. Worth catching here rather than anywhere downstream because
+        /// summaries are a cache keyed on the source hash: an unnoticed one is stored
+        /// once and then sent to the model on every run for the life of the overview,
+        /// which is the same reasoning that put the quote-stripping above here.
+        /// </remarks>
+        private static string StripTrailingFieldFragment(string text)
+        {
+            var match = FieldFragment.Match(text);
+            if (!match.Success || match.Index == 0)
+            {
+                return text;
+            }
+
+            // Leave it alone rather than return a stub: something has gone wrong
+            // enough that a two-word "summary" would be worse than the mess.
+            var kept = text[..match.Index].TrimEnd(' ', ',', ';', ':', '-', '—', '\'', '"');
+            return kept.Length >= 20 ? kept : text;
         }
 
         /// <summary>

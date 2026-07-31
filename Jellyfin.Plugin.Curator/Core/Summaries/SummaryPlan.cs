@@ -41,6 +41,12 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             /// switched on.
             /// </summary>
             TagsMissing = 3,
+
+            /// <summary>
+            /// The stored text carries a leaked JSON field fragment, so it is redone
+            /// however well its hash matches.
+            /// </summary>
+            Corrupt = 4,
         }
 
         /// <summary>One item that needs distilling, and why.</summary>
@@ -122,6 +128,16 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
                 if (!existing.TryGetValue(item.Id, out var stored))
                 {
                     work.Add(new SummaryTask(item, SummaryReason.Missing));
+                    continue;
+                }
+
+                // Before the hash check, because a corrupt summary is corrupt whether
+                // or not its source moved. Its hash matches by construction — it was
+                // distilled from the overview it still describes — so nothing else in
+                // this method would ever pick it up again.
+                if (SummaryParser.CarriesFieldFragment(stored.Text))
+                {
+                    work.Add(new SummaryTask(item, SummaryReason.Corrupt));
                     continue;
                 }
 

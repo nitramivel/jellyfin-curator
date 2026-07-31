@@ -632,7 +632,13 @@ namespace Jellyfin.Plugin.Curator.Tests
             foreach (var prompt in new[] { shared, personal })
             {
                 Assert.Contains("An \"in\" field", prompt, StringComparison.Ordinal);
-                Assert.Contains("do not turn it into a category of its own", prompt, StringComparison.Ordinal);
+
+                // The guard has to be explicit now that every collection is sent by
+                // default: the input is no longer pre-filtered down to awards, so a
+                // franchise arrives at the model and the prompt is the only thing
+                // standing between it and a "Marvel" category.
+                Assert.Contains("Never turn one into a category", prompt, StringComparison.Ordinal);
+                Assert.Contains("franchise", prompt, StringComparison.Ordinal);
             }
         }
 

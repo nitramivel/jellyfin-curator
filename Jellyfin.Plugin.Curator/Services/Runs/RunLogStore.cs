@@ -332,6 +332,10 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             private readonly object _lock = new();
             private int _stepSeq;
             private int _callSeq;
+            private decimal _costInput;
+            private decimal _costCached;
+            private decimal _costOutput;
+            private bool _anyCallPriced;
             private decimal _inputCostPerMillion;
             private decimal _cachedCostPerMillion;
             private decimal _outputCostPerMillion;
@@ -408,7 +412,8 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                 LlmRequest request,
                 LlmResult? result,
                 string outcome,
-                string? error)
+                string? error,
+                RunLogPricing? pricing = null)
             {
                 ArgumentNullException.ThrowIfNull(request);
 
@@ -432,20 +437,36 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                             result.CacheWriteTokens,
                             result.Truncated,
                             result.ThinkingTokens,
-                            Cost(result.InputTokens, result.CacheReadTokens, result.OutputTokens));
+                            Cost(result.InputTokens, result.CacheReadTokens, result.OutputTokens, pricing));
 
                         _document.Totals.InputTokens += result.InputTokens;
                         _document.Totals.OutputTokens += result.OutputTokens;
                         _document.Totals.CacheReadTokens += result.CacheReadTokens;
                         _document.Totals.CacheWriteTokens += result.CacheWriteTokens;
 
-                        // The run total is recomputed from the running token totals
-                        // rather than summed from the per-call figures, so rounding
-                        // cannot make the parts disagree with the whole.
-                        _document.Totals.Cost = Cost(
-                            _document.Totals.InputTokens,
-                            _document.Totals.CacheReadTokens,
-                            _document.Totals.OutputTokens);
+                        // Summed from the per-call figures rather than recomputed
+                        // from the running token totals. It used to be the other way
+                        // round, which was both simpler and correct while every call
+                        // shared one price — but a run can now put its discovery pass
+                        // on one model and its viewer passes on another, and no single
+                        // rate can price a mixed run from aggregate tokens. Decimal
+                        // addition is exact at these magnitudes, so the parts still
+                        // agree with the whole.
+                        if (response.Cost is { } callCost)
+                        {
+                            _costInput += callCost.InputUsd;
+                            _costCached += callCost.CachedUsd;
+                            _costOutput += callCost.OutputUsd;
+                            _anyCallPriced = true;
+                        }
+
+                        _document.Totals.Cost = _anyCallPriced
+                            ? new RunLogCost(
+                                _costInput,
+                                _costCached,
+                                _costOutput,
+                                _costInput + _costCached + _costOutput)
+                            : null;
                         _document.Totals.EstimatedCostUsd = _document.Totals.Cost?.TotalUsd;
                     }
 
@@ -539,16 +560,30 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             /// Null rather than zero throughout: a run that cost real money must
             /// never be recorded as free because nobody typed the rates in.
             /// </remarks>
-            private RunLogCost? Cost(long inputTokens, long cachedTokens, long outputTokens)
+            private RunLogCost? Cost(
+                long inputTokens,
+                long cachedTokens,
+                long outputTokens,
+                RunLogPricing? pricing = null)
             {
-                if (_inputCostPerMillion <= 0 && _outputCostPerMillion <= 0)
+                // A call may carry its own rates, because the pass it belongs to may
+                // be running on a different model from the rest of the run. Without
+                // them it falls back to the run's, which is every call of a run that
+                // uses one model.
+                var inputRate = pricing?.InputPerMillionUsd ?? _inputCostPerMillion;
+                var outputRate = pricing?.OutputPerMillionUsd ?? _outputCostPerMillion;
+                var cachedRate = pricing is null
+                    ? _cachedCostPerMillion
+                    : (pricing.CachedPerMillionUsd > 0 ? pricing.CachedPerMillionUsd : pricing.InputPerMillionUsd / 2m);
+
+                if (inputRate <= 0 && outputRate <= 0)
                 {
                     return null;
                 }
 
-                var input = inputTokens * _inputCostPerMillion / 1_000_000m;
-                var cached = cachedTokens * _cachedCostPerMillion / 1_000_000m;
-                var output = outputTokens * _outputCostPerMillion / 1_000_000m;
+                var input = inputTokens * inputRate / 1_000_000m;
+                var cached = cachedTokens * cachedRate / 1_000_000m;
+                var output = outputTokens * outputRate / 1_000_000m;
                 return new RunLogCost(input, cached, output, input + cached + output);
             }
 

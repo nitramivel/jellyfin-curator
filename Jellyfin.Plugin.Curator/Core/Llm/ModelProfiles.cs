@@ -143,8 +143,28 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
         /// <returns>The resolved profile.</returns>
         /// <exception cref="InvalidOperationException">No profile is configured.</exception>
         public static ModelProfile Resolve(PluginConfiguration config, string? profileId)
+            => Resolve(Normalize(config), profileId);
+
+        /// <summary>
+        /// Resolves a profile out of an already-normalized list.
+        /// </summary>
+        /// <remarks>
+        /// Resolving two passes of one run — discovery and the per-viewer calls —
+        /// must go through this overload against a single <see cref="Normalize"/>
+        /// result. Normalizing per resolve is not idempotent for an install that
+        /// predates the profile list: the migrated profile is synthesized afresh each
+        /// time, with a new id, so two resolves of what is really one profile compare
+        /// as two. A run would then build a second identical provider and report
+        /// itself as running two models when it has only ever had one.
+        /// </remarks>
+        /// <param name="normalized">The normalized profile list.</param>
+        /// <param name="profileId">The wanted profile id; blank means the default.</param>
+        /// <returns>The resolved profile.</returns>
+        /// <exception cref="InvalidOperationException">No profile is configured.</exception>
+        public static ModelProfile Resolve(NormalizedProfiles normalized, string? profileId)
         {
-            var normalized = Normalize(config);
+            ArgumentNullException.ThrowIfNull(normalized);
+
             if (normalized.Profiles.Count == 0)
             {
                 throw new InvalidOperationException(

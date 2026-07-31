@@ -205,9 +205,9 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// </remarks>
         private static object BuildResponseSchema(ResponseShape shape)
         {
-            if (shape == ResponseShape.Summaries)
+            if (shape is ResponseShape.Summaries or ResponseShape.SummariesWithTags)
             {
-                return BuildSummarySchema();
+                return BuildSummarySchema(shape == ResponseShape.SummariesWithTags);
             }
 
             var category = new
@@ -255,19 +255,39 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// hold the index in mind across the whole sentence, and that is where
         /// off-by-one answers come from.
         /// </remarks>
-        private static object BuildSummarySchema()
+        private static object BuildSummarySchema(bool includeTags)
         {
-            var summary = new
-            {
-                type = "OBJECT",
-                properties = new
+            var i = new { type = "INTEGER", description = "The item's integer index from the input list." };
+            var text = new { type = "STRING", description = "The compressed description." };
+
+            // "t" is declared only when the prompt asks for it, for the reason given
+            // on ResponseShape.SummariesWithTags: a prompt asking for a field the
+            // schema does not allow leaves the model writing it into "s".
+            object summary = includeTags
+                ? new
                 {
-                    i = new { type = "INTEGER", description = "The item's integer index from the input list." },
-                    s = new { type = "STRING", description = "The compressed description." },
-                },
-                required = new[] { "i", "s" },
-                propertyOrdering = new[] { "i", "s" },
-            };
+                    type = "OBJECT",
+                    properties = new
+                    {
+                        i,
+                        s = text,
+                        t = new
+                        {
+                            type = "ARRAY",
+                            description = "Consolidated tags describing what watching it is like; may be empty.",
+                            items = new { type = "STRING" },
+                        },
+                    },
+                    required = new[] { "i", "s", "t" },
+                    propertyOrdering = new[] { "i", "s", "t" },
+                }
+                : new
+                {
+                    type = "OBJECT",
+                    properties = new { i, s = text },
+                    required = new[] { "i", "s" },
+                    propertyOrdering = new[] { "i", "s" },
+                };
 
             return new
             {

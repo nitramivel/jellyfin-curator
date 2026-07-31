@@ -133,8 +133,15 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// <summary>
         /// Gets or sets the smallest shared category kept, in members. Also the
         /// number the discovery prompt asks the model to meet. Minimum 2.
+        /// <para>
+        /// The low end of the shared pool's size range, paired with
+        /// <see cref="MaxSharedCategorySize"/>. This is the number that actually
+        /// moves row length: measured on a 263-item library, every one of 60
+        /// categories came back between 5 and 10 members against a ceiling of 20, so
+        /// the model sits near the floor it is given and the ceiling goes unused.
+        /// </para>
         /// </summary>
-        public int MinSharedCategorySize { get; set; } = 4;
+        public int MinSharedCategorySize { get; set; } = 6;
 
         /// <summary>
         /// Gets or sets the most shared categories kept per run. 0 means no cap.
@@ -146,8 +153,40 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// against 5 covering 10%, from an identical prompt. The floor decides what
         /// is worth keeping, this decides how many survive.
         /// </para>
+        /// <para>
+        /// This is a <em>per-run</em> number: how many threads one discovery pass may
+        /// propose. How many are kept in the store across runs is
+        /// <see cref="MaxStoredSharedCategories"/>, which is a different question.
+        /// </para>
         /// </summary>
         public int MaxSharedCategories { get; set; } = 10;
+
+        /// <summary>
+        /// Gets or sets how many shared categories the store keeps in total. 0
+        /// inherits <see cref="MaxSharedCategories"/>.
+        /// <para>
+        /// Separate from the per-run cap because they answer different questions. The
+        /// per-run number is how many threads the model is asked for in one pass; this
+        /// is how large a library of them is allowed to accumulate. Tying them
+        /// together caps the collection at one pass's worth, so every run over the
+        /// number deletes something — and a category deleted by the cap loses its
+        /// identity and comes back as a new row (hard rule 4), which is what makes the
+        /// home screen churn. Measured on a single run with the two tied: 35
+        /// categories pruned, 21 renamed, 49 un-proposed and held on grace.
+        /// </para>
+        /// <para>
+        /// Set it above the per-run cap to let good threads accumulate across runs.
+        /// Below it is legal but pointless: the run would propose more than the store
+        /// is allowed to hold and immediately delete the excess.
+        /// </para>
+        /// </summary>
+        public int MaxStoredSharedCategories { get; set; } = 0;
+
+        /// <summary>
+        /// Gets the shared retention cap actually applied.
+        /// </summary>
+        public int EffectiveStoredSharedCategories
+            => MaxStoredSharedCategories > 0 ? MaxStoredSharedCategories : MaxSharedCategories;
 
         /// <summary>
         /// Gets or sets how many consecutive runs a category may go un-proposed
@@ -174,8 +213,34 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// of itself. Told to the model too, so it aims at a size rather than
         /// having its answer quietly shortened.
         /// </para>
+        /// <para>
+        /// This is the fallback ceiling. <see cref="MaxSharedCategorySize"/> and
+        /// <see cref="MaxPersonalCategorySize"/> override it per pool when set.
+        /// </para>
         /// </summary>
-        public int MaxCategoryMembers { get; set; } = 20;
+        public int MaxCategoryMembers { get; set; } = 25;
+
+        /// <summary>
+        /// Gets or sets the most items one shared category may contain. 0 inherits
+        /// <see cref="MaxCategoryMembers"/>.
+        /// <para>
+        /// Paired with <see cref="MinSharedCategorySize"/> this is the size range a
+        /// shared row is asked for and held to. It exists because the two pools draw
+        /// on different amounts of material: a thread through the whole library can
+        /// carry thirty items, where one drawn from a single viewer's history often
+        /// cannot. Note 0 means *inherit* here, not *no limit* — the no-limit answer
+        /// is 0 on <see cref="MaxCategoryMembers"/>, which this then inherits.
+        /// </para>
+        /// <para>
+        /// Defaults to a real number rather than to inherit, because this and
+        /// <see cref="MinSharedCategorySize"/> are the pair the owner is meant to
+        /// read as "between 6 and 25 items" — a box showing 0 does not say that.
+        /// The consequence is that an install upgrading past this change picks the
+        /// new ceiling up immediately, where its floor stays whatever was saved:
+        /// stored values beat code defaults, and only the floor was ever stored.
+        /// </para>
+        /// </summary>
+        public int MaxSharedCategorySize { get; set; } = 25;
 
         /// <summary>
         /// Gets or sets the member count at or above which a home screen row renders
@@ -261,6 +326,29 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// </para>
         /// </summary>
         public int MaxTagsPerItem { get; set; } = 0;
+
+        /// <summary>
+        /// Gets or sets the <see cref="ModelProfile.Id"/> used for the shared
+        /// discovery pass. Blank uses <see cref="DefaultModelProfileId"/>.
+        /// <para>
+        /// This is the hard half of the job: one pass over the whole library looking
+        /// for threads that run through it. It is also a single call, so a expensive
+        /// model here costs one call's worth.
+        /// </para>
+        /// </summary>
+        public string DiscoveryModelProfileId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the <see cref="ModelProfile.Id"/> used for the per-viewer
+        /// passes. Blank uses <see cref="DefaultModelProfileId"/>.
+        /// <para>
+        /// These are the many calls: one per eligible viewer, every run. On a
+        /// measured six-call run, five were viewer passes — so this is the setting
+        /// that actually moves the bill, and the pass is a narrower job than
+        /// discovery besides.
+        /// </para>
+        /// </summary>
+        public string PersonalModelProfileId { get; set; } = string.Empty;
 
         // ---------------------------------------------------------------------
         // Recommendation playlist.
@@ -421,8 +509,29 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// tells the model to avoid, which is why this is a chosen list rather than
         /// every collection on the server.
         /// </para>
+        /// <para>
+        /// Ignored entirely when <see cref="SurfaceAllCollections"/> is on, which is
+        /// the default. Kept populated regardless, so turning that off returns to the
+        /// curated list rather than to nothing.
+        /// </para>
         /// </summary>
         public string SurfacedCollections { get; set; } = "Oscar Nominees, Oscar Winners";
+
+        /// <summary>
+        /// Gets or sets a value indicating whether every collection an item belongs to
+        /// is sent, rather than only those named in <see cref="SurfacedCollections"/>.
+        /// <para>
+        /// On by default. The whitelist exists because a franchise collection is the
+        /// one kind of membership that reads as a ready-made category — "Marvel",
+        /// "Star Wars Collection" — and the system prompt spends a paragraph telling
+        /// the model not to propose exactly that. Sending everything trades that risk
+        /// for completeness: the owner's own grouping of a title is evidence about it,
+        /// and a whitelist can only carry the groupings someone remembered to type in.
+        /// The prompt names the risk directly rather than relying on the input being
+        /// pre-filtered.
+        /// </para>
+        /// </summary>
+        public bool SurfaceAllCollections { get; set; } = true;
 
         /// <summary>
         /// Gets or sets the smallest personal category kept, in members. Also the
@@ -436,7 +545,37 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// one for no reason the owner had asked for; both now start at 4.
         /// </para>
         /// </summary>
-        public int MinPersonalCategorySize { get; set; } = 4;
+        public int MinPersonalCategorySize { get; set; } = 6;
+
+        /// <summary>
+        /// Gets or sets the most items one personal category may contain. 0 inherits
+        /// <see cref="MaxCategoryMembers"/>.
+        /// <para>
+        /// The other half of the personal pool's size range, and the one worth
+        /// lowering: a viewer's own history is a smaller pool than the library, so a
+        /// personal row asked for as many items as a shared one is a row the model
+        /// has to pad to fill. Same 0-inherits rule and same defaulting reasoning as
+        /// <see cref="MaxSharedCategorySize"/>.
+        /// </para>
+        /// </summary>
+        public int MaxPersonalCategorySize { get; set; } = 25;
+
+        /// <summary>
+        /// Gets the ceiling actually applied to a shared category.
+        /// </summary>
+        /// <remarks>
+        /// Get-only, so it is computed rather than stored — an inherited ceiling must
+        /// follow <see cref="MaxCategoryMembers"/> when that changes rather than
+        /// having frozen a copy of it at the moment the setting was saved.
+        /// </remarks>
+        public int EffectiveSharedCategorySize
+            => MaxSharedCategorySize > 0 ? MaxSharedCategorySize : MaxCategoryMembers;
+
+        /// <summary>
+        /// Gets the ceiling actually applied to a personal category.
+        /// </summary>
+        public int EffectivePersonalCategorySize
+            => MaxPersonalCategorySize > 0 ? MaxPersonalCategorySize : MaxCategoryMembers;
 
         /// <summary>
         /// Gets or sets the most personal categories kept per user. 0 means no cap.
@@ -446,6 +585,24 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// </para>
         /// </summary>
         public int MaxPersonalCategories { get; set; } = 10;
+
+        /// <summary>
+        /// Gets or sets how many personal categories the store keeps per viewer in
+        /// total. 0 inherits <see cref="MaxPersonalCategories"/>.
+        /// <para>
+        /// The per-viewer counterpart of <see cref="MaxStoredSharedCategories"/>, and
+        /// the one where the churn showed worst: 27 of the 35 categories pruned on a
+        /// measured run were personal, because five viewers each proposed a full
+        /// pass's worth against a store capped at the same number.
+        /// </para>
+        /// </summary>
+        public int MaxStoredPersonalCategories { get; set; } = 0;
+
+        /// <summary>
+        /// Gets the per-viewer retention cap actually applied.
+        /// </summary>
+        public int EffectiveStoredPersonalCategories
+            => MaxStoredPersonalCategories > 0 ? MaxStoredPersonalCategories : MaxPersonalCategories;
 
         /// <summary>
         /// Gets or sets how many items a user must have watched before they get a

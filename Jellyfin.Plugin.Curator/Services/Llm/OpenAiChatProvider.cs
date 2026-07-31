@@ -271,6 +271,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                         {
                             ResponseShape.PersonalCategories => "curator_personal_categories",
                             ResponseShape.Summaries => "curator_summaries",
+                            ResponseShape.SummariesWithTags => "curator_summaries_tagged",
                             _ => "curator_categories",
                         },
                         strict = true,
@@ -298,9 +299,9 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// </remarks>
         private static object BuildResponseSchema(ResponseShape shape)
         {
-            if (shape == ResponseShape.Summaries)
+            if (shape is ResponseShape.Summaries or ResponseShape.SummariesWithTags)
             {
-                return BuildSummarySchema();
+                return BuildSummarySchema(shape == ResponseShape.SummariesWithTags);
             }
 
             var category = new
@@ -351,19 +352,41 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// it and the parser enforces it. The schema's job is only to guarantee the
         /// shape.
         /// </remarks>
-        private static object BuildSummarySchema()
+        private static object BuildSummarySchema(bool includeTags)
         {
-            var summary = new
-            {
-                type = "object",
-                properties = new
+            var i = new { type = "integer", description = "The item's integer index from the input list." };
+            var text = new { type = "string", description = "The compressed description." };
+
+            // Strict mode requires every declared property, so "t" is added only when
+            // the prompt actually asks for it. Declaring it always would demand a tag
+            // list from a pass that was never told to produce one; omitting it when
+            // the prompt does ask leaves the model with no legal place to put the
+            // tags, and it writes them into "s" instead.
+            object summary = includeTags
+                ? new
                 {
-                    i = new { type = "integer", description = "The item's integer index from the input list." },
-                    s = new { type = "string", description = "The compressed description." },
-                },
-                required = new[] { "i", "s" },
-                additionalProperties = false,
-            };
+                    type = "object",
+                    properties = new
+                    {
+                        i,
+                        s = text,
+                        t = new
+                        {
+                            type = "array",
+                            description = "Consolidated tags describing what watching it is like; may be empty.",
+                            items = new { type = "string" },
+                        },
+                    },
+                    required = new[] { "i", "s", "t" },
+                    additionalProperties = false,
+                }
+                : new
+                {
+                    type = "object",
+                    properties = new { i, s = text },
+                    required = new[] { "i", "s" },
+                    additionalProperties = false,
+                };
 
             return new
             {

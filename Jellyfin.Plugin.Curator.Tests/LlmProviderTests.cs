@@ -788,6 +788,143 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal(4096, body.RootElement.GetProperty("max_completion_tokens").GetInt32());
         }
 
+        /// <summary>
+        /// The regression this pair exists for. The summary schema declared only
+        /// "i" and "s" with additionalProperties:false, while the prompt asked for a
+        /// "t" list whenever tag consolidation was on. Strict mode forbids the field,
+        /// so the model had no legal place to put the tags and wrote them into "s" —
+        /// 17 of 232 stored summaries ended <c>…viciously sharp\u0027,\u0027t\u0027:[</c>,
+        /// and every item came back with an empty tag list.
+        /// </summary>
+        [Fact]
+        public async Task Grok_TaggedSummarySchema_AllowsTheTagFieldThePromptAsksFor()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.SummariesWithTags),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var item = body.RootElement
+                .GetProperty("response_format").GetProperty("json_schema").GetProperty("schema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items");
+
+            Assert.Equal("array", item.GetProperty("properties").GetProperty("t").GetProperty("type").GetString());
+            Assert.Equal(
+                "string",
+                item.GetProperty("properties").GetProperty("t").GetProperty("items").GetProperty("type").GetString());
+
+            // Strict mode requires every declared property to be required.
+            var required = item.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList();
+            Assert.Equal(["i", "s", "t"], required);
+        }
+
+        /// <summary>
+        /// Generation order is load-bearing, not cosmetic. The prompt tells the model
+        /// to consolidate tags AFTER writing the rewrite so the summary drives the tag
+        /// choice; under a constrained decoder that only holds if the schema emits "s"
+        /// before "t". Declared order is the only thing enforcing it.
+        /// </summary>
+        [Fact]
+        public async Task Grok_TaggedSummarySchema_GeneratesTheSummaryBeforeTheTags()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.SummariesWithTags),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var props = body.RootElement
+                .GetProperty("response_format").GetProperty("json_schema").GetProperty("schema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items")
+                .GetProperty("properties");
+
+            Assert.Equal(["i", "s", "t"], props.EnumerateObject().Select(p => p.Name).ToList());
+        }
+
+        [Fact]
+        public async Task Google_TaggedSummarySchema_GeneratesTheSummaryBeforeTheTags()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.SummariesWithTags),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var item = body.RootElement
+                .GetProperty("generationConfig").GetProperty("responseSchema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items");
+
+            // Google honours an explicit ordering key rather than declaration order.
+            Assert.Equal(
+                ["i", "s", "t"],
+                item.GetProperty("propertyOrdering").EnumerateArray().Select(e => e.GetString()).ToList());
+        }
+
+        [Fact]
+        public async Task Grok_PlainSummarySchema_DoesNotAskForTagsThePromptNeverMentions()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.Summaries),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var item = body.RootElement
+                .GetProperty("response_format").GetProperty("json_schema").GetProperty("schema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items");
+
+            Assert.False(item.GetProperty("properties").TryGetProperty("t", out _));
+            Assert.Equal(["i", "s"], item.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList());
+        }
+
+        [Fact]
+        public async Task Google_TaggedSummarySchema_AllowsTheTagFieldThePromptAsksFor()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.SummariesWithTags),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var item = body.RootElement
+                .GetProperty("generationConfig").GetProperty("responseSchema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items");
+
+            Assert.Equal("ARRAY", item.GetProperty("properties").GetProperty("t").GetProperty("type").GetString());
+            Assert.Equal(
+                ["i", "s", "t"],
+                item.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList());
+        }
+
+        [Fact]
+        public async Task Google_PlainSummarySchema_DoesNotAskForTagsThePromptNeverMentions()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.Summaries),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var item = body.RootElement
+                .GetProperty("generationConfig").GetProperty("responseSchema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items");
+
+            Assert.False(item.GetProperty("properties").TryGetProperty("t", out _));
+        }
+
         [Fact]
         public async Task Grok_ConstrainsTheAnswerWithAStrictJsonSchema()
         {

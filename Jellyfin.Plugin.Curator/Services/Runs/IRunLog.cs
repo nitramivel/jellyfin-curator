@@ -43,6 +43,11 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         /// <param name="result">What came back, or null when the call threw.</param>
         /// <param name="outcome">"ok", "unparseable", or "error".</param>
         /// <param name="error">The failure message, when there was one.</param>
+        /// <param name="pricing">
+        /// This call's own rates, when the pass it belongs to runs on a different
+        /// model from the rest of the run. Null uses the run's rates, which is every
+        /// call of a run that uses one model throughout.
+        /// </param>
         void LlmCall(
             string phase,
             int batch,
@@ -52,7 +57,8 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             LlmRequest request,
             LlmResult? result,
             string outcome,
-            string? error);
+            string? error,
+            RunLogPricing? pricing = null);
 
         /// <summary>
         /// Records the model and provider once they are known, which is after the
@@ -165,7 +171,8 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             LlmRequest request,
             LlmResult? result,
             string outcome,
-            string? error)
+            string? error,
+            RunLogPricing? pricing = null)
         {
         }
 

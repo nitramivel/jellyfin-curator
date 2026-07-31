@@ -394,6 +394,30 @@
                             No profiles yet — add one to tell Curator which model to call.
                         </p>
 
+                        <h3 class="sectionTitle">Which model runs which pass</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            A run is two different jobs, and they need not use the same model. Leave both on
+                            <em>the default profile</em> and a run behaves exactly as it always has.
+                        </p>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="DiscoveryModelProfileId">Discovery pass</label>
+                            <select is="emby-select" id="DiscoveryModelProfileId" name="DiscoveryModelProfileId" class="emby-select"></select>
+                            <div class="fieldDescription">
+                                One call over the whole library, looking for the threads that run through it. This is
+                                the hard half of the job and it is a single call per run, so a stronger model here
+                                costs one call's worth.
+                            </div>
+                        </div>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="PersonalModelProfileId">Per-viewer passes</label>
+                            <select is="emby-select" id="PersonalModelProfileId" name="PersonalModelProfileId" class="emby-select"></select>
+                            <div class="fieldDescription">
+                                One call for each viewer with enough history, every run — five of the six calls on a
+                                measured run. This is the setting that actually moves the bill, and the pass is a
+                                narrower job than discovery besides, so it is the one to point at a cheaper model.
+                            </div>
+                        </div>
+
                         <h3 class="sectionTitle">Request</h3>
                         <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">How each call to that model is made.</p>
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -479,17 +503,29 @@
                                 to feed a few of the most relevant ones back in.
                             </div>
                         </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="SurfaceAllCollections" name="SurfaceAllCollections" />
+                                <span>Send every collection an item belongs to</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Each item carries the full list of collections holding it, so the model sees how you
+                                have already grouped your library. The trade-off is that a franchise collection
+                                ("Marvel", "Star Wars Collection") reads as a ready-made category, which is the one
+                                shape the prompt spends a paragraph telling the model not to propose — the prompt
+                                names that risk directly rather than relying on the list being pre-filtered. Turn
+                                this off to send only the collections you name below.
+                            </div>
+                        </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="SurfacedCollections">Collections to tell the model about</label>
                             <input id="SurfacedCollections" name="SurfacedCollections" type="text" class="emby-input"
                                    placeholder="Oscar Nominees, Oscar Winners" />
                             <div class="fieldDescription">
-                                Comma-separated collection names. An item in one of these is labelled with it in the
-                                item list, so the model can see that a film was, say, an Oscar winner and read that
-                                as a signal about the film rather than a fact to file it under. Leave empty to send
-                                no collection membership at all. Keep the list short and meaningful: naming a
-                                franchise collection here invites exactly the metadata-shaped categories the prompt
-                                otherwise tells the model to avoid.
+                                Only used when the box above is unticked. Comma-separated collection names: an item in
+                                one of these is labelled with it in the item list, so the model can see that a film
+                                was, say, an Oscar winner and read that as a signal about the film rather than a fact
+                                to file it under. Empty sends no collection membership at all.
                             </div>
                         </div>
 
@@ -534,12 +570,27 @@
                         <h3 class="sectionTitle">Shared categories</h3>
                         <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Drawn from the whole library. Every user receives all of them.</p>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MinSharedCategorySize">Minimum shared category size</label>
+                            <label class="inputLabel inputLabelUnfocused" for="MinSharedCategorySize">Items per shared row — fewest</label>
                             <input id="MinSharedCategorySize" name="MinSharedCategorySize" type="number" min="2" max="100" class="emby-input" />
                             <div class="fieldDescription">
                                 Smallest shared category worth keeping, in items, and the size the model is asked
                                 to meet. Raise it for fewer, broader rows; lower it to let the model name narrower
                                 threads. Minimum 2.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxSharedCategorySize">Items per shared row — most</label>
+                            <input id="MaxSharedCategorySize" name="MaxSharedCategorySize" type="number" min="0" max="500" class="emby-input" />
+                            <div class="fieldDescription">
+                                The other end of the range. Together these two are the sentence the model is given
+                                — <em>"between 6 and 25 items"</em> — and the rule the result is held to, so it aims
+                                at the size it will be judged by rather than having its answer quietly shortened.
+                                <strong>The floor is the number that actually moves row length:</strong> on a measured
+                                run every one of 60 categories came back between 5 and 10 items against a ceiling of
+                                20, so the model sits near the floor it is given and the ceiling goes unused.
+                                Members are ranked strongest-first, so a longer thread is trimmed off the tail
+                                rather than dropped: a forty-item thread becomes the best twenty-five of itself.
+                                <strong>0 falls back to <em>Max items per category</em> below.</strong>
                             </div>
                         </div>
                         <div class="inputContainer">
@@ -567,11 +618,23 @@
                                 0 means no cap.
                             </div>
                         </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxStoredSharedCategories">Shared rows to keep in total</label>
+                            <input id="MaxStoredSharedCategories" name="MaxStoredSharedCategories" type="number" min="0" max="500" class="emby-input" />
+                            <div class="fieldDescription">
+                                How large a library of shared rows may build up <em>across</em> runs, as opposed to how
+                                many one run may propose. <strong>Set this above the number above</strong> to let good
+                                threads accumulate: with the two equal, every run that proposes a full set deletes
+                                something to make room, and a row deleted by the cap loses its identity and returns as
+                                a brand-new row rather than the one you had. <strong>0 keeps them tied</strong>, which
+                                is how Curator behaved before this setting existed.
+                            </div>
+                        </div>
 
                         <h3 class="sectionTitle">Personal categories</h3>
                         <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Invented for one viewer from their own watch history.</p>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MinPersonalCategorySize">Minimum personal category size</label>
+                            <label class="inputLabel inputLabelUnfocused" for="MinPersonalCategorySize">Items per personal row — fewest</label>
                             <input id="MinPersonalCategorySize" name="MinPersonalCategorySize" type="number" min="2" max="100" class="emby-input" />
                             <div class="fieldDescription">
                                 Smallest category invented for one viewer. Defaults to the same value as the
@@ -581,11 +644,30 @@
                             </div>
                         </div>
                         <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxPersonalCategorySize">Items per personal row — most</label>
+                            <input id="MaxPersonalCategorySize" name="MaxPersonalCategorySize" type="number" min="0" max="500" class="emby-input" />
+                            <div class="fieldDescription">
+                                The end of the range worth lowering. A personal row is drawn from one viewer's
+                                history rather than the whole library, so asking it for as many items as a shared
+                                row is asking the model to pad. <strong>0 falls back to <em>Max items per
+                                category</em> below.</strong>
+                            </div>
+                        </div>
+                        <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="MaxPersonalCategories">Max personal categories per user</label>
                             <input id="MaxPersonalCategories" name="MaxPersonalCategories" type="number" min="0" max="200" class="emby-input" />
                             <div class="fieldDescription">
-                                Ceiling on the categories invented for one viewer. Defaults to the same value
-                                as the shared cap above. 0 means no cap.
+                                Ceiling on the categories invented for one viewer in a single run. Defaults to the
+                                same value as the shared cap above. 0 means no cap.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxStoredPersonalCategories">Personal rows to keep per viewer</label>
+                            <input id="MaxStoredPersonalCategories" name="MaxStoredPersonalCategories" type="number" min="0" max="500" class="emby-input" />
+                            <div class="fieldDescription">
+                                The same distinction for one viewer's own rows, and where the churn shows worst — on a
+                                measured run 27 of the 35 rows deleted by the cap were personal ones. <strong>0 keeps
+                                it tied</strong> to the per-run number above.
                             </div>
                         </div>
 
@@ -594,12 +676,16 @@
                             <label class="inputLabel inputLabelUnfocused" for="MaxCategoryMembers">Max items per category</label>
                             <input id="MaxCategoryMembers" name="MaxCategoryMembers" type="number" min="0" max="500" class="emby-input" />
                             <div class="fieldDescription">
-                                Applies to both pools — a category is a home screen row either way, and Collection
-                                Sections renders only the first 16 items of one. Members are ranked strongest-first,
-                                so anything past this is trimmed off the tail rather than the category being dropped:
-                                a forty-item thread becomes the best twenty of itself. 0 means no limit.
+                                The fallback ceiling, used by whichever of the two ranges above is left at 0 — set
+                                those and this stops applying to that pool. A category is a home screen row either
+                                way, and Collection Sections renders only the first 16 items of one. 0 means no
+                                limit, which a pool inheriting from here inherits too.
                             </div>
                         </div>
+                        <p class="fieldDescription" style="margin:0.6em 0 0;">
+                            None of this touches <em>Recommended for you</em> — that playlist is ranked rather than
+                            curated, and its length is <em>Max recommendations</em> on the Home screen tab.
+                        </p>
 
                     </div>
                 </div>
@@ -648,6 +734,14 @@
                             call — because every category already carries the model's own ordering of its members.
                             Intended for a spotlight banner such as the Media&nbsp;Bar plugin, or any row that
                             takes a playlist name.
+                        </p>
+                        <p class="fieldDescription" style="margin:-0.8em 0 1.2em;">
+                            <strong>There is no model to choose here.</strong> Nothing in this playlist is decided
+                            by a model at the time it is built — it merges categories that already exist and ranks
+                            them by watch activity, which is why it is free. The model that shapes it is the one
+                            that wrote those categories, and a viewer's own categories count 1.6&times; a shared
+                            one, so in practice it is the <em>per-viewer pass</em> model on the Model tab. Change
+                            that and this playlist changes with it on the next run.
                         </p>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
@@ -823,8 +917,13 @@
                                 <span>Consolidate tags while condensing</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
-                                Done in the same model call as the summary, so turning this on costs one pass over
-                                the items that do not have consolidated tags yet — not a full redo.
+                                The whole scraped tag list goes out with the description, and the model writes the
+                                rewrite <em>first</em> and then keeps the tags that agree with the reading it just
+                                committed to — so the same judgement about how a title feels drives both, and a tag
+                                that pulls against the summary gets dropped. Deciding them separately is what gives
+                                you a summary calling something quietly devastating next to a tag list saying
+                                "action". Done in one model call, so turning this on costs a single pass over the
+                                items without consolidated tags yet — not a full redo.
                             </div>
                         </div>
                         <div class="inputContainer">
@@ -1124,6 +1223,7 @@
                 }).join('');
 
                 syncSummaryProfileSelect();
+                syncPassProfileSelects();
 
                 var profile = activeProfile();
                 page.querySelector('#ModelProfileEditor').classList.toggle('hide', !profile);
@@ -1162,6 +1262,36 @@
                 if (select) {
                     renderSummaryProfileSelect(select.value || '');
                 }
+            }
+
+            /**
+             * The same job for the two per-pass pickers on this tab: rebuild them from
+             * the current list, keeping what each already pointed at. They sit beside
+             * the list they are built from, so a rename two rows up has to reach them
+             * or the picker shows a name the profile no longer has.
+             */
+            function syncPassProfileSelects() {
+                renderPassProfileSelect('#DiscoveryModelProfileId');
+                renderPassProfileSelect('#PersonalModelProfileId');
+            }
+
+            function renderPassProfileSelect(selector, chosenId) {
+                var select = page.querySelector(selector);
+                if (!select) {
+                    return;
+                }
+
+                // Blank is a real, meaningful value here — it means "whatever the
+                // default profile is", so a run follows the default as it changes
+                // instead of being pinned to whatever it happened to be today.
+                var wanted = chosenId === undefined ? (select.value || '') : chosenId;
+                var options = ['<option value="">Use the default profile</option>'];
+                modelProfiles.forEach(function (profile) {
+                    var selected = profile.Id === wanted ? ' selected' : '';
+                    options.push('<option value="' + escapeHtml(profile.Id) + '"' + selected + '>'
+                        + escapeHtml(describeProfile(profile)) + '</option>');
+                });
+                select.innerHTML = options.join('');
             }
 
             function addProfile(copyActive) {
@@ -1434,15 +1564,28 @@
                 ApiClient.ajax({
                     type: 'POST',
                     url: ApiClient.getUrl('Curator/Schedules'),
-                    content: JSON.stringify(updates),
+
+                    // 'data', never 'content'. ApiClient.ajax reads the body off
+                    // 'data' and silently ignores anything else, so a POST written
+                    // with 'content' goes out with no body at all: [FromBody] then
+                    // fails model binding, ASP.NET returns 400 before the action
+                    // runs, and nothing whatsoever reaches the server log — which is
+                    // what "check the server log" sent you looking for in vain.
+                    data: JSON.stringify(updates),
                     contentType: 'application/json',
                     dataType: 'json'
                 }).then(function (tasks) {
                     schedules = tasks || [];
                     renderSchedules();
                     state.innerHTML = 'Schedule saved.';
-                }, function () {
-                    state.innerHTML = 'Could not save the schedule — check the server log.';
+                }, function (error) {
+                    // Name the status. A rejected save is usually a request the server
+                    // refused before the action ran, in which case the log this used
+                    // to point at holds nothing at all.
+                    var status = (error && (error.status || (error.response && error.response.status))) || 0;
+                    state.innerHTML = status
+                        ? 'Could not save the schedule — the server returned ' + escapeHtml(String(status)) + '.'
+                        : 'Could not save the schedule — the request did not reach the server.';
                 });
             }
 
@@ -2662,6 +2805,8 @@
                     normalizeProfiles(config);
                     renderProfiles();
                     renderSummaryProfileSelect(config.SummaryModelProfileId || '');
+                    renderPassProfileSelect('#DiscoveryModelProfileId', config.DiscoveryModelProfileId || '');
+                    renderPassProfileSelect('#PersonalModelProfileId', config.PersonalModelProfileId || '');
                     page.querySelector('#RecommendationPlaylists').checked = config.RecommendationPlaylists;
                     page.querySelector('#RecommendationPlaylistName').value = config.RecommendationPlaylistName || '';
                     page.querySelector('#MaxRecommendations').value = config.MaxRecommendations;
@@ -2680,12 +2825,17 @@
                     page.querySelector('#MaxSharedCategories').value = config.MaxSharedCategories;
                     page.querySelector('#MinSharedCategorySize').value = config.MinSharedCategorySize;
                     page.querySelector('#MaxPersonalCategories').value = config.MaxPersonalCategories;
+                    page.querySelector('#MaxStoredSharedCategories').value = config.MaxStoredSharedCategories || 0;
+                    page.querySelector('#MaxStoredPersonalCategories').value = config.MaxStoredPersonalCategories || 0;
                     page.querySelector('#MinPersonalCategorySize').value = config.MinPersonalCategorySize;
+                    page.querySelector('#MaxSharedCategorySize').value = config.MaxSharedCategorySize || 0;
+                    page.querySelector('#MaxPersonalCategorySize').value = config.MaxPersonalCategorySize || 0;
                     page.querySelector('#MaxCategoryMembers').value = config.MaxCategoryMembers;
                     page.querySelector('#PortraitThreshold').value = config.PortraitThreshold;
                     page.querySelector('#MinWatchedForPersonalization').value = config.MinWatchedForPersonalization;
                     page.querySelector('#MaxTagsPerItem').value = config.MaxTagsPerItem;
                     page.querySelector('#SurfacedCollections').value = config.SurfacedCollections || '';
+                    page.querySelector('#SurfaceAllCollections').checked = config.SurfaceAllCollections;
                     setEnumSelect(page.querySelector('#OutputType'), config.OutputType);
                     page.querySelector('#PersonalizedPlaylists').checked = config.PersonalizedPlaylists;
                     page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
@@ -2731,12 +2881,17 @@
                     config.MaxSharedCategories = parseInt(page.querySelector('#MaxSharedCategories').value, 10);
                     config.MinSharedCategorySize = parseInt(page.querySelector('#MinSharedCategorySize').value, 10);
                     config.MaxPersonalCategories = parseInt(page.querySelector('#MaxPersonalCategories').value, 10);
+                    config.MaxStoredSharedCategories = parseInt(page.querySelector('#MaxStoredSharedCategories').value, 10);
+                    config.MaxStoredPersonalCategories = parseInt(page.querySelector('#MaxStoredPersonalCategories').value, 10);
                     config.MinPersonalCategorySize = parseInt(page.querySelector('#MinPersonalCategorySize').value, 10);
+                    config.MaxSharedCategorySize = parseInt(page.querySelector('#MaxSharedCategorySize').value, 10);
+                    config.MaxPersonalCategorySize = parseInt(page.querySelector('#MaxPersonalCategorySize').value, 10);
                     config.MaxCategoryMembers = parseInt(page.querySelector('#MaxCategoryMembers').value, 10);
                     config.PortraitThreshold = parseInt(page.querySelector('#PortraitThreshold').value, 10);
                     config.MinWatchedForPersonalization = parseInt(page.querySelector('#MinWatchedForPersonalization').value, 10);
                     config.MaxTagsPerItem = parseInt(page.querySelector('#MaxTagsPerItem').value, 10);
                     config.SurfacedCollections = page.querySelector('#SurfacedCollections').value.trim();
+                    config.SurfaceAllCollections = page.querySelector('#SurfaceAllCollections').checked;
                     config.RecommendationPlaylists = page.querySelector('#RecommendationPlaylists').checked;
                     config.RecommendationPlaylistName = page.querySelector('#RecommendationPlaylistName').value.trim();
                     config.MaxRecommendations = parseInt(page.querySelector('#MaxRecommendations').value, 10);
@@ -2750,6 +2905,8 @@
                     config.SummaryMinSourceLength = parseInt(page.querySelector('#SummaryMinSourceLength').value, 10);
                     config.SummaryBatchSize = parseInt(page.querySelector('#SummaryBatchSize').value, 10);
                     config.SummaryModelProfileId = page.querySelector('#SummaryModelProfile').value;
+                    config.DiscoveryModelProfileId = page.querySelector('#DiscoveryModelProfileId').value;
+                    config.PersonalModelProfileId = page.querySelector('#PersonalModelProfileId').value;
                     config.OutputType = page.querySelector('#OutputType').value;
                     config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;

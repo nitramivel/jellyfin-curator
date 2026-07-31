@@ -26,6 +26,21 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
 
         /// <summary>{"summaries":[{"i":int,"s":string}]} — the condensed-summary pass.</summary>
         Summaries = 2,
+
+        /// <summary>
+        /// {"summaries":[{"i":int,"s":string,"t":[string]}]} — the same pass with tag
+        /// consolidation on.
+        /// </summary>
+        /// <remarks>
+        /// A separate shape rather than an optional field because strict structured
+        /// output requires every declared property, and a schema that always demands
+        /// "t" would ask for tags on a pass whose prompt never mentioned them. The two
+        /// must match: a prompt asking for a field the schema forbids has no legal
+        /// way to answer, and the model writes the field into the previous string
+        /// instead — measured, that corrupted 17 of 232 summaries and returned an
+        /// empty tag list for every single item.
+        /// </remarks>
+        SummariesWithTags = 3,
     }
 
     /// <summary>

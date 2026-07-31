@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
+using Jellyfin.Plugin.Curator.Configuration;
 using Jellyfin.Plugin.Curator.Core.Llm;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Reconciliation;
@@ -190,6 +191,170 @@ namespace Jellyfin.Plugin.Curator.Tests
                 new ReconcilerSettings(new CategoryLimits(2, 0, 0)));
 
             Assert.Equal(3, result.Count);
+        }
+
+        // ---- the per-pool size range, and what 0 means on each setting ----
+
+        [Fact]
+        public void EachPoolCeiling_InheritsTheSharedFallbackUntilItIsSet()
+        {
+            // The back-compat case, and the only one an existing install starts in:
+            // both per-pool ceilings at 0, so both pools keep running on exactly the
+            // number that was already saved.
+            var config = new PluginConfiguration
+            {
+                MaxCategoryMembers = 20,
+                MaxSharedCategorySize = 0,
+                MaxPersonalCategorySize = 0,
+            };
+
+            Assert.Equal(20, config.EffectiveSharedCategorySize);
+            Assert.Equal(20, config.EffectivePersonalCategorySize);
+        }
+
+        [Fact]
+        public void EachPoolCeiling_OverridesTheFallbackIndependently()
+        {
+            // The point of the setting: a thread through the whole library can carry
+            // thirty items where one drawn from a single viewer's history cannot.
+            var config = new PluginConfiguration
+            {
+                MaxCategoryMembers = 20,
+                MaxSharedCategorySize = 30,
+                MaxPersonalCategorySize = 12,
+            };
+
+            Assert.Equal(30, config.EffectiveSharedCategorySize);
+            Assert.Equal(12, config.EffectivePersonalCategorySize);
+        }
+
+        [Fact]
+        public void OnePoolMayOverrideWhileTheOtherStillInherits()
+        {
+            var config = new PluginConfiguration
+            {
+                MaxCategoryMembers = 20,
+                MaxSharedCategorySize = 0,
+                MaxPersonalCategorySize = 8,
+            };
+
+            Assert.Equal(20, config.EffectiveSharedCategorySize);
+            Assert.Equal(8, config.EffectivePersonalCategorySize);
+        }
+
+        [Fact]
+        public void ZeroOnTheFallback_IsInheritedAsNoLimitNotAsACeilingOfZero()
+        {
+            // 0 means two different things one line apart — inherit on the per-pool
+            // settings, no limit on the fallback — so pin the composition: a pool
+            // inheriting from an unlimited fallback is itself unlimited, and must not
+            // come out as a category trimmed to nothing.
+            var config = new PluginConfiguration
+            {
+                MaxCategoryMembers = 0,
+                MaxSharedCategorySize = 0,
+                MaxPersonalCategorySize = 0,
+            };
+
+            Assert.Equal(0, config.EffectiveSharedCategorySize);
+            Assert.Equal(0, config.EffectivePersonalCategorySize);
+            Assert.Equal(0, new CategoryLimits(4, config.EffectiveSharedCategorySize).EffectiveMaxMembers);
+        }
+
+        [Fact]
+        public void APoolCeiling_MayExceedAnUnlimitedFallback()
+        {
+            // No limit overall, but this pool capped — expressible, and the direction
+            // someone reaches for after finding one pool's rows too long.
+            var config = new PluginConfiguration
+            {
+                MaxCategoryMembers = 0,
+                MaxSharedCategorySize = 0,
+                MaxPersonalCategorySize = 10,
+            };
+
+            Assert.Equal(0, config.EffectiveSharedCategorySize);
+            Assert.Equal(10, config.EffectivePersonalCategorySize);
+        }
+
+        [Fact]
+        public void ThePerPoolCeiling_ReachesTheModelAsTheRangeItWillBeJudgedBy()
+        {
+            // The contract this whole class exists to protect, applied to the new
+            // setting: the ceiling the owner typed is the ceiling in the sentence.
+            var config = new PluginConfiguration
+            {
+                MaxCategoryMembers = 20,
+                MaxPersonalCategorySize = 12,
+                MinPersonalCategorySize = 4,
+            };
+            var limits = new CategoryLimits(
+                config.MinPersonalCategorySize,
+                config.EffectivePersonalCategorySize);
+
+            var prompt = PromptBuilder.BuildPersonalSystemPrompt(limits);
+
+            Assert.Contains("between 4 and 12 members", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AStoredConfigWithoutTheNewSettings_TakesTheNewCeilingButKeepsItsStoredFloor()
+        {
+            // The asymmetry an upgrade actually lands in, pinned because it is
+            // surprising. Stored values beat code defaults, and only the floor was
+            // ever stored — so a config written before these settings existed keeps
+            // its saved floor and picks up the new ceiling, landing on a range the
+            // owner chose neither end of until they open the page and save.
+            // The ceiling defaults to a real number rather than to 0-inherit because
+            // the two boxes are meant to read as "between 6 and 25 items"; a box
+            // showing 0 does not say that.
+            const string Xml =
+                """
+                <?xml version="1.0" encoding="utf-8"?>
+                <PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+                  <MinSharedCategorySize>4</MinSharedCategorySize>
+                  <MinPersonalCategorySize>4</MinPersonalCategorySize>
+                  <MaxCategoryMembers>20</MaxCategoryMembers>
+                </PluginConfiguration>
+                """;
+
+            using var reader = new System.IO.StringReader(Xml);
+            var serializer = new System.Xml.Serialization.XmlSerializer(typeof(PluginConfiguration));
+            var config = (PluginConfiguration)serializer.Deserialize(reader)!;
+
+            // Floor: stored, so it survives the upgrade untouched.
+            Assert.Equal(4, config.MinSharedCategorySize);
+            Assert.Equal(4, config.MinPersonalCategorySize);
+
+            // Ceiling: never stored, so the new default applies immediately and the
+            // old MaxCategoryMembers of 20 stops governing either pool.
+            Assert.Equal(25, config.MaxSharedCategorySize);
+            Assert.Equal(25, config.MaxPersonalCategorySize);
+            Assert.Equal(25, config.EffectiveSharedCategorySize);
+            Assert.Equal(25, config.EffectivePersonalCategorySize);
+        }
+
+        [Fact]
+        public void TheShippedDefaultRangeIsSixToTwentyFive()
+        {
+            var config = new PluginConfiguration();
+
+            Assert.Equal(6, config.MinSharedCategorySize);
+            Assert.Equal(6, config.MinPersonalCategorySize);
+            Assert.Equal(25, config.EffectiveSharedCategorySize);
+            Assert.Equal(25, config.EffectivePersonalCategorySize);
+
+            // And the range the model is actually told, both pools.
+            Assert.Contains(
+                "between 6 and 25 members",
+                PromptBuilder.BuildSystemPrompt(
+                    new CategoryLimits(config.MinSharedCategorySize, config.EffectiveSharedCategorySize)),
+                StringComparison.Ordinal);
+            Assert.Contains(
+                "between 6 and 25 members",
+                PromptBuilder.BuildPersonalSystemPrompt(
+                    new CategoryLimits(config.MinPersonalCategorySize, config.EffectivePersonalCategorySize)),
+                StringComparison.Ordinal);
         }
     }
 }
