@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.4.5.0",
+        "changelog": "Adds a per-viewer recommendation playlist, ordered most recommended first, built by merging the categories each viewer already has. It costs no extra model call. Every viewer gets a playlist with the same configurable name \u2014 Jellyfin playlists are per-user, so one name serves everybody \u2014 which makes it usable as the source for a spotlight banner such as the Media Bar plugin. Unwatched items always rank above watched ones, so the head of the list stays discovery; favourites lead the rewatch tail. Configure it under Home screen.",
+        "targetAbi": "10.11.11.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.5.0/curator_0.4.5.0.zip",
+        "checksum": "9cb852a05c30196d8c76f998df175742",
+        "timestamp": "2026-07-31T01:57:00Z"
+      },
+      {
         "version": "0.4.4.0",
         "changelog": "Condensed summaries: a new Summaries tab, a manual button and a daily scheduled task that rewrite each long library overview into a short summary carrying its tone, cached and reused so every run sends a much smaller prompt. After the first pass only new and changed items cost anything. Your library's own overviews are never modified \u2014 the short versions live only in Curator's data directory, so clearing them puts everything back exactly. The pass can use its own model profile, so the condensing can run on a cheaper model than the categories do.",
         "targetAbi": "10.11.11.0",
