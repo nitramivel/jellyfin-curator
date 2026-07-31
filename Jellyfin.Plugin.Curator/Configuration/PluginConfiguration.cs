@@ -248,6 +248,52 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public int MaxTagsPerItem { get; set; } = 0;
 
         // ---------------------------------------------------------------------
+        // Recommendation playlist.
+        //
+        // One long, ranked playlist per viewer, built by merging the categories
+        // they already have. Costs no model call: every category already carries
+        // the model's own ordering of its members, so the ranking is bought and
+        // paid for by the time this runs. Intended for a spotlight row — the Media
+        // Bar plugin and anything else that takes a playlist name.
+        // ---------------------------------------------------------------------
+
+        /// <summary>
+        /// Gets or sets a value indicating whether each target user gets a ranked
+        /// recommendation playlist.
+        /// </summary>
+        public bool RecommendationPlaylists { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the name given to every viewer's recommendation playlist.
+        /// <para>
+        /// The same name for all of them, deliberately. Jellyfin playlists are
+        /// user-scoped, so each viewer sees only their own — which means a consumer
+        /// that resolves one playlist by name, as Media Bar and Collection Sections
+        /// both do, shows every viewer their own list from a single setting.
+        /// Renaming this renames the playlists on the next run; anything pointing at
+        /// the old name has to be repointed.
+        /// </para>
+        /// </summary>
+        public string RecommendationPlaylistName { get; set; } = "Recommended for You";
+
+        /// <summary>
+        /// Gets or sets how many items a recommendation playlist may hold. 0 means
+        /// no cap.
+        /// </summary>
+        public int MaxRecommendations { get; set; } = 75;
+
+        /// <summary>
+        /// Gets or sets a value indicating whether items the viewer has already
+        /// played appear in their recommendations.
+        /// <para>
+        /// When on they are kept but always sort below everything unwatched, so the
+        /// head of the list stays discovery and the tail becomes rewatch fodder.
+        /// Turning it off makes a shorter, strictly-unseen list.
+        /// </para>
+        /// </summary>
+        public bool RecommendationsIncludeWatched { get; set; } = true;
+
+        // ---------------------------------------------------------------------
         // Condensed summaries.
         //
         // Overviews are about two thirds of every prompt, and the same overview is

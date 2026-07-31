@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Playlists;
+using Jellyfin.Plugin.Curator.Core.Recommendations;
 using Jellyfin.Plugin.Curator.Services.Categories;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -128,6 +129,106 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         }
 
         /// <inheritdoc />
+        public async Task<Guid?> SyncRecommendationsAsync(
+            Guid userId,
+            string name,
+            IReadOnlyList<Guid> memberIds,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(memberIds);
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                _logger.LogWarning("Curator: no recommendation playlist name configured; skipping");
+                return null;
+            }
+
+            if (_userManager.GetUserById(userId) is null)
+            {
+                _logger.LogWarning("Curator: user {UserId} not found; skipping recommendations", userId);
+                return null;
+            }
+
+            // A synthetic definition, built in memory and never handed to the
+            // category store. It exists so this path reuses the same create, update,
+            // tag, tether and ordering code as a real category rather than growing a
+            // parallel copy of it that could drift on the rules that matter.
+            var definition = new CategoryDefinition
+            {
+                Id = RecommendationRanker.IdentityFor(userId),
+                Name = name.Trim(),
+                Description = "Ranked recommendations, most recommended first. Built by Curator.",
+                Members = [.. memberIds],
+                OwnerUserId = userId,
+                ModelId = "curator-ranked",
+                UpdatedAt = DateTime.UtcNow,
+            };
+
+            var members = ResolveMembers(definition);
+            var playlist = FindByTether(definition.Id, userId);
+            var action = PlaylistSyncDecision.Decide(
+                handedOff: false,
+                playlistFound: playlist is not null,
+                tagPresent: playlist is not null && HasOwnershipTag(playlist),
+                hasMembers: members.Count > 0);
+
+            switch (action)
+            {
+                case SyncAction.HandOff:
+                    // The viewer removed the tag, so this playlist is theirs now and
+                    // Curator must never touch it again. No stored flag is needed:
+                    // the missing tag says so on every future run.
+                    _logger.LogInformation(
+                        "Curator: recommendation playlist '{Playlist}' for user {UserId} no longer carries the "
+                        + "'{Tag}' tag; leaving it to them permanently",
+                        playlist!.Name,
+                        userId,
+                        OwnershipTag);
+                    return null;
+
+                case SyncAction.Delete:
+                    _logger.LogInformation(
+                        "Curator: no recommendations for user {UserId}; removing their playlist", userId);
+                    _libraryManager.DeleteItem(playlist!, new DeleteOptions { DeleteFileLocation = true }, true);
+                    return null;
+
+                case SyncAction.Create:
+                    return await CreatePlaylistAsync(definition, userId, members, cancellationToken)
+                        .ConfigureAwait(false);
+
+                case SyncAction.Update:
+                    await UpdatePlaylistAsync(playlist!, definition, members, cancellationToken).ConfigureAwait(false);
+                    return playlist!.Id;
+
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// Finds a viewer's playlist by its provider-ID tether.
+        /// </summary>
+        /// <remarks>
+        /// The recommendation playlist has no stored ID to look up, so the tether is
+        /// its only identity. Matching on name instead would be wrong for the reason
+        /// hard rule 2 gives: duplicate playlist names are legal in Jellyfin, and a
+        /// viewer who made their own "Recommended for You" would have it silently
+        /// taken over and overwritten.
+        /// </remarks>
+        private Playlist? FindByTether(Guid identity, Guid userId)
+        {
+            var tether = identity.ToString("N");
+            return _libraryManager.GetItemsResult(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Playlist],
+                Recursive = true,
+            }).Items
+                .OfType<Playlist>()
+                .FirstOrDefault(p => p.OwnerUserId == userId
+                    && string.Equals(p.GetProviderId(CategoryProviderKey), tether, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <inheritdoc />
         public async Task RemoveCategoryPlaylistsAsync(CategoryDefinition category, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(category);
@@ -185,6 +286,17 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
                 }
 
                 if (claimed.Contains(playlist.Id))
+                {
+                    continue;
+                }
+
+                // A recommendation playlist is Curator-owned but no stored category
+                // points at it, which is precisely the shape this sweep deletes. It
+                // is recognised by its tether being the identity derived from its
+                // own owner, so no caller has to remember to claim it — forgetting
+                // to would silently delete every viewer's spotlight row on any run
+                // that reached here.
+                if (IsRecommendationPlaylist(playlist))
                 {
                     continue;
                 }
@@ -341,6 +453,29 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
             playlist.SetProviderId(RunProviderKey, category.UpdatedAt.ToString("o", CultureInfo.InvariantCulture));
 
             await playlist.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Whether this playlist is a viewer's recommendation list.
+        /// </summary>
+        /// <remarks>
+        /// Self-identifying: the tether holds the identity derived from the owning
+        /// user, so a playlist can be recognised without consulting anything else.
+        /// A playlist belonging to a different user cannot match, so one viewer's
+        /// list can never shield another's.
+        /// </remarks>
+        private static bool IsRecommendationPlaylist(Playlist playlist)
+        {
+            var tether = playlist.GetProviderId(CategoryProviderKey);
+            if (string.IsNullOrEmpty(tether) || playlist.OwnerUserId == Guid.Empty)
+            {
+                return false;
+            }
+
+            return string.Equals(
+                tether,
+                RecommendationRanker.IdentityFor(playlist.OwnerUserId).ToString("N"),
+                StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool HasOwnershipTag(Playlist playlist)
