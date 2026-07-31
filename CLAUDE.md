@@ -49,6 +49,7 @@ Jellyfin.Plugin.Curator/
 │   ├── SeriesActivityRollup.cs   # Episode watch data -> series watch depth
 │   ├── RunFailure.cs         # Host teardown vs. a real fault
 │   ├── LibraryPathFilter.cs  # Drops items orphaned by a removed library folder
+│   ├── CollectionSurfacing.cs    # Which collections ride along on an item
 │   ├── CategoryIdentity.cs   # Matches a reconciled category to a stored definition
 │   ├── CategoryRetention.cs  # Which stored categories to prune when over a cap
 │   ├── Models/CategoryLimits.cs  # The one value the prompt AND the Reconciler read
@@ -100,8 +101,8 @@ test.
 These are invariants, not preferences. Breaking one produces a plugin that
 silently misbehaves. (Rules 1-9 predate the model profile list; rule 10 came with
 it, rule 11 with condensed summaries, rule 12 with the recommendation playlist,
-rules 13-14 with scheduling and tag consolidation, and 15-16 with the task set
-and the health check.)
+rules 13-14 with scheduling and tag consolidation, 15-16 with the task set
+and the health check, and 17 with per-pass model assignment.)
 
 1. **The model never sees Jellyfin GUIDs.** `PromptBuilder` assigns batch-local
    integer indexes; `ProposalParser` discards any index outside `0..n-1` and maps
@@ -125,7 +126,15 @@ and the health check.)
    containing it.
    The single exception is `CategoryRetention` enforcing a configured cap, where
    the user has asked for a bounded list and something must actually go; a pruned
-   category loses its identity and returns as a new one. Retention spends
+   category loses its identity and returns as a new one. **That cap is
+   `MaxStored{Shared,Personal}Categories`, not `Max{Shared,Personal}Categories`** —
+   how many the store keeps across runs, against how many one run may propose. They
+   were a single number, which capped the collection at one pass's worth and made
+   every full run delete something: measured, 35 pruned / 21 renamed / 49 held on
+   grace in one run. Read `EffectiveStored*Categories`, where **0 means inherit the
+   per-run cap** (and inheriting an uncapped per-run number is itself uncapped).
+   Setting the store cap *below* the per-run cap is legal and pointless — the run
+   proposes more than the store may hold and deletes the excess immediately. Retention spends
    **empty categories first** — one holding no playlist is showing nobody
    anything, so it goes before a live row however stale its date looks — then
    oldest-first within each group. A handed-off playlist counts as held.
@@ -160,6 +169,23 @@ and the health check.)
    other model gave 23 covering 78%. `CategoryLimitsTests` reads the numbers back
    out of the generated prompt and checks them against what the Reconciler
    actually does — a new limit belongs in that theory.
+   Each pool now carries **both** ends of its size range:
+   `MaxSharedCategorySize` / `MaxPersonalCategorySize` against the two existing
+   floors. On those two, **0 means inherit `MaxCategoryMembers`, not no limit** —
+   the no-limit answer is 0 on `MaxCategoryMembers` itself, which an inheriting
+   pool then inherits. Read `Effective{Shared,Personal}CategorySize` and never the
+   raw setting: they are get-only so an inherited ceiling tracks the fallback
+   instead of freezing a copy of it. A pool ceiling below its own floor is
+   discarded by `EffectiveMaxMembers` rather than honoured — the floor is
+   load-bearing and wins.
+   **The shipped range is 6-25**, and the ceilings default to 25 rather than to
+   0-inherit so the two boxes read as one range. That makes upgrades asymmetric,
+   which is deliberate but surprising: the floors were stored on every existing
+   install and so survive, the ceilings never were and so jump to 25 at once.
+   **The floor is the number that actually moves row length** — measured on a
+   263-item library, all 60 categories came back at 5-10 members against a
+   ceiling of 20, so the model sits near the floor it is given and the ceiling
+   goes unused. Reach for the floor first when rows are too short.
 9. **A run log must never break the run it describes.** Every write in
    `Services/Runs/` swallows its own IO failures with a warning. The same applies
    to the prompt pool and the atomic temp-file rename — diagnostics are strictly
@@ -215,9 +241,27 @@ and the health check.)
    `ConsolidateTags` has the distillation pass keep however many genuinely describe
    the item, with `MaxConsolidatedTags` as a **ceiling and never a target** — a
    fixed count is exactly what the raw setting already did badly. Consolidation
-   happens in the same model call as the summary, and `SummaryPlan` queues an item
-   whose summary is current but whose tags are missing, so switching it on is
-   incremental rather than a full redo. An item with no scraped tags is never
+   happens in the same model call as the summary **and after it**: the whole scraped
+   list goes out uncapped, the model writes the rewrite first, then keeps the tags
+   that agree with the reading it just committed to. That ordering is the feature,
+   not an implementation detail — decided separately the two halves disagree, and a
+   summary calling something quietly devastating ends up beside a tag list saying
+   "action". It only holds because `s` is declared before `t` in both schemas
+   (Google needs the explicit `propertyOrdering`), which `LlmProviderTests` pins.
+   `SummaryPlan` queues an item whose summary is current but whose tags are
+   missing, so switching it on is incremental rather than a full redo.
+   **A batch the model answers badly is split and retried, never written off.**
+   `Core/Summaries/SummaryRetryPlan` holds the decision, bounded at
+   `MaxAttempts = 3` because every retry is a paid call. Two distinct failures, and
+   they want opposite handling: an answer that will not parse (almost always the
+   output cap cutting the JSON mid-object) is halved, while an answer that parses
+   but covers only part of the batch is retried for the remainder — *unless* it
+   covered less than half, in which case the remainder is halved too, since asking
+   again for 19 of 20 is the request that just failed. Measured before this
+   existed: a 212-item pass stored 27 and wrote off 185, after paying for all of
+   them. Note **thinking counts against `MaxOutputTokens`**, which is what put
+   those batches over the cap in the first place — the retry recovers the items but
+   the cap is the actual lever. An item with no scraped tags is never
    queued: the answer can only ever be empty and queueing it would re-buy a summary
    every pass. When `SendConsolidatedTags` is on the run service raises the
    effective tag cap, because `MaxTagsPerItem` is normally 0 and would otherwise
@@ -241,7 +285,32 @@ and the health check.)
    reports normal operation as a problem gets ignored, which is worse than no
    panel. That is why a late run is not a stalled one and a manual-only schedule
    is never reported at all.
-17. **Ask before adding dependencies** beyond the Jellyfin packages and an
+17. **A run may call two models, so nothing may assume there is one.**
+   `DiscoveryModelProfileId` and `PersonalModelProfileId` name the profile each
+   pass uses; blank means the default, so an install that has chosen nothing
+   behaves exactly as it always did. The split exists because the two passes are
+   different jobs at different volumes — discovery is one call over the whole
+   library, the viewer passes are one call *each, every run* (five of six calls on
+   a measured run), doing a narrower job. That is the setting that moves the bill.
+   Three things this breaks if done casually:
+   - **Resolve both passes from one `ModelProfiles.Normalize` result**, via the
+     `Resolve(NormalizedProfiles, id)` overload. Normalizing per resolve is not
+     idempotent on a pre-profile-list install: the migrated profile is synthesized
+     afresh each call **with a new id**, so two resolves of one profile compare as
+     two by reference *and* by id, and the run builds a second identical provider
+     and reports itself as mixed. Pinned by `ModelProfilesTests`.
+   - **The run total is summed from the per-call costs**, not recomputed from the
+     aggregate token totals as it was while one price covered everything — no
+     single rate can price a mixed run. `IRunLog.LlmCall` takes an optional
+     `RunLogPricing` for the pass's own rates, falling back to the run's; its
+     cached rate falls back to half of **its own** input rate, never the other
+     model's. Decimal addition is exact at these magnitudes, so the parts still
+     agree with the whole, which is what the old approach was protecting.
+   - **Attribute output to the model that produced it.** Personal categories are
+     stored against the viewer pass's `ModelId`, and the run-log settings snapshot
+     names both passes — one model reported for a two-model run is how a bug
+     report gets read wrongly.
+18. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 
@@ -292,6 +361,18 @@ counterintuitive; do not "correct" them from memory.
   it — so `RepairIncompleteEntry` heals exactly that shape and nothing else; a
   row with real limits keeps whatever the user set, `Enabled` included, because
   switching a row off by hand must survive the next run.
+- **Collection membership is a link, not a parent.** A `BoxSet` holds its items
+  in `LinkedChildren`, so querying children by parent ID returns nothing — it has
+  to be read off each BoxSet and inverted, which is what `ResolveCollections`
+  does. Every collection an item belongs to is sent by default
+  (`SurfaceAllCollections`); `SurfacedCollections` names a subset and applies only
+  when that is off. The mode switch is pure in `Core/CollectionSurfacing`, with
+  one rule worth keeping: an empty name list means **send none**, never "send
+  everything" — clearing the box must not silently invert. Sending everything
+  means franchises reach the model, and a franchise is a ready-made metadata
+  category of exactly the kind the system prompt forbids, so both prompts name
+  that risk explicitly rather than relying on the input being pre-filtered.
+  `PromptBuilderTests` pins that wording.
 - Per-user enablement: `GET`/`POST /ModularHomeViews/UserSettings` with
   `{ UserId, EnabledSections, LockedSections, DefaultEnabledSections }`.
 - A section must be **registered before it can be enabled**, or the ID references
@@ -377,11 +458,24 @@ Playlists are still built. Never throw out of home screen integration.
 - Escape every interpolated value — category names come from an LLM.
 - Config load/save goes through `ApiClient.getPluginConfiguration` /
   `updatePluginConfiguration`; everything else through `ApiClient.ajax` against
-  `Curator/*`.
+  `Curator/*`. **A JSON body goes in `data`, never `content`.** `ApiClient.ajax`
+  reads the body off `data` and silently ignores any other key, so a POST written
+  with `content` is sent with no body at all: `[FromBody]` fails model binding,
+  ASP.NET returns 400 before the action runs, and **nothing reaches the server
+  log** — the Schedule tab shipped this way and its "check the server log" error
+  pointed at a log with no entry to find. If an endpoint appears never to be
+  called, check the body key before anything else.
 - `is="emby-checkbox"` is correct for **static** markup only. In rows built by
   `innerHTML`, customized built-in elements upgrade unreliably — one row rendered
   styled-but-unwired and the rest bare. Dynamic rows use plain
   `<input type="checkbox" class="curatorCheck">`.
+- **Anything listing profiles must be rebuilt whenever the list changes.** There
+  are now three such pickers — the Summaries tab's, and the Model tab's two
+  per-pass ones — and `renderProfiles()` refreshes all of them via
+  `syncSummaryProfileSelect()` / `syncPassProfileSelects()`. Miss one and a rename
+  two rows up leaves a picker showing a name the profile no longer has, silently
+  saving the wrong id. Blank is a **real value** on these: it means "follow the
+  default profile", not "unset".
 - **The Model tab edits one profile at a time out of an in-memory list.**
   `modelProfiles` / `activeProfileId` hold the list while the page is open; the
   editor shows only the selected profile, so anything that changes the selection
@@ -393,6 +487,18 @@ Playlists are still built. Never throw out of home screen integration.
   the shape, in deliberately separate dialects. They used to hardcode the
   categories schema regardless, so adding a shape without touching them forces the
   model to answer in the wrong JSON — which looks like a parser bug.
+- **The schema and the prompt must ask for the same fields.** Strict mode is a
+  grammar, not a hint: a field the prompt requests and the schema omits has *no
+  legal position in the output*, and the model does not error — it writes the
+  field into the previous string. Measured: the summary schema declared only
+  `i`/`s` with `additionalProperties:false` while the prompt asked for `t`
+  whenever tag consolidation was on, and 17 of 232 stored summaries ended
+  `…viciously sharp','t':[` while **every** item came back with an empty tag list.
+  That is why tags are a separate shape (`SummariesWithTags`) rather than an
+  optional property — strict mode requires every declared property, so one schema
+  cannot serve both prompts. `LlmProviderTests` pins both directions for both
+  providers. Symptoms of this class of bug look like model stupidity or a parser
+  fault; check the schema against the prompt first.
 - **Settings live on five tabs**: Model (profiles, request, spend), Library
   (what is sent and who for), Categories (the two pools' size and count), Home
   screen (rows and the recommendation playlist), Summaries (the condensing pass

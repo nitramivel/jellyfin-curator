@@ -411,6 +411,114 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
+        public void ACallCarryingItsOwnRates_IsCostedAtThemRatherThanTheRunsRates()
+        {
+            // A run may put its discovery pass on one model and its viewer passes on
+            // another. The run-level rates are discovery's, so a viewer call priced
+            // at them would report a cheap model at an expensive one's rate — which
+            // is exactly the mistake per-profile pricing was added to stop.
+            var log = Store().Begin("manual", Settings);
+            log.SetProvider("Anthropic", "claude-opus-5", inputCostPerMillion: 5m, outputCostPerMillion: 25m);
+            var request = new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096);
+
+            log.LlmCall(
+                "personal", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 1_000_000, 100_000, false), "ok", null,
+                new RunLogPricing(0.3m, 0.15m, 2.5m, true));
+
+            using var document = ReadOnlyFile();
+            var cost = Assert.Single(document.RootElement.GetProperty("LlmCalls").EnumerateArray())
+                .GetProperty("Response").GetProperty("Cost");
+
+            Assert.Equal(0.3m, cost.GetProperty("InputUsd").GetDecimal());
+            Assert.Equal(0.25m, cost.GetProperty("OutputUsd").GetDecimal());
+        }
+
+        [Fact]
+        public void AMixedRunTotal_SumsEachCallAtItsOwnRates()
+        {
+            // No single rate can price this run from aggregate tokens, which is why
+            // the total is summed from the calls rather than recomputed from the
+            // running token totals.
+            var log = Store().Begin("manual", Settings);
+            log.SetProvider("Anthropic", "claude-opus-5", inputCostPerMillion: 5m, outputCostPerMillion: 25m);
+            var request = new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096);
+
+            // Discovery on the run's own rates: $5 + $2.50.
+            log.LlmCall(
+                "discovery", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 1_000_000, 100_000, false), "ok", null);
+
+            // One viewer pass on a cheaper profile: $0.30 + $0.25.
+            log.LlmCall(
+                "personal", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 1_000_000, 100_000, false), "ok", null,
+                new RunLogPricing(0.3m, 0.15m, 2.5m, true));
+
+            using var document = ReadOnlyFile();
+            var total = document.RootElement.GetProperty("Totals").GetProperty("Cost");
+
+            Assert.Equal(5.3m, total.GetProperty("InputUsd").GetDecimal());
+            Assert.Equal(2.75m, total.GetProperty("OutputUsd").GetDecimal());
+            Assert.Equal(8.05m, total.GetProperty("TotalUsd").GetDecimal());
+
+            // And the parts still agree with the whole, which is the property the
+            // old recompute-from-totals approach was protecting.
+            var calls = document.RootElement.GetProperty("LlmCalls").EnumerateArray()
+                .Select(c => c.GetProperty("Response").GetProperty("Cost").GetProperty("TotalUsd").GetDecimal())
+                .ToList();
+            Assert.Equal(calls.Sum(), total.GetProperty("TotalUsd").GetDecimal());
+        }
+
+        [Fact]
+        public void ACallsOwnCachedRate_FallsBackToHalfItsOwnInputRate()
+        {
+            // The same conservative rule the run-level rates use, applied to the
+            // call's rates rather than the run's — otherwise a mixed run would fall
+            // back to the *other* model's cached rate, which is worse than guessing.
+            var log = Store().Begin("manual", Settings);
+            log.SetProvider("Anthropic", "claude-opus-5", inputCostPerMillion: 5m, outputCostPerMillion: 25m, cachedCostPerMillion: 0.5m);
+            var request = new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096);
+
+            log.LlmCall(
+                "personal", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 0, 0, false, 0, 1_000_000), "ok", null,
+                new RunLogPricing(3m, 0m, 15m, true));
+
+            using var document = ReadOnlyFile();
+            var cost = Assert.Single(document.RootElement.GetProperty("LlmCalls").EnumerateArray())
+                .GetProperty("Response").GetProperty("Cost");
+
+            Assert.Equal(1.5m, cost.GetProperty("CachedUsd").GetDecimal());
+        }
+
+        [Fact]
+        public void ACallOnAnUnpricedProfile_LeavesTheRestOfTheRunPriced()
+        {
+            // One profile with no prices typed in must not blank out the run's cost,
+            // nor be silently counted as free against the other profile's rates.
+            var log = Store().Begin("manual", Settings);
+            log.SetProvider("Anthropic", "claude-opus-5", inputCostPerMillion: 5m, outputCostPerMillion: 25m);
+            var request = new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096);
+
+            log.LlmCall(
+                "discovery", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 1_000_000, 100_000, false), "ok", null);
+            log.LlmCall(
+                "personal", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 9_000_000, 900_000, false), "ok", null,
+                new RunLogPricing(0m, 0m, 0m, false));
+
+            using var document = ReadOnlyFile();
+            var calls = document.RootElement.GetProperty("LlmCalls").EnumerateArray().ToList();
+
+            Assert.Equal(JsonValueKind.Null, calls[1].GetProperty("Response").GetProperty("Cost").ValueKind);
+            Assert.Equal(
+                7.5m,
+                document.RootElement.GetProperty("Totals").GetProperty("Cost").GetProperty("TotalUsd").GetDecimal());
+        }
+
+        [Fact]
         public void PricesAreRecordedAsEnteredInSettings()
         {
             // A cost figure without the rate that produced it is unreadable — the

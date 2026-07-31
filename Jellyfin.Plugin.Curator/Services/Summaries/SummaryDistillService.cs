@@ -218,19 +218,39 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
             var failed = 0;
             string? error = null;
 
-            for (var b = 0; b < batches.Count; b++)
+            // A work queue rather than a straight loop over the batches, because a
+            // batch that comes back unusable can be halved and retried instead of
+            // being written off. Measured before this existed: three truncated
+            // batches out of eleven took 90 of 212 items down with them, and four
+            // more batches returned a single summary each and the other 19 items in
+            // each were simply counted lost. 27 of 212 survived a pass that had
+            // already been paid for in full.
+            var queue = new Queue<(IReadOnlyList<MediaItemRecord> Items, int Attempt)>();
+            foreach (var batch in batches)
+            {
+                queue.Enqueue((batch, 0));
+            }
+
+            var processed = 0;
+            var total = plan.Work.Count;
+
+            while (queue.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var batch = batches[b];
+                var (pending, attempt) = queue.Dequeue();
 
                 try
                 {
                     var request = new LlmRequest(
                         system,
-                        SummaryPromptBuilder.BuildUserPrompt(batch, wantTags),
+                        SummaryPromptBuilder.BuildUserPrompt(pending, wantTags),
                         string.Empty,
                         config.MaxOutputTokens,
-                        ResponseShape.Summaries,
+
+                        // Must track wantTags, which is the same flag the prompt is
+                        // built from. Schema and prompt disagreeing about "t" is not a
+                        // cosmetic mismatch: it leaves the model no legal way to answer.
+                        wantTags ? ResponseShape.SummariesWithTags : ResponseShape.Summaries,
                         conversationId);
 
                     var result = await provider.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
@@ -241,13 +261,13 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                     if (result.Truncated)
                     {
                         _logger.LogWarning(
-                            "Curator summaries: batch {Batch} of {Total} was cut off by the output cap; "
-                            + "lower the batch size or raise Max output tokens",
-                            b + 1,
-                            batches.Count);
+                            "Curator summaries: a {Count}-item request was cut off by the output cap. "
+                            + "Thinking counts against that cap, so raising Max output tokens or lowering "
+                            + "the batch size is the real fix; splitting and retrying now",
+                            pending.Count);
                     }
 
-                    var parsed = SummaryParser.Parse(result.Text, batch, maxLength, tagCeiling);
+                    var parsed = SummaryParser.Parse(result.Text, pending, maxLength, tagCeiling);
                     var written = parsed.Summaries.Select(s => new CondensedSummary
                     {
                         ItemId = s.Item.Id,
@@ -272,37 +292,120 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                     // last batch would mean paying for the whole thing twice.
                     _store.Upsert(written);
                     distilled += written.Count;
-                    failed += parsed.MissingCount;
 
                     if (parsed.DiscardedCount > 0 || parsed.TrimmedCount > 0)
                     {
                         _logger.LogInformation(
-                            "Curator summaries: batch {Batch} — {Written} written, {Discarded} discarded, {Trimmed} trimmed to length",
-                            b + 1,
+                            "Curator summaries: {Written} written, {Discarded} discarded, {Trimmed} trimmed to length",
                             written.Count,
                             parsed.DiscardedCount,
                             parsed.TrimmedCount);
                     }
+
+                    // The model answered, but not for everything it was given. That is
+                    // the quiet half of the old bug: a response covering one item out
+                    // of thirty parsed cleanly and the other 29 were counted lost
+                    // without anything ever being retried or logged as wrong.
+                    var returned = parsed.Summaries.Select(x => x.Item.Id).ToHashSet();
+                    var missing = pending.Where(i => !returned.Contains(i.Id)).ToList();
+                    if (missing.Count > 0)
+                    {
+                        if (SummaryRetryPlan.ShouldRequeue(missing.Count, attempt))
+                        {
+                            // Asking again for what was missed only helps if the
+                            // request was nearly answered. When barely any of it came
+                            // back, the remainder is essentially the request that just
+                            // failed, so halve it instead.
+                            var severe = SummaryRetryPlan.AnswerWasSeverelyPartial(written.Count, pending.Count);
+                            var retryAs = severe
+                                ? SummaryRetryPlan.SplitForRetry(missing, attempt)
+                                : [];
+
+                            if (retryAs.Count > 0)
+                            {
+                                foreach (var part in retryAs)
+                                {
+                                    queue.Enqueue((part, attempt + 1));
+                                }
+                            }
+                            else
+                            {
+                                queue.Enqueue((missing, attempt + 1));
+                            }
+
+                            _logger.LogInformation(
+                                "Curator summaries: only {Written} of {Count} item(s) came back; retrying the other {Missing}{How}",
+                                written.Count,
+                                pending.Count,
+                                missing.Count,
+                                retryAs.Count > 0 ? " in two smaller requests" : string.Empty);
+                        }
+                        else
+                        {
+                            failed += missing.Count;
+                            processed += missing.Count;
+                            _logger.LogWarning(
+                                "Curator summaries: giving up on {Missing} item(s) the model would not answer for",
+                                missing.Count);
+                        }
+                    }
+
+                    processed += written.Count;
                 }
                 catch (OperationCanceledException)
                 {
                     throw;
                 }
-                catch (Exception ex) when (ex is FormatException or InvalidOperationException or System.Net.Http.HttpRequestException or TaskCanceledException)
+                catch (FormatException ex)
                 {
-                    // One bad batch must not cost the batches already paid for and
-                    // stored. Record it and keep going.
-                    failed += batch.Count;
+                    // Unusable answer — nearly always the output cap cutting the JSON
+                    // mid-object. Halving is what actually recovers it: the same items
+                    // in two smaller requests fit under the cap. Only a single item
+                    // that still fails is genuinely lost.
+                    error ??= ex.Message;
+
+                    var halves = SummaryRetryPlan.SplitForRetry(pending, attempt);
+                    if (halves.Count > 0)
+                    {
+                        foreach (var half in halves)
+                        {
+                            queue.Enqueue((half, attempt + 1));
+                        }
+
+                        _logger.LogWarning(
+                            "Curator summaries: unusable answer for {Count} item(s) — {Message}. Splitting into {A} and {B} and retrying",
+                            pending.Count,
+                            ex.Message,
+                            halves[0].Count,
+                            halves[1].Count);
+                    }
+                    else
+                    {
+                        failed += pending.Count;
+                        processed += pending.Count;
+                        _logger.LogError(
+                            ex,
+                            "Curator summaries: gave up on {Count} item(s) — {Message}",
+                            pending.Count,
+                            ex.Message);
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.Net.Http.HttpRequestException or TaskCanceledException)
+                {
+                    // A transport or provider failure, not a malformed answer. The
+                    // provider has already done its own 429/5xx backoff, and splitting
+                    // a request the network refused only spends the same failure twice.
+                    failed += pending.Count;
+                    processed += pending.Count;
                     error ??= ex.Message;
                     _logger.LogError(
                         ex,
-                        "Curator summaries: batch {Batch} of {Total} failed — {Message}",
-                        b + 1,
-                        batches.Count,
+                        "Curator summaries: {Count} item(s) failed — {Message}",
+                        pending.Count,
                         ex.Message);
                 }
 
-                Report(progress, 2 + (96.0 * (b + 1) / batches.Count));
+                Report(progress, 2 + (96.0 * Math.Min(processed, total) / Math.Max(1, total)));
             }
 
             var cost = EstimateCost(profile, inputTokens, outputTokens, cachedTokens);

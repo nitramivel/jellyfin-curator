@@ -222,17 +222,47 @@ namespace Jellyfin.Plugin.Curator.Services
         {
             _claimedDefinitions.Clear();
 
-            // Resolved once and used for both the call and the costing. Pricing lives
-            // on the profile, so reading it from anywhere else would report this run
-            // at whatever the previously selected profile charged.
-            var modelProfile = ModelProfiles.ResolveDefault(config);
-            var provider = _providerFactory.Create(modelProfile, config.EnableThinking);
+            // Two profiles, because the two passes are different jobs. Discovery is
+            // one call over the whole library looking for threads; the viewer passes
+            // are one call each, every run, doing a narrower job — five of six calls
+            // on a measured run. Either falling back to the default means a run that
+            // has chosen nothing behaves exactly as it always did.
+            //
+            // Pricing lives on the profile, so each pass is costed at what it
+            // actually charges rather than at whatever the other one does.
+            // Normalized once and both passes resolved against that one list. Doing it
+            // per resolve is not idempotent on an install that predates the profile
+            // list — the migrated profile is synthesized anew each time, with a new id
+            // — so the two passes would compare as different profiles and the run
+            // would build two identical providers and call itself a mixed run.
+            var profiles = ModelProfiles.Normalize(config);
+            var discoveryProfile = ModelProfiles.Resolve(profiles, config.DiscoveryModelProfileId);
+            var personalProfile = ModelProfiles.Resolve(profiles, config.PersonalModelProfileId);
+
+            var sameProfile = string.Equals(discoveryProfile.Id, personalProfile.Id, StringComparison.Ordinal);
+            var provider = _providerFactory.Create(discoveryProfile, config.EnableThinking);
+            var personalProvider = sameProfile
+                ? provider
+                : _providerFactory.Create(personalProfile, config.EnableThinking);
+
+            // The headline model is discovery's. Per-call records carry their own
+            // phase and rates, so a mixed run is still readable call by call.
             runLog.SetProvider(
-                modelProfile.Provider.ToString(),
+                discoveryProfile.Provider.ToString(),
                 provider.ModelId,
-                modelProfile.InputCostPerMillion,
-                modelProfile.OutputCostPerMillion,
-                modelProfile.CachedInputCostPerMillion);
+                discoveryProfile.InputCostPerMillion,
+                discoveryProfile.OutputCostPerMillion,
+                discoveryProfile.CachedInputCostPerMillion);
+
+            if (!sameProfile)
+            {
+                _logger.LogInformation(
+                    "Curator: discovery on '{Discovery}' ({DiscoveryModel}), viewer passes on '{Personal}' ({PersonalModel})",
+                    discoveryProfile.Name,
+                    provider.ModelId,
+                    personalProfile.Name,
+                    personalProvider.ModelId);
+            }
 
             var targetUsers = ResolveTargetUsers(config);
             if (targetUsers.Count == 0)
@@ -262,7 +292,8 @@ namespace Jellyfin.Plugin.Curator.Services
                 config.SurfacedCollections,
                 ItemReducer.DefaultMaxOverviewLength,
                 condensed,
-                config.SendConsolidatedTags);
+                config.SendConsolidatedTags,
+                config.SurfaceAllCollections);
             if (records.Count == 0)
             {
                 _logger.LogWarning("Curator: library scan produced no items; nothing to categorize");
@@ -286,20 +317,20 @@ namespace Jellyfin.Plugin.Curator.Services
             // numbers for the instruction and the enforcement to disagree over.
             var sharedLimits = new CategoryLimits(
                 config.MinSharedCategorySize,
-                config.MaxCategoryMembers,
+                config.EffectiveSharedCategorySize,
                 config.MaxSharedCategories);
             var personalLimits = new CategoryLimits(
                 config.MinPersonalCategorySize,
-                config.MaxCategoryMembers,
+                config.EffectivePersonalCategorySize,
                 config.MaxPersonalCategories);
 
             var settings = new ProposalRunSettings(
                 config.BatchSize,
                 config.MaxOutputTokens,
                 config.TokenBudget,
-                modelProfile.InputCostPerMillion,
-                modelProfile.OutputCostPerMillion,
-                modelProfile.CachedInputCostPerMillion,
+                discoveryProfile.InputCostPerMillion,
+                discoveryProfile.OutputCostPerMillion,
+                discoveryProfile.CachedInputCostPerMillion,
                 config.UseBatchApi,
 
                 // MaxTagsPerItem governs the RAW scraped list and is normally 0, so
@@ -311,6 +342,19 @@ namespace Jellyfin.Plugin.Curator.Services
                     : config.MaxTagsPerItem,
                 sharedLimits,
                 personalLimits);
+
+            // Same settings, the viewer pass's own prices. Everything else about the
+            // two passes — budgets, caps, limits — is deliberately shared; only what
+            // the call costs differs, and only when the owner has pointed the two
+            // passes at different profiles.
+            var personalSettings = sameProfile
+                ? settings
+                : settings with
+                {
+                    InputCostPerMillion = personalProfile.InputCostPerMillion,
+                    OutputCostPerMillion = personalProfile.OutputCostPerMillion,
+                    CachedCostPerMillion = personalProfile.CachedInputCostPerMillion,
+                };
 
             var personalized = config.OutputType == OutputKind.Playlist && config.PersonalizedPlaylists;
 
@@ -426,7 +470,7 @@ namespace Jellyfin.Plugin.Curator.Services
 
                     var personal = await _proposalService
                         .ProposePersonalAsync(
-                            provider, records, candidates, settings, activity, cancellationToken, runLog, userId)
+                            personalProvider, records, candidates, personalSettings, activity, cancellationToken, runLog, userId)
                         .ConfigureAwait(false);
 
                     // Invented categories are reconciled on their own so the same
@@ -503,7 +547,9 @@ namespace Jellyfin.Plugin.Curator.Services
                     {
                         cancellationToken.ThrowIfCancellationRequested();
 
-                        var definition = MergeIntoStore(existing, category, provider.ModelId, ownerUserId: userId, runLog);
+                        // Credited to the model that actually invented it, which is the
+                        // viewer pass's — not discovery's, when the two differ.
+                        var definition = MergeIntoStore(existing, category, personalProvider.ModelId, ownerUserId: userId, runLog);
                         allCategoryIds.Add(definition.Id);
                         await _playlistService
                             .SyncCategoryAsync(definition, [userId], cancellationToken)
@@ -722,11 +768,23 @@ namespace Jellyfin.Plugin.Curator.Services
             var profile = normalized.Profiles.FirstOrDefault(
                 p => string.Equals(p.Id, normalized.DefaultProfileId, StringComparison.Ordinal));
 
+            // Named separately because they need not be the default, or each other.
+            // Without these the snapshot reports one model for a run that used two,
+            // which is the kind of thing a bug report is read wrongly because of.
+            // Resolved by hand rather than through Resolve, which throws on an empty
+            // list — see the note above.
+            var passProfile = (string? wanted) => string.IsNullOrWhiteSpace(wanted)
+                ? profile
+                : normalized.Profiles.FirstOrDefault(
+                    p => string.Equals(p.Id, wanted, StringComparison.Ordinal)) ?? profile;
+
             return new Dictionary<string, object?>
             {
                 ["modelProfile"] = profile?.Name,
                 ["modelProfileId"] = profile?.Id,
                 ["modelProfileCount"] = normalized.Profiles.Count,
+                ["discoveryModelProfile"] = passProfile(config.DiscoveryModelProfileId)?.Name,
+                ["personalModelProfile"] = passProfile(config.PersonalModelProfileId)?.Name,
                 ["provider"] = profile?.Provider.ToString(),
                 ["model"] = profile?.Model,
                 ["baseUrl"] = profile?.BaseUrl,
@@ -734,12 +792,18 @@ namespace Jellyfin.Plugin.Curator.Services
                 ["maxOutputTokens"] = config.MaxOutputTokens,
                 ["tokenBudget"] = config.TokenBudget,
                 ["maxSharedCategories"] = config.MaxSharedCategories,
+                ["maxStoredSharedCategories"] = config.EffectiveStoredSharedCategories,
+                ["maxStoredPersonalCategories"] = config.EffectiveStoredPersonalCategories,
                 ["minSharedCategorySize"] = config.MinSharedCategorySize,
                 ["maxPersonalCategories"] = config.MaxPersonalCategories,
                 ["maxCategoryMembers"] = config.MaxCategoryMembers,
+                ["maxSharedCategorySize"] = config.EffectiveSharedCategorySize,
+                ["maxPersonalCategorySize"] = config.EffectivePersonalCategorySize,
                 ["minPersonalCategorySize"] = config.MinPersonalCategorySize,
                 ["minWatchedForPersonalization"] = config.MinWatchedForPersonalization,
-                ["surfacedCollections"] = config.SurfacedCollections,
+                ["surfacedCollections"] = config.SurfaceAllCollections
+                    ? "(every collection)"
+                    : config.SurfacedCollections,
                 ["maxTagsPerItem"] = config.MaxTagsPerItem,
                 ["personalizedPlaylists"] = config.PersonalizedPlaylists,
                 ["outputType"] = config.OutputType.ToString(),
@@ -772,10 +836,15 @@ namespace Jellyfin.Plugin.Curator.Services
             IRunLog runLog,
             CancellationToken cancellationToken)
         {
+            // The retention caps, not the per-run ones. A run proposes at most
+            // MaxSharedCategories threads; the store is allowed to hold a larger
+            // library of them built up over several runs. Tying the two capped the
+            // collection at one pass's worth and made every run past the number
+            // delete a category — which loses its identity and returns as a new row.
             var doomed = CategoryRetention.SelectForRemoval(
                 _categoryStore.GetAll(),
-                config.MaxSharedCategories,
-                config.MaxPersonalCategories);
+                config.EffectiveStoredSharedCategories,
+                config.EffectiveStoredPersonalCategories);
 
             foreach (var category in doomed)
             {

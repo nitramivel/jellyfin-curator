@@ -55,7 +55,8 @@ namespace Jellyfin.Plugin.Curator.Services.Library
             string? surfacedCollections = null,
             int maxOverviewLength = ItemReducer.DefaultMaxOverviewLength,
             IReadOnlyDictionary<Guid, CondensedSummary>? condensedSummaries = null,
-            bool useCondensedTags = false)
+            bool useCondensedTags = false,
+            bool surfaceAllCollections = false)
         {
             var kinds = includeEpisodes
                 ? new[] { BaseItemKind.Movie, BaseItemKind.Series, BaseItemKind.Episode }
@@ -70,7 +71,7 @@ namespace Jellyfin.Plugin.Curator.Services.Library
 
             var items = _libraryManager.GetItemsResult(query).Items;
             var roots = LibraryRoots();
-            var collections = ResolveCollections(surfacedCollections);
+            var collections = ResolveCollections(surfacedCollections, surfaceAllCollections);
 
             var records = new List<MediaItemRecord>(items.Count);
             var skipped = 0;
@@ -156,15 +157,18 @@ namespace Jellyfin.Plugin.Curator.Services.Library
         /// It has to be read off each BoxSet and inverted.
         /// </remarks>
         /// <param name="surfacedCollections">Comma-separated collection names; empty surfaces none.</param>
+        /// <param name="surfaceAll">
+        /// Whether every collection is surfaced, ignoring the name list entirely.
+        /// </param>
         /// <returns>Collection names by item ID.</returns>
-        private Dictionary<Guid, IReadOnlyList<string>> ResolveCollections(string? surfacedCollections)
+        private Dictionary<Guid, IReadOnlyList<string>> ResolveCollections(
+            string? surfacedCollections,
+            bool surfaceAll)
         {
-            var wanted = (surfacedCollections ?? string.Empty)
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var wanted = CollectionSurfacing.ParseNames(surfacedCollections);
 
             var map = new Dictionary<Guid, IReadOnlyList<string>>();
-            if (wanted.Count == 0)
+            if (!CollectionSurfacing.SurfacesAnything(wanted, surfaceAll))
             {
                 return map;
             }
@@ -179,7 +183,7 @@ namespace Jellyfin.Plugin.Curator.Services.Library
 
                 foreach (var boxSet in boxSets)
                 {
-                    if (!wanted.Contains(boxSet.Name))
+                    if (!CollectionSurfacing.ShouldSurface(boxSet.Name, wanted, surfaceAll))
                     {
                         continue;
                     }
@@ -198,7 +202,9 @@ namespace Jellyfin.Plugin.Curator.Services.Library
                 }
 
                 _logger.LogInformation(
-                    "Curator: {Count} item(s) carry a surfaced collection label", map.Count);
+                    "Curator: {Count} item(s) carry a collection label ({Mode})",
+                    map.Count,
+                    surfaceAll ? "every collection" : $"{wanted.Count} named collection(s)");
             }
             catch (Exception ex)
             {

@@ -31,6 +31,10 @@ namespace Jellyfin.Plugin.Curator.Services.Library
         /// </summary>
         /// <param name="includeEpisodes">Whether individual episodes are included alongside their series.</param>
         /// <param name="surfacedCollections">Comma-separated collection names to label items with; empty labels none.</param>
+        /// <param name="surfaceAllCollections">
+        /// Whether every collection an item belongs to is sent, ignoring
+        /// <paramref name="surfacedCollections"/> entirely.
+        /// </param>
         /// <param name="maxOverviewLength">
         /// Where to cut each overview. Pass <see cref="ItemReducer.NoOverviewLimit"/>
         /// to keep it whole, as the condensed-summary pass must.
@@ -51,6 +55,7 @@ namespace Jellyfin.Plugin.Curator.Services.Library
             string? surfacedCollections = null,
             int maxOverviewLength = ItemReducer.DefaultMaxOverviewLength,
             IReadOnlyDictionary<Guid, CondensedSummary>? condensedSummaries = null,
-            bool useCondensedTags = false);
+            bool useCondensedTags = false,
+            bool surfaceAllCollections = false);
     }
 }

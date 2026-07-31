@@ -184,7 +184,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                         // to read afterwards.
                         log.LlmCall(
                             "discovery", i, attempt + 1, null, Stopwatch.GetElapsedTime(startedAt),
-                            request, null, "error", ex.Message);
+                            request, null, "error", ex.Message,
+                            PricingOf(settings));
                         throw;
                     }
 
@@ -217,7 +218,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
 
                     log.LlmCall(
                         "discovery", i, attempt + 1, null, Stopwatch.GetElapsedTime(startedAt),
-                        request, result, outcome, parseError);
+                        request, result, outcome, parseError,
+                        PricingOf(settings));
                 }
 
                 if (parsed is null)
@@ -330,7 +332,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     {
                         log.LlmCall(
                             "personal", i, attempt + 1, userId, Stopwatch.GetElapsedTime(startedAt),
-                            request, null, "error", ex.Message);
+                            request, null, "error", ex.Message,
+                            PricingOf(settings));
                         throw;
                     }
 
@@ -361,7 +364,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
 
                     log.LlmCall(
                         "personal", i, attempt + 1, userId, Stopwatch.GetElapsedTime(startedAt),
-                        request, result, outcome, parseError);
+                        request, result, outcome, parseError,
+                        PricingOf(settings));
                 }
 
                 if (parsed is null)
@@ -451,7 +455,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     _logger.LogWarning("Curator: batch {Batch} is missing from the job results; skipping it", i);
                     log.LlmCall(
                         "discovery-batch", i, 1, null, TimeSpan.Zero,
-                        requests[i].Request, null, "error", "missing from job results");
+                        requests[i].Request, null, "error", "missing from job results",
+                        PricingOf(settings));
                     continue;
                 }
 
@@ -464,7 +469,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                         entry.Error ?? "unknown");
                     log.LlmCall(
                         "discovery-batch", i, 1, null, TimeSpan.Zero,
-                        requests[i].Request, null, "error", entry.Error ?? "unknown");
+                        requests[i].Request, null, "error", entry.Error ?? "unknown",
+                        PricingOf(settings));
                     continue;
                 }
 
@@ -500,7 +506,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 // provider's side and reports nothing about individual durations.
                 log.LlmCall(
                     "discovery-batch", i, 1, null, TimeSpan.Zero,
-                    requests[i].Request, result, outcome, parseError);
+                    requests[i].Request, result, outcome, parseError,
+                    PricingOf(settings));
             }
 
             LogRunTotals(provider, settings, inputTokens, cacheReadTokens, outputTokens, proposals.Count, completed, skipped);
@@ -561,6 +568,17 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
 
             return text.Length <= 4000 ? text : text[..4000] + "…";
         }
+
+        /// <summary>
+        /// This pass's own rates, so the run log prices its calls correctly even when
+        /// another pass of the same run is on a different model.
+        /// </summary>
+        private static RunLogPricing PricingOf(ProposalRunSettings settings)
+            => new(
+                settings.InputCostPerMillion,
+                settings.CachedCostPerMillion,
+                settings.OutputCostPerMillion,
+                settings.InputCostPerMillion > 0 || settings.OutputCostPerMillion > 0);
 
         private void LogRunTotals(
             ILlmProvider provider,

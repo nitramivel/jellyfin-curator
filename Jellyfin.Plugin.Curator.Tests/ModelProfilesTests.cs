@@ -290,5 +290,59 @@ namespace Jellyfin.Plugin.Curator.Tests
 
             Assert.Equal(expected, ModelProfiles.Resolve(config, requested).Name);
         }
+
+        [Fact]
+        public void Resolve_FromConfigTwice_IsNotIdempotentOnALegacyInstall()
+        {
+            // The trap a caller resolving two passes of one run has to avoid.
+            // Normalize migrates the legacy settings by synthesizing a profile, and
+            // synthesizes a *new* one — new id and all — on every call. So resolving
+            // the same profile twice from config yields two profiles that compare as
+            // different by reference and by id, and a run would conclude its two
+            // passes were on different models when the install has only one.
+            var config = LegacyConfig();
+
+            var first = ModelProfiles.Resolve(config, string.Empty);
+            var second = ModelProfiles.Resolve(config, string.Empty);
+
+            Assert.NotSame(first, second);
+            Assert.NotEqual(first.Id, second.Id);
+        }
+
+        [Fact]
+        public void Resolve_FromOneNormalizeResult_IsStableOnALegacyInstall()
+        {
+            // And the fix: normalize once, resolve both passes against that. This is
+            // what lets a run tell "both passes on the default" from "the owner chose
+            // two models", on every install including the un-migrated ones.
+            var config = LegacyConfig();
+            var profiles = ModelProfiles.Normalize(config);
+
+            var discovery = ModelProfiles.Resolve(profiles, string.Empty);
+            var personal = ModelProfiles.Resolve(profiles, string.Empty);
+
+            Assert.Same(discovery, personal);
+            Assert.Equal(discovery.Id, personal.Id);
+        }
+
+        [Fact]
+        public void Resolve_FromOneNormalizeResult_StillHonoursAnExplicitChoice()
+        {
+            var config = new PluginConfiguration
+            {
+                ModelProfiles =
+                [
+                    new ModelProfile { Id = "a", Name = "expensive", Model = "m1" },
+                    new ModelProfile { Id = "b", Name = "cheap", Model = "m2" },
+                ],
+                DefaultModelProfileId = "a",
+            };
+            var profiles = ModelProfiles.Normalize(config);
+
+            // Discovery unassigned falls to the default; the viewer passes were
+            // pointed somewhere cheaper.
+            Assert.Equal("expensive", ModelProfiles.Resolve(profiles, string.Empty).Name);
+            Assert.Equal("cheap", ModelProfiles.Resolve(profiles, "b").Name);
+        }
     }
 }

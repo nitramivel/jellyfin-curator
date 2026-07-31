@@ -76,7 +76,15 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         private const string TagSection =
             """
 
-            Each item also carries a "tags" list scraped from a metadata provider. Consolidate it.
+            Each item also carries a "tags" list scraped from a metadata provider — the whole list, unfiltered.
+            Consolidate it.
+
+            Do this SECOND, after you have written that item's rewrite, and let the rewrite decide. You have
+            just committed to a reading of what watching the thing is like; the tags you keep are the same
+            judgement in single words, so they must agree with it. If a tag pulls against the reading you
+            just wrote, drop it — a scraped list is guesswork by a metadata provider that never watched
+            anything, and you have. Where the list offers several words for the thing your rewrite is
+            actually about, keep the one closest to it.
 
             Keep only tags that describe what watching the thing is LIKE — its mood, texture, or the kind of
             story it tells. Throw away production trivia (aftercreditsstinger, based on novel or book, sequel,
@@ -89,7 +97,8 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             should come back with one tag, a dense one with several. An item whose tags are all trivia should
             come back with an empty list — that is a correct answer, not a failure.
 
-            Lower case, and keep each tag's own wording rather than inventing new vocabulary.
+            Lower case, and keep each tag's own wording rather than inventing new vocabulary — the same tag
+            has to mean the same thing across every item for these to be worth anything.
             """;
 
         private const string PlainOutput =

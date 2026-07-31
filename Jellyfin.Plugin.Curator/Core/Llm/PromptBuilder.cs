@@ -92,9 +92,12 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
             "Movies That Look Better Than They Are". Do NOT propose categories that are just metadata
             filters (a genre, a decade, a franchise, a director) — those are what this tool exists to avoid.
 
-            An "in" field on an item lists collections it belongs to that the library owner thought
-            worth pointing out — awards and the like. Treat it as a judgement somebody already made
-            about that title, and weigh it as evidence; do not turn it into a category of its own.
+            An "in" field on an item lists the collections it belongs to in this library — awards,
+            franchises, whatever the owner has grouped. Treat it as a judgement somebody already made
+            about that title and weigh it as evidence. Never turn one into a category: "Marvel",
+            "Star Wars Collection" and the like are franchises, and a franchise is a metadata filter,
+            which is the thing you were just told not to propose. The collection already exists — the
+            owner does not need you to rebuild it.
 
             Rules:
             - Reference items ONLY by their integer index from the input. Never invent items.
@@ -160,9 +163,10 @@ namespace Jellyfin.Plugin.Curator.Core.Llm
             episodes of a sitcom is telling you far more about their taste than someone who finished one
             film. Weigh a deeply watched show accordingly.
 
-            An "in" field on an item lists collections the library owner thought worth pointing out —
-            awards and the like. Treat it as a judgement somebody already made about that title, and
-            weigh it as evidence; do not turn it into a category of its own.
+            An "in" field on an item lists the collections it belongs to in this library — awards,
+            franchises, whatever the owner has grouped. Treat it as a judgement somebody already made
+            about that title and weigh it as evidence. Never turn one into a category: a franchise is
+            a metadata filter, and this viewer already has that collection.
 
             Rules:
             - Reference items ONLY by their integer index from the item list. Never invent items.
