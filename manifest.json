@@ -10,131 +10,43 @@
     "versions": [
       {
         "version": "0.5.1.0",
-        "changelog": "Per-profile thinking control; optional model-ranked recommendation ordering; the discovery pass is told what its rows are already called; the distillation pass writes a run log; health findings for tag consolidation producing nothing and for a pass that lost most of its items; optional invented tag vocabulary.",
+        "changelog": "Three things you can switch on, and four fixes for failures that were losing work silently. Each model profile now carries whether it thinks \u2014 thinking counts against the output cap, and on a measured distillation pass it took most of the budget and cut three batches off mid-JSON, while the discovery pass with it off returned one usable category instead of twenty. A model can optionally order each viewer's recommendation playlist, which changes the order but never the membership; off by default, since it is one call per viewer per refresh. Tag consolidation can optionally coin a word when nothing scraped fits. Fixes: the discovery pass is finally told what its rows are already called \u2014 the per-viewer pass always was, and the pass that actually coins the library-wide rows was told nothing, so 0 of 16 then 0 of 33 names survived a run; the distillation pass writes a run log instead of leaving the server log as the only record, which is how a pass that lost 185 items of 212 went unnoticed; and the health panel now reports tag consolidation producing nothing and a pass that lost most of its items. Also in 0.5.x: each pass can run on a different model profile, and a run that uses two is costed per call rather than at one rate. Tag consolidation itself was broken since it shipped \u2014 the response schema forbade the very field the prompt asked for, so every item came back with an empty tag list and 17 summaries ended mid-JSON; both are fixed and the damaged summaries redo themselves. A distillation batch the model answers badly is now split and retried rather than written off. The Schedule tab can save (it never could \u2014 the request went out with no body). Retention caps are separate from per-run caps, so a full run no longer has to delete a row to make room. NOTE two changes that apply on update: every collection an item belongs to is now sent to the model rather than only the ones you named, and rows gain a maximum of 25 items.",
         "targetAbi": "10.11.11.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.5.1.0/curator_0.5.1.0.zip",
         "checksum": "b1f9fbb8aa7450c3e3e5b399f215ebe2",
         "timestamp": "2026-07-31T19:37:26Z"
       },
       {
-        "version": "0.5.0.0",
-        "changelog": "Per-pass model profiles; summary tag consolidation fixed (schema forbade the field it asked for); failed distillation batches split and retried instead of written off; Schedule tab can save; retention caps separated from per-run caps; per-pool row size range; every collection sent.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.5.0.0/curator_0.5.0.0.zip",
-        "checksum": "b988b24b85d562769522c4c95662f2fe",
-        "timestamp": "2026-07-31T18:03:27Z"
-      },
-      {
         "version": "0.4.8.0",
-        "changelog": "Adds a daily Health Check task that looks for the ways Curator goes quietly wrong \u2014 runs that have stopped happening, a missing prerequisite plugin, library rows pointing at folders that no longer exist, a summary cache switched on but incomplete \u2014 and reports each with what to do about it, on a new panel at the top of the Schedule tab. It reads only and costs nothing. Recommendation playlists also get their own six-hourly task and a Generate now button beside their settings, moving out of the daily cleanup pass: they rank by what a viewer has not watched, so they go stale as soon as somebody watches something and want a much shorter cadence than reconciling playlists does.",
+        "changelog": "The summaries era, plus everything built on it. A daily Health Check task looks for the ways Curator goes quietly wrong \u2014 runs that have stopped happening, a missing prerequisite plugin, library rows pointing at folders that no longer exist, a summary cache switched on but incomplete \u2014 and reports each with what to do about it. It reads only and costs nothing. Condensed summaries: a Summaries tab, a manual button and a daily task rewrite each long library overview into a short summary carrying its tone, cached and reused so every run sends a much smaller prompt; after the first pass only new and changed items cost anything, and your library's own overviews are never modified. The same pass optionally consolidates scraped tags, which average around eighteen values an item and are mostly production trivia. Summaries no longer end mid-phrase \u2014 measured at 11% of a real pass \u2014 because the model is asked to compose something that already fits rather than writing to the limit and stopping. Each viewer gets a recommendation playlist, ordered most recommended first, merged from the categories they already have and costing no extra model call; every viewer's copy shares one configurable name, which makes it usable as the source for a spotlight banner such as the Media Bar plugin. A daily Clean Up and Sync task reconciles categories against the playlists that actually exist, republishes home screen rows, and drops summaries for items that have left the library. Home screen rows stop flickering: a category keeps its row for a few runs when the model does not re-propose it, rather than losing it immediately and usually getting it back.",
         "targetAbi": "10.11.11.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.8.0/curator_0.4.8.0.zip",
         "checksum": "c2f6672a581d010805c2356f89c6938a",
         "timestamp": "2026-07-31T05:35:50Z"
       },
       {
-        "version": "0.4.7.0",
-        "changelog": "Fixes condensed summaries that ended mid-phrase \u2014 measured at 11% of a real pass \u2014 by asking the model to compose something that already fits rather than writing to the limit and stopping, and by trimming back past trailing connectives. Home screen rows stop flickering: a category now keeps its row for a few runs when the model does not re-propose it, instead of losing it immediately and usually getting it back the next week. And tag consolidation arrives on the Summaries tab: scraped keyword lists are reduced to however many tags genuinely describe an item, which is a ceiling and not a fixed count, with a separate switch for sending them with the item data. Re-condense to pick up the summary fix.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.7.0/curator_0.4.7.0.zip",
-        "checksum": "a70142943873df7276d4f78530a4768e",
-        "timestamp": "2026-07-31T04:29:14Z"
-      },
-      {
-        "version": "0.4.6.0",
-        "changelog": "Adds a daily 'Clean Up and Sync' scheduled task that calls no model and costs nothing: it reconciles categories against the playlists that actually exist, republishes home screen rows, rebuilds each viewer's recommendation playlist against their current watch activity, and drops condensed summaries for items that have left the library. Rebuilding recommendations nightly matters because they rank by what a viewer has not watched, so they go stale as soon as somebody watches something. Also adds a Schedule tab putting every Curator task's cadence in one place \u2014 manual, every N hours, daily at a time, or weekly on a day \u2014 written through Jellyfin's own task manager so it stays in step with Dashboard > Scheduled Tasks.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.6.0/curator_0.4.6.0.zip",
-        "checksum": "d4f31e92ac6820f6f35a79e425cf02ce",
-        "timestamp": "2026-07-31T02:12:17Z"
-      },
-      {
-        "version": "0.4.5.0",
-        "changelog": "Adds a per-viewer recommendation playlist, ordered most recommended first, built by merging the categories each viewer already has. It costs no extra model call. Every viewer gets a playlist with the same configurable name \u2014 Jellyfin playlists are per-user, so one name serves everybody \u2014 which makes it usable as the source for a spotlight banner such as the Media Bar plugin. Unwatched items always rank above watched ones, so the head of the list stays discovery; favourites lead the rewatch tail. Configure it under Home screen.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.5.0/curator_0.4.5.0.zip",
-        "checksum": "9cb852a05c30196d8c76f998df175742",
-        "timestamp": "2026-07-31T01:57:00Z"
-      },
-      {
-        "version": "0.4.4.0",
-        "changelog": "Condensed summaries: a new Summaries tab, a manual button and a daily scheduled task that rewrite each long library overview into a short summary carrying its tone, cached and reused so every run sends a much smaller prompt. After the first pass only new and changed items cost anything. Your library's own overviews are never modified \u2014 the short versions live only in Curator's data directory, so clearing them puts everything back exactly. The pass can use its own model profile, so the condensing can run on a cheaper model than the categories do.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.4.0/curator_0.4.4.0.zip",
-        "checksum": "aad19437f9592851285f383c478db4b5",
-        "timestamp": "2026-07-31T01:44:04Z"
-      },
-      {
         "version": "0.4.2.0",
-        "changelog": "Model profiles: save several providers, models and API keys as a list and pick which one runs, instead of one set of fields you overwrite. Each profile carries its own key and its own prices, so switching profile switches the cost reporting with it \u2014 a cheap model is no longer reported at an expensive model's rate. Your existing provider, model and key migrate automatically into a single profile; nothing to re-enter. Also fixes both detail drawers on the Runs tab, which were squeezed into a fraction of the page width \u2014 the run drawer especially, despite carrying the widest tables in the plugin.",
+        "changelog": "Model profiles: save several providers, models and API keys as a list and pick which one runs, instead of one set of fields you overwrite. Each profile carries its own key and its own prices, so switching profile switches the cost reporting with it \u2014 a cheap model is no longer reported at an expensive model's rate. Your existing provider, model and key migrate automatically into a single profile. Also fixes prompt caching on xAI Grok and stops under-reporting what a run costs. Grok stores cache entries on the server that wrote them, so a run's calls were scattering across the fleet and each landing on a machine that had never seen the item list; every call now carries the run's ID so they route together. Measured before the fix: 16 of 18 calls reported 128 cached tokens against a byte-identical 28,000-token prefix. Separately, cache reads were being dropped from the cost total entirely, understating one run by 24%.",
         "targetAbi": "10.11.11.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.2.0/curator_0.4.2.0.zip",
         "checksum": "f12b775236043a9d95505bbf63de11c6",
         "timestamp": "2026-07-30T23:52:00Z"
       },
       {
-        "version": "0.4.1.0",
-        "changelog": "Fixes prompt caching on xAI Grok and stops under-reporting what a run costs. Grok stores cache entries on the server that wrote them, so the calls of one run were scattering across the fleet and each landing on a machine that had never seen the item list; every call of a run now carries the run's ID so they route together. Separately, cache reads were being dropped from the cost total entirely, understating one measured run by 24 percent. They are now priced at their own rate, configurable and defaulting to half the input price. Requires Jellyfin 10.11.11 or newer.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.1.0/curator_0.4.1.0.zip",
-        "checksum": "6de41c549fb2f08e22326397f4a49b43",
-        "timestamp": "2026-07-30T21:32:57Z"
-      },
-      {
         "version": "0.4.0.0",
-        "changelog": "Batch size 0 now sends the whole library in one request, and is the default: a thread running through items split across two batches is one the model never gets to see. The settings page is reorganised into four tabs by subject \u2014 Model, Library, Categories, Home screen \u2014 with the Anthropic Batch API alongside the model it belongs to. Items in collections you name, Oscar Nominees and Oscar Winners by default, now reach the model labelled, to be weighed as evidence rather than filed under. Adds a playlist reconcile button that rebuilds lost playlists, removes empty categories and deletes orphaned playlists without calling a model, and the category cap now spends empty categories before live ones. The expanded detail panels have been rebuilt for narrow dashboard columns. Requires Jellyfin 10.11.11 or newer.",
+        "changelog": "Batch size 0 now sends the whole library in one request, and is the default: a thread running through items split across two batches is one the model never gets to see. The settings page is reorganised into tabs by subject, and items in collections you name \u2014 Oscar Nominees and Oscar Winners by default \u2014 are labelled as such so the model can weigh an award as evidence about a film. Also fixes personalization for anyone who watches television. Jellyfin records playback against episodes, so a series row carries no watch history and every TV viewer read as a viewer of nothing \u2014 measured on a 297-item library, six users' activity held 210 movie entries against 3 series entries. Episode playback is now rolled up onto the series and reaches the model as watch depth. Items orphaned by a removed or remounted library folder no longer reach the model: Jellyfin keeps the database row, so a ghost still looks like a real item and plays back as nothing, and on one server 36 of 298 items were such ghosts landing in real playlists. A progress panel replaces the status line that used to tell you to go read the server log, showing the phase in plain words and a breakdown of estimated cost as the run proceeds.",
         "targetAbi": "10.11.11.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.0.0/curator_0.4.0.0.zip",
         "checksum": "2eece8484bd557b128b30817f776b5fd",
         "timestamp": "2026-07-30T20:37:42Z"
       },
       {
-        "version": "0.3.21.0",
-        "changelog": "Stops items orphaned by a removed or remounted library folder reaching the model. Jellyfin keeps the database row when a library folder goes away, so it still looks like a real item and plays back as nothing; on one server 36 of 298 items were such ghosts and were landing in real playlists. Home screen rows are now created enabled and asking for one item rather than switched off at zero, and rows written incorrectly by an earlier version are repaired on the next run. Adds a run history list under the generate button with per-run details and a cost breakdown, and a button that re-syncs home screen rows without an LLM call. Requires Jellyfin 10.11.11 or newer.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.3.21.0/curator_0.3.21.0.zip",
-        "checksum": "bf8550fc3accdee0e6c9785edb5311e7",
-        "timestamp": "2026-07-30T12:13:29Z"
-      },
-      {
-        "version": "0.3.20.0",
-        "changelog": "Adds a progress panel to the configuration page. Starting a run used to replace the status line with a note telling you to go read the server log; a run takes minutes and costs money, so it now shows a progress bar, the phase in plain words, and a stacked breakdown of estimated cost into input and output with token, call and cache counts. Cost reads as not priced rather than zero when no prices are set, and sub-cent totals show as less than a cent rather than rounding to nothing. Requires Jellyfin 10.11.11 or newer.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.3.20.0/curator_0.3.20.0.zip",
-        "checksum": "e8f778de27cc822c375da3ec4a6168d0",
-        "timestamp": "2026-07-30T10:53:24Z"
-      },
-      {
-        "version": "0.3.19.0",
-        "changelog": "Fixes personalization for anyone who watches television. Jellyfin records playback against episodes, so a series row carries no watch history and every TV viewer read as a viewer of nothing \u2014 measured on a 297-item library, six users' activity held 210 movie entries against 3 series entries. Episode playback is now rolled up onto the series and reaches the model as watch depth. Shared categories go to every user rather than being opted into. A run interrupted by a plugin install is now reported as what it is instead of a stack trace. The landscape/portrait row split is a setting, and both category pools default to a floor of 4 members and a cap of 10. Requires Jellyfin 10.11.11 or newer.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.3.19.0/curator_0.3.19.0.zip",
-        "checksum": "5f1466f4e0339dc632fc28f41c9d85c9",
-        "timestamp": "2026-07-30T10:41:17Z"
-      },
-      {
         "version": "0.3.16.0",
-        "changelog": "Adds native Google Gemini and xAI Grok providers, both constraining the model to a response schema so a malformed answer cannot lose a batch. Every run now writes a complete JSON record \u2014 settings, every step, every prompt and response, and cost per call and per run. Category size and count limits are told to the model as well as enforced on its answer, and a renamed category keeps its playlist and home screen row instead of being rebuilt. Over-cap categories are pruned oldest-first, and deleting a category now removes its playlists. Requires Jellyfin 10.11.11 or newer.",
+        "changelog": "Requires Jellyfin 10.11.11 or newer. Adds native Google Gemini and xAI Grok providers, both constraining the model to a response schema so a malformed answer cannot lose a batch, alongside Anthropic, OpenAI and any OpenAI-compatible endpoint. Every run writes a complete JSON record \u2014 the settings it ran under, every step, every prompt and response in full, and cost per call and per run. Category size and count limits are told to the model as well as enforced on its answer, since a limit the model cannot see is one it cannot aim at. A renamed category keeps its playlist, its position and its watch state: models reword the same theme every run, and matching on the name alone tore down and rebuilt every home screen row each time. This is also the first release that runs at all on Jellyfin 10.11.11, which broke the plugin ABI, and it carries the earlier pipeline whole: library scan, category reconciliation, playlist building with ownership tagging, home screen rows via Collection Sections, prompt caching, an optional batch API path, a weekly scheduled task and a configuration page with a manual run button.",
         "targetAbi": "10.11.11.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.3.16.0/curator_0.3.16.0.zip",
         "checksum": "0a9336c1e0db462a3d2fa41a2e1a7b95",
         "timestamp": "2026-07-30T09:22:52Z"
-      },
-      {
-        "version": "0.3.0.0",
-        "changelog": "Fixes the 10.11.11 ABI break that made every run fail, plus the two model-response bugs that discarded results. Adds prompt caching, an optional batch API path, a tabbed configuration page with category management, and a tag limit. Requires Jellyfin 10.11.11 or newer.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.3.0.0/curator_0.3.0.0.zip",
-        "checksum": "e2ac5597d99d720649e234a3f1406bc0",
-        "timestamp": "2026-07-30T00:20:52Z"
-      },
-      {
-        "version": "0.2.0.0",
-        "changelog": "Feature-complete pipeline: library scan, LLM providers (Anthropic / OpenAI / OpenAI-compatible), category reconciliation, playlist building with ownership tagging, home screen rows via Collection Sections, a weekly scheduled task, and a full configuration page with a manual run button. Not yet exercised against a live server - please report issues.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.2.0.0/curator_0.2.0.0.zip",
-        "checksum": "96a73f69058f713bf39a3d4de9c83daa",
-        "timestamp": "2026-07-29T19:59:17Z"
       }
     ]
   }
