@@ -34,6 +34,7 @@ namespace Jellyfin.Plugin.Curator
             serviceCollection.AddSingleton<CuratorRunService>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, GenerateCategoriesTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, DistillSummariesTask>();
+            serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, MaintenanceTask>();
         }
     }
 }

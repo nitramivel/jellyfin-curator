@@ -137,6 +137,34 @@
                    the run drawer is the wider of the two. */
                 #CuratorCategories { max-width: 1080px; }
 
+                /* Schedule rows. Built by innerHTML, so plain form controls rather
+                   than is="emby-*" — customized built-ins upgrade unreliably inside
+                   generated markup, the same reason .curatorCheck exists. */
+                .curatorSchedule {
+                    padding: 1.1em 0;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                }
+                .curatorSchedule:last-child { border-bottom: 0; }
+                .curatorScheduleName { font-size: 1.02em; font-weight: 600; }
+                .curatorScheduleDesc { font-size: 0.88em; opacity: 0.6; margin: 0.3em 0 0.8em; }
+                .curatorScheduleControls {
+                    display: flex; flex-wrap: wrap; gap: 0.6em 0.9em; align-items: center;
+                }
+                .curatorScheduleControls select,
+                .curatorScheduleControls input {
+                    background: rgba(255, 255, 255, 0.08);
+                    color: inherit;
+                    border: 1px solid rgba(255, 255, 255, 0.18);
+                    border-radius: 4px;
+                    padding: 0.45em 0.6em;
+                    font-size: 0.95em;
+                    font-family: inherit;
+                }
+                .curatorScheduleControls input[type="number"] { width: 6em; }
+                .curatorScheduleControls label { opacity: 0.7; font-size: 0.9em; }
+                .curatorScheduleMeta { font-size: 0.85em; opacity: 0.55; margin-top: 0.7em; }
+                .curatorCostly { color: #d9a441; }
+
                 /* Detail panels — shared by the category list and the run history.
                    The old panels indented with padding-left, which spent width in an already
                    narrow dashboard column and still left the panel visually loose from its row.
@@ -226,6 +254,8 @@
                         data-target="home"><span>Home screen</span></button>
                 <button is="emby-button" type="button" class="raised curatorTabButton"
                         data-target="summaries"><span>Summaries</span></button>
+                <button is="emby-button" type="button" class="raised curatorTabButton"
+                        data-target="schedule"><span>Schedule</span></button>
                 <button is="emby-button" type="button" class="raised curatorTabButton"
                         data-target="categories"><span>Runs</span></button>
             </div>
@@ -748,6 +778,34 @@
                 </div>
             </form>
 
+            <div class="curatorTabPanel hide" data-panel="schedule">
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">When Curator runs</h3>
+                    <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                        How often each of Curator's scheduled tasks fires. These are the same schedules as
+                        <em>Dashboard &rarr; Scheduled Tasks</em> — editing here changes them there and the other way
+                        round. Saving replaces a task's triggers, so if you set something more elaborate in
+                        Jellyfin's own page, that is what this will overwrite.
+                    </p>
+                    <p class="fieldDescription" style="margin:0 0 1.4em;">
+                        Only <strong>Generate Categories</strong> costs money. Condensing is cheap after the first
+                        pass and cleanup is free, so both can run often.
+                    </p>
+
+                    <div id="CuratorSchedules"><p class="fieldDescription">Loading&hellip;</p></div>
+
+                    <div style="margin-top:1.4em;">
+                        <button is="emby-button" type="button" id="CuratorSaveSchedules" class="raised">
+                            <span>Save schedule</span>
+                        </button>
+                        <button is="emby-button" type="button" id="CuratorRunMaintenance" class="raised">
+                            <span>Clean up and sync now</span>
+                        </button>
+                    </div>
+                    <p class="fieldDescription" id="CuratorScheduleState" style="margin-top:0.8em;"></p>
+                </div>
+            </div>
+
             <div class="curatorTabPanel hide" data-panel="categories">
                 <div class="verticalSection">
                     <h3 class="sectionTitle">Run now</h3>
@@ -1085,6 +1143,192 @@
                 select.selectedIndex = 0;
             }
 
+            // ---- schedule ----
+
+            var schedules = [];
+
+            // Only this one spends money when it fires, so the page says so rather
+            // than leaving the owner to remember which is which.
+            var COSTLY_TASKS = { CuratorGenerateCategories: true };
+
+            function minutesToTime(minutes) {
+                var h = Math.floor(minutes / 60);
+                var m = minutes % 60;
+                return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+            }
+
+            function timeToMinutes(value) {
+                var parts = String(value || '').split(':');
+                var h = parseInt(parts[0], 10);
+                var m = parseInt(parts[1], 10);
+                if (isNaN(h) || isNaN(m)) {
+                    return 180;
+                }
+
+                return (h * 60) + m;
+            }
+
+            function scheduleRow(task, index) {
+                var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                var modes = ['Manual', 'Interval', 'Daily', 'Weekly'];
+                var labels = {
+                    Manual: 'Only when I start it',
+                    Interval: 'Every…',
+                    Daily: 'Once a day at…',
+                    Weekly: 'Once a week on…'
+                };
+
+                var html = '<div class="curatorSchedule" data-index="' + index + '">'
+                    + '<div class="curatorScheduleName">' + escapeHtml(task.Name)
+                    + (COSTLY_TASKS[task.Key] ? ' <span class="curatorCostly">· costs money</span>' : '')
+                    + '</div>'
+                    + '<div class="curatorScheduleDesc">' + escapeHtml(task.Description) + '</div>'
+                    + '<div class="curatorScheduleControls">'
+                    + '<select class="curatorScheduleMode">'
+                    + modes.map(function (m) {
+                        return '<option value="' + m + '"' + (task.Mode === m ? ' selected' : '') + '>'
+                            + escapeHtml(labels[m]) + '</option>';
+                    }).join('')
+                    + '</select>';
+
+                html += '<span class="curatorScheduleInterval' + (task.Mode === 'Interval' ? '' : ' hide') + '">'
+                    + '<input type="number" class="curatorScheduleHours" min="0.25" max="2160" step="0.25" value="'
+                    + escapeHtml(task.IntervalHours) + '" /> <label>hours</label></span>';
+
+                var showTime = task.Mode === 'Daily' || task.Mode === 'Weekly';
+                html += '<span class="curatorScheduleTime' + (showTime ? '' : ' hide') + '">'
+                    + '<input type="time" class="curatorScheduleAt" value="'
+                    + escapeHtml(minutesToTime(task.TimeOfDayMinutes)) + '" /></span>';
+
+                html += '<span class="curatorScheduleDay' + (task.Mode === 'Weekly' ? '' : ' hide') + '">'
+                    + '<select class="curatorScheduleDow">'
+                    + days.map(function (d, i) {
+                        return '<option value="' + i + '"' + (task.DayOfWeek === i ? ' selected' : '') + '>'
+                            + d + '</option>';
+                    }).join('')
+                    + '</select></span>';
+
+                html += '</div>';
+
+                var meta = 'State: ' + escapeHtml(task.State);
+                if (task.LastRun) {
+                    meta += ' · Last run ' + formatDate(task.LastRun)
+                        + (task.LastStatus ? ' (' + escapeHtml(task.LastStatus) + ')' : '');
+                } else {
+                    meta += ' · never run';
+                }
+
+                html += '<div class="curatorScheduleMeta">' + meta + '</div></div>';
+                return html;
+            }
+
+            function renderSchedules() {
+                var container = page.querySelector('#CuratorSchedules');
+                if (!schedules.length) {
+                    container.innerHTML = '<p class="fieldDescription">No Curator tasks found. '
+                        + 'Restart Jellyfin if you have just updated the plugin.</p>';
+                    return;
+                }
+
+                container.innerHTML = schedules.map(scheduleRow).join('');
+            }
+
+            /** Shows only the inputs the chosen mode actually uses. */
+            function onScheduleChange(e) {
+                var row = e.target.closest ? e.target.closest('.curatorSchedule') : null;
+                if (!row || !e.target.classList.contains('curatorScheduleMode')) {
+                    return;
+                }
+
+                var mode = e.target.value;
+                row.querySelector('.curatorScheduleInterval').classList.toggle('hide', mode !== 'Interval');
+                row.querySelector('.curatorScheduleTime')
+                    .classList.toggle('hide', mode !== 'Daily' && mode !== 'Weekly');
+                row.querySelector('.curatorScheduleDay').classList.toggle('hide', mode !== 'Weekly');
+            }
+
+            function loadSchedules() {
+                return ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Schedules'),
+                    dataType: 'json'
+                }).then(function (tasks) {
+                    schedules = tasks || [];
+                    renderSchedules();
+                }, function () {
+                    page.querySelector('#CuratorSchedules').innerHTML =
+                        '<p class="fieldDescription">Could not read the schedule — check the server log.</p>';
+                });
+            }
+
+            function saveSchedules() {
+                var rows = page.querySelectorAll('.curatorSchedule');
+                var updates = [];
+                for (var i = 0; i < rows.length; i++) {
+                    var row = rows[i];
+                    var task = schedules[parseInt(row.getAttribute('data-index'), 10)];
+                    if (!task) {
+                        continue;
+                    }
+
+                    updates.push({
+                        Key: task.Key,
+                        Mode: row.querySelector('.curatorScheduleMode').value,
+                        IntervalHours: parseFloat(row.querySelector('.curatorScheduleHours').value) || 24,
+                        TimeOfDayMinutes: timeToMinutes(row.querySelector('.curatorScheduleAt').value),
+                        DayOfWeek: parseInt(row.querySelector('.curatorScheduleDow').value, 10) || 0
+                    });
+                }
+
+                var state = page.querySelector('#CuratorScheduleState');
+                state.innerHTML = 'Saving&hellip;';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Schedules'),
+                    content: JSON.stringify(updates),
+                    contentType: 'application/json',
+                    dataType: 'json'
+                }).then(function (tasks) {
+                    schedules = tasks || [];
+                    renderSchedules();
+                    state.innerHTML = 'Schedule saved.';
+                }, function () {
+                    state.innerHTML = 'Could not save the schedule — check the server log.';
+                });
+            }
+
+            function runMaintenance() {
+                var button = page.querySelector('#CuratorRunMaintenance');
+                var state = page.querySelector('#CuratorScheduleState');
+                button.disabled = true;
+                state.innerHTML = 'Cleaning up&hellip;';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Maintenance'),
+                    dataType: 'json'
+                }).then(function (result) {
+                    button.disabled = false;
+                    if (result.Skipped) {
+                        state.innerHTML = 'Skipped — a run is in progress.';
+                        return;
+                    }
+
+                    var sync = result.Sync || {};
+                    state.innerHTML = 'Done. '
+                        + (sync.CategoriesRebuilt || 0) + ' playlist(s) rebuilt, '
+                        + (sync.CategoriesRemoved || 0) + ' empty categor(ies) removed, '
+                        + (sync.PlaylistsRemoved || 0) + ' orphaned playlist(s) deleted, '
+                        + (result.RecommendationsRefreshed || 0) + ' recommendation playlist(s) refreshed, '
+                        + (result.SummariesPruned || 0) + ' stale summary/summaries pruned.';
+                    loadSchedules();
+                }, function () {
+                    button.disabled = false;
+                    state.innerHTML = 'Cleanup failed — check the server log.';
+                });
+            }
+
             // ---- condensed summaries ----
 
             var summaryPollTimer = null;
@@ -1302,8 +1546,15 @@
                     buttons[j].classList.toggle('curatorTabActive', buttons[j].getAttribute('data-target') === name);
                 }
 
-                // Save applies to the settings form only; Categories has its own actions.
-                page.querySelector('#CuratorSaveRow').classList.toggle('hide', name === 'categories');
+                // Save applies to the settings form only. Runs and Schedule are not
+                // part of it — Schedule writes through Jellyfin's task manager rather
+                // than plugin config, so the form's Save would do nothing for it.
+                page.querySelector('#CuratorSaveRow')
+                    .classList.toggle('hide', name === 'categories' || name === 'schedule');
+
+                if (name === 'schedule') {
+                    loadSchedules();
+                }
 
                 // The Summaries tab shows live state, so refresh on arrival rather
                 // than polling it while the user is on some other tab.
@@ -2460,6 +2711,10 @@
                     startDistill(true);
                 });
                 page.querySelector('#CuratorClearSummariesButton').addEventListener('click', clearSummaries);
+
+                page.querySelector('#CuratorSaveSchedules').addEventListener('click', saveSchedules);
+                page.querySelector('#CuratorRunMaintenance').addEventListener('click', runMaintenance);
+                page.querySelector('#CuratorSchedules').addEventListener('change', onScheduleChange);
 
                 // Keeps the option label in step with the name as it is typed, so the
                 // list never shows a profile under a name the editor has replaced.

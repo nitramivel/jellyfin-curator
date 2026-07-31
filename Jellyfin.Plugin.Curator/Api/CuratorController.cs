@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Curator.Core.Models;
+using Jellyfin.Plugin.Curator.Core.Scheduling;
 using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
 using Jellyfin.Plugin.Curator.Services.Playlists;
@@ -11,6 +12,7 @@ using Jellyfin.Plugin.Curator.Services.Runs;
 using Jellyfin.Plugin.Curator.Services.Summaries;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -96,6 +98,42 @@ namespace Jellyfin.Plugin.Curator.Api
         Guid? CurrentRunId,
         RunLogSummary? CurrentRun);
 
+    /// <summary>One Curator scheduled task and its current cadence.</summary>
+    /// <param name="Key">The task key, e.g. CuratorGenerateCategories.</param>
+    /// <param name="Name">Display name.</param>
+    /// <param name="Description">What the task does.</param>
+    /// <param name="Mode">Manual, Interval, Daily or Weekly.</param>
+    /// <param name="IntervalHours">Hours between runs, when Interval.</param>
+    /// <param name="TimeOfDayMinutes">Minutes past midnight, when Daily or Weekly.</param>
+    /// <param name="DayOfWeek">Day, when Weekly.</param>
+    /// <param name="State">Jellyfin's task state, e.g. Idle or Running.</param>
+    /// <param name="LastRun">When it last finished, if ever.</param>
+    /// <param name="LastStatus">How that run ended, if ever.</param>
+    public sealed record CuratorTaskSchedule(
+        string Key,
+        string Name,
+        string Description,
+        string Mode,
+        double IntervalHours,
+        int TimeOfDayMinutes,
+        int DayOfWeek,
+        string State,
+        DateTime? LastRun,
+        string? LastStatus);
+
+    /// <summary>A cadence change for one task.</summary>
+    /// <param name="Key">The task key.</param>
+    /// <param name="Mode">Manual, Interval, Daily or Weekly.</param>
+    /// <param name="IntervalHours">Hours between runs, when Interval.</param>
+    /// <param name="TimeOfDayMinutes">Minutes past midnight, when Daily or Weekly.</param>
+    /// <param name="DayOfWeek">Day, when Weekly.</param>
+    public sealed record ScheduleUpdate(
+        string Key,
+        string Mode,
+        double IntervalHours,
+        int TimeOfDayMinutes,
+        int DayOfWeek);
+
     /// <summary>Coverage of the condensed-summary cache, for the Summaries tab.</summary>
     /// <param name="IsRunning">Whether a distillation pass is in progress.</param>
     /// <param name="Progress">How far that pass has got, 0-100.</param>
@@ -147,6 +185,7 @@ namespace Jellyfin.Plugin.Curator.Api
         private readonly ICuratorPlaylistService _playlistService;
         private readonly IUserManager _userManager;
         private readonly ILibraryManager _libraryManager;
+        private readonly ITaskManager _taskManager;
         private readonly ILogger<CuratorController> _logger;
 
         public CuratorController(
@@ -158,6 +197,7 @@ namespace Jellyfin.Plugin.Curator.Api
             ICuratorPlaylistService playlistService,
             IUserManager userManager,
             ILibraryManager libraryManager,
+            ITaskManager taskManager,
             ILogger<CuratorController> logger)
         {
             _runService = runService;
@@ -168,6 +208,7 @@ namespace Jellyfin.Plugin.Curator.Api
             _playlistService = playlistService;
             _userManager = userManager;
             _libraryManager = libraryManager;
+            _taskManager = taskManager;
             _logger = logger;
         }
 
@@ -357,6 +398,108 @@ namespace Jellyfin.Plugin.Curator.Api
             }
 
             return Accepted();
+        }
+
+        /// <summary>
+        /// Lists Curator's scheduled tasks and how often each is set to run.
+        /// </summary>
+        /// <response code="200">Schedules listed.</response>
+        /// <returns>The tasks.</returns>
+        [HttpGet("Schedules")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<IReadOnlyList<CuratorTaskSchedule>> GetSchedules()
+        {
+            return CuratorWorkers().Select(worker =>
+            {
+                var spec = ScheduleTranslator.FromTriggers(worker.Triggers);
+                return new CuratorTaskSchedule(
+                    worker.ScheduledTask.Key,
+                    worker.Name,
+                    worker.Description,
+                    spec.Mode.ToString(),
+                    Math.Round(spec.IntervalHours, 2),
+                    spec.TimeOfDayMinutes,
+                    (int)spec.DayOfWeek,
+                    worker.State.ToString(),
+                    worker.LastExecutionResult?.EndTimeUtc,
+                    worker.LastExecutionResult?.Status.ToString());
+            }).ToList();
+        }
+
+        /// <summary>
+        /// Sets how often Curator's scheduled tasks run.
+        /// </summary>
+        /// <remarks>
+        /// Writes through Jellyfin's own task manager, so the dashboard's Scheduled
+        /// Tasks page shows the same values and either page can edit them. Saving
+        /// <em>replaces</em> a task's triggers rather than adding to them — the
+        /// editor offers one cadence, so keeping a second hidden trigger would mean
+        /// the page showed something other than what runs.
+        /// </remarks>
+        /// <param name="updates">The cadences to apply.</param>
+        /// <response code="200">Schedules updated.</response>
+        /// <returns>The tasks as they now stand.</returns>
+        [HttpPost("Schedules")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<IReadOnlyList<CuratorTaskSchedule>> UpdateSchedules(
+            [FromBody] IReadOnlyList<ScheduleUpdate> updates)
+        {
+            ArgumentNullException.ThrowIfNull(updates);
+
+            var workers = CuratorWorkers().ToDictionary(w => w.ScheduledTask.Key, StringComparer.Ordinal);
+
+            foreach (var update in updates)
+            {
+                if (update is null || !workers.TryGetValue(update.Key, out var worker))
+                {
+                    continue;
+                }
+
+                if (!Enum.TryParse<ScheduleMode>(update.Mode, ignoreCase: true, out var mode))
+                {
+                    mode = ScheduleMode.Manual;
+                }
+
+                var spec = new ScheduleSpec(
+                    mode,
+                    update.IntervalHours,
+                    update.TimeOfDayMinutes,
+                    (DayOfWeek)Math.Clamp(update.DayOfWeek, 0, 6));
+
+                worker.Triggers = [.. ScheduleTranslator.ToTriggers(spec)];
+
+                _logger.LogInformation(
+                    "Curator: '{Task}' is now set to {Mode}",
+                    worker.Name,
+                    spec.Normalized().Mode);
+            }
+
+            return GetSchedules();
+        }
+
+        /// <summary>
+        /// Runs the cleanup and sync pass now.
+        /// </summary>
+        /// <response code="200">Maintenance finished.</response>
+        /// <returns>What it did.</returns>
+        [HttpPost("Maintenance")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<MaintenanceResult>> RunMaintenance()
+        {
+            // Not fire-and-forget, unlike a run or a distil pass: this makes no
+            // network calls, so it finishes well inside an HTTP timeout and the page
+            // can show the result directly.
+            return await _runService.RunMaintenanceAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Curator's own scheduled tasks, in the order the settings page shows them.
+        /// </summary>
+        private IEnumerable<IScheduledTaskWorker> CuratorWorkers()
+        {
+            return _taskManager.ScheduledTasks
+                .Where(w => string.Equals(w.ScheduledTask.Category, "Curator", StringComparison.Ordinal))
+                .OrderBy(w => w.Name, StringComparer.OrdinalIgnoreCase);
         }
 
         /// <summary>
