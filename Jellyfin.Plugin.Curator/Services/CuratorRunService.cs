@@ -14,6 +14,7 @@ using Jellyfin.Plugin.Curator.Services.Library;
 using Jellyfin.Plugin.Curator.Services.Llm;
 using Jellyfin.Plugin.Curator.Services.Playlists;
 using Jellyfin.Plugin.Curator.Services.Runs;
+using Jellyfin.Plugin.Curator.Services.Summaries;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -46,6 +47,7 @@ namespace Jellyfin.Plugin.Curator.Services
         private readonly IHomeScreenIntegrationService _homeScreenService;
         private readonly IUserManager _userManager;
         private readonly IRunLogStore _runLogStore;
+        private readonly ISummaryStore _summaryStore;
         private readonly ILogger<CuratorRunService> _logger;
         private readonly SemaphoreSlim _runLock = new(1, 1);
 
@@ -80,6 +82,7 @@ namespace Jellyfin.Plugin.Curator.Services
             IHomeScreenIntegrationService homeScreenService,
             IUserManager userManager,
             IRunLogStore runLogStore,
+            ISummaryStore summaryStore,
             ILogger<CuratorRunService> logger)
         {
             _libraryScanner = libraryScanner;
@@ -91,6 +94,7 @@ namespace Jellyfin.Plugin.Curator.Services
             _homeScreenService = homeScreenService;
             _userManager = userManager;
             _runLogStore = runLogStore;
+            _summaryStore = summaryStore;
             _logger = logger;
         }
 
@@ -237,8 +241,15 @@ namespace Jellyfin.Plugin.Curator.Services
 
             Report(progress, runLog, 2);
 
-            // 1. Scan.
-            var records = _libraryScanner.ScanLibrary(config.IncludeEpisodes, config.SurfacedCollections);
+            // 1. Scan. Condensed summaries are substituted for overviews on the way
+            // out when the owner has switched them on; an empty store simply means
+            // nothing is substituted and the run behaves exactly as before.
+            var condensed = LoadCondensedSummaries(config);
+            var records = _libraryScanner.ScanLibrary(
+                config.IncludeEpisodes,
+                config.SurfacedCollections,
+                ItemReducer.DefaultMaxOverviewLength,
+                condensed);
             if (records.Count == 0)
             {
                 _logger.LogWarning("Curator: library scan produced no items; nothing to categorize");
@@ -541,6 +552,41 @@ namespace Jellyfin.Plugin.Curator.Services
                         })
                         .ToArray(),
                 });
+        }
+
+        /// <summary>
+        /// Reads the condensed summaries to send in place of overviews, or null when
+        /// the owner has not switched them on.
+        /// </summary>
+        /// <remarks>
+        /// Never fatal. A summary cache is an optimisation, and a run that cannot
+        /// read one must still happen — just at the old prompt size.
+        /// </remarks>
+        private IReadOnlyDictionary<Guid, string>? LoadCondensedSummaries(PluginConfiguration config)
+        {
+            if (!config.UseCondensedSummaries)
+            {
+                return null;
+            }
+
+            try
+            {
+                var stored = _summaryStore.GetAll();
+                if (stored.Count == 0)
+                {
+                    _logger.LogInformation(
+                        "Curator: condensed summaries are switched on but none are stored; "
+                        + "run the summary task to build them");
+                    return null;
+                }
+
+                return stored.ToDictionary(pair => pair.Key, pair => pair.Value.Text);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Curator: could not read condensed summaries; using the full overviews");
+                return null;
+            }
         }
 
         /// <summary>

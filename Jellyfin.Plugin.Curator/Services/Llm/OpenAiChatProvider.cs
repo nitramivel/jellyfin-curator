@@ -267,11 +267,14 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     type = "json_schema",
                     json_schema = new
                     {
-                        name = request.Shape == ResponseShape.PersonalCategories
-                            ? "curator_personal_categories"
-                            : "curator_categories",
+                        name = request.Shape switch
+                        {
+                            ResponseShape.PersonalCategories => "curator_personal_categories",
+                            ResponseShape.Summaries => "curator_summaries",
+                            _ => "curator_categories",
+                        },
                         strict = true,
-                        schema = BuildResponseSchema(),
+                        schema = BuildResponseSchema(request.Shape),
                     },
                 },
             };
@@ -293,8 +296,13 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// the shapes the prompts describe.
         /// </para>
         /// </remarks>
-        private static object BuildResponseSchema()
+        private static object BuildResponseSchema(ResponseShape shape)
         {
+            if (shape == ResponseShape.Summaries)
+            {
+                return BuildSummarySchema();
+            }
+
             var category = new
             {
                 type = "object",
@@ -329,6 +337,46 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 type = "object",
                 properties = new { categories },
                 required = new[] { "categories" },
+                additionalProperties = false,
+            };
+        }
+
+        /// <summary>
+        /// The condensed-summary contract, in OpenAI strict-mode dialect.
+        /// </summary>
+        /// <remarks>
+        /// Must stay in step with <see cref="Core.Summaries.SummaryParser"/>. The
+        /// character budget is deliberately NOT expressed here: JSON Schema has no
+        /// maxLength that strict mode honours for this purpose, so the prompt states
+        /// it and the parser enforces it. The schema's job is only to guarantee the
+        /// shape.
+        /// </remarks>
+        private static object BuildSummarySchema()
+        {
+            var summary = new
+            {
+                type = "object",
+                properties = new
+                {
+                    i = new { type = "integer", description = "The item's integer index from the input list." },
+                    s = new { type = "string", description = "The compressed description." },
+                },
+                required = new[] { "i", "s" },
+                additionalProperties = false,
+            };
+
+            return new
+            {
+                type = "object",
+                properties = new
+                {
+                    summaries = new
+                    {
+                        type = "array",
+                        items = summary,
+                    },
+                },
+                required = new[] { "summaries" },
                 additionalProperties = false,
             };
         }

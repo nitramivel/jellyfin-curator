@@ -22,6 +22,17 @@ namespace Jellyfin.Plugin.Curator.Core
         public const int DefaultMaxOverviewLength = 300;
 
         /// <summary>
+        /// Passed as the maximum length to keep an overview whole.
+        /// <para>
+        /// Used by the condensed-summary pass, which must read the overview the
+        /// metadata provider actually wrote. Distilling a truncation would bake the
+        /// cut into the cache permanently — the summary would be a compression of
+        /// the first 300 characters forever, and nothing downstream could tell.
+        /// </para>
+        /// </summary>
+        public const int NoOverviewLimit = int.MaxValue;
+
+        /// <summary>
         /// Reduces a library item to its compact record, or returns null for items that
         /// cannot be meaningfully categorized (unsupported kinds, missing names).
         /// </summary>

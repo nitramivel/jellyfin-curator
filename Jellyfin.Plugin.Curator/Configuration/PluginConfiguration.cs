@@ -247,6 +247,72 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// </summary>
         public int MaxTagsPerItem { get; set; } = 0;
 
+        // ---------------------------------------------------------------------
+        // Condensed summaries.
+        //
+        // Overviews are about two thirds of every prompt, and the same overview is
+        // re-sent on every run forever. Distilling each one down once and caching
+        // the result trades a single up-front cost for a permanently smaller prompt.
+        // The distilled text is stored beside the categories and never written back
+        // to Jellyfin, so the library's own overviews are untouched.
+        // ---------------------------------------------------------------------
+
+        /// <summary>
+        /// Gets or sets a value indicating whether runs send the condensed summary
+        /// in place of the Jellyfin overview, where one exists.
+        /// <para>
+        /// Off by default, because with an empty summary store it would change
+        /// nothing and with a half-built one it would send a library described two
+        /// different ways. Turn it on once the Summaries tab reports full coverage.
+        /// </para>
+        /// </summary>
+        public bool UseCondensedSummaries { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets the target length of a condensed summary, in characters.
+        /// <para>
+        /// Told to the model and enforced on its answer, the same contract
+        /// <see cref="CategoryLimits"/> keeps for categories. 90 is about a third of
+        /// the measured average overview and still holds a clause about tone.
+        /// </para>
+        /// </summary>
+        public int CondensedSummaryMaxLength { get; set; } = 90;
+
+        /// <summary>
+        /// Gets or sets how many items are distilled per LLM request. 0 sends them all
+        /// in one request.
+        /// <para>
+        /// Unlike the category <see cref="BatchSize"/>, batching costs nothing here:
+        /// each item is summarized independently, so a batch boundary cannot hide a
+        /// connection the way it can when the model is looking for threads. Batches
+        /// exist only to keep any one response inside the output cap, and to make a
+        /// failure lose one batch rather than the whole pass.
+        /// </para>
+        /// </summary>
+        public int SummaryBatchSize { get; set; } = 40;
+
+        /// <summary>
+        /// Gets or sets the overview length below which an item is left alone.
+        /// <para>
+        /// Distilling an overview that is already shorter than the target spends a
+        /// model call to make the prompt no smaller, and risks throwing away detail
+        /// for nothing.
+        /// </para>
+        /// </summary>
+        public int SummaryMinSourceLength { get; set; } = 140;
+
+        /// <summary>
+        /// Gets or sets the <see cref="ModelProfile.Id"/> used for distillation.
+        /// Blank uses <see cref="DefaultModelProfileId"/>.
+        /// <para>
+        /// The first per-task model assignment. Distillation is a mechanical rewrite
+        /// of one paragraph at a time — it does not need the model that finds threads
+        /// across a whole library — so pointing it at a cheaper profile is the whole
+        /// point of the profile list.
+        /// </para>
+        /// </summary>
+        public string SummaryModelProfileId { get; set; } = string.Empty;
+
         /// <summary>
         /// Gets or sets the collection names whose membership is sent to the model,
         /// comma-separated. Empty sends none.

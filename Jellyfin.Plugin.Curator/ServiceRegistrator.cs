@@ -5,6 +5,7 @@ using Jellyfin.Plugin.Curator.Services.Library;
 using Jellyfin.Plugin.Curator.Services.Llm;
 using Jellyfin.Plugin.Curator.Services.Playlists;
 using Jellyfin.Plugin.Curator.Services.Runs;
+using Jellyfin.Plugin.Curator.Services.Summaries;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,8 +29,11 @@ namespace Jellyfin.Plugin.Curator
             serviceCollection.AddSingleton<IApiKeyProvider, ServerApiKeyProvider>();
             serviceCollection.AddSingleton<IHomeScreenIntegrationService, HomeScreenIntegrationService>();
             serviceCollection.AddSingleton<IRunLogStore, RunLogStore>();
+            serviceCollection.AddSingleton<ISummaryStore, SummaryStore>();
+            serviceCollection.AddSingleton<SummaryDistillService>();
             serviceCollection.AddSingleton<CuratorRunService>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, GenerateCategoriesTask>();
+            serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, DistillSummariesTask>();
         }
     }
 }

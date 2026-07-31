@@ -225,6 +225,8 @@
                 <button is="emby-button" type="button" class="raised curatorTabButton"
                         data-target="home"><span>Home screen</span></button>
                 <button is="emby-button" type="button" class="raised curatorTabButton"
+                        data-target="summaries"><span>Summaries</span></button>
+                <button is="emby-button" type="button" class="raised curatorTabButton"
                         data-target="categories"><span>Runs</span></button>
             </div>
 
@@ -579,6 +581,114 @@
                     </div>
                 </div>
 
+                <div class="curatorTabPanel hide" data-panel="summaries">
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Condensed summaries</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            Overviews are about two thirds of every prompt, and the same text is re-sent on every
+                            run forever. This rewrites each long overview once into a short summary that keeps the
+                            <em>feel</em> of a title rather than its plot, and caches the result. After the first
+                            pass only new and rewritten items cost anything.
+                            <strong>Your library's own overviews are never modified</strong> — the short versions
+                            live only in Curator's data directory, so clearing them puts everything back exactly.
+                        </p>
+
+                        <div class="curatorProgress" id="CuratorSummaryPanel" style="margin-top:0;">
+                            <div class="curatorProgressHead">
+                                <div>
+                                    <div class="curatorProgressPhase" id="CuratorSummaryPhase">Checking&hellip;</div>
+                                    <div class="curatorProgressSub" id="CuratorSummarySub"></div>
+                                </div>
+                                <div class="curatorProgressPct" id="CuratorSummaryPct">&mdash;</div>
+                            </div>
+                            <div class="curatorTrack" role="progressbar" id="CuratorSummaryTrack"
+                                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                                <div class="curatorFill" id="CuratorSummaryFill"></div>
+                            </div>
+                            <div class="curatorCostLegend" id="CuratorSummaryStats"></div>
+                        </div>
+
+                        <div style="margin:1.2em 0 1.6em;">
+                            <button is="emby-button" type="button" id="CuratorDistillButton" class="raised">
+                                <span>Condense now</span>
+                            </button>
+                            <button is="emby-button" type="button" id="CuratorDistillAllButton" class="raised">
+                                <span>Redo all</span>
+                            </button>
+                            <button is="emby-button" type="button" id="CuratorClearSummariesButton" class="raised">
+                                <span>Clear cache</span>
+                            </button>
+                        </div>
+                        <div class="fieldDescription" style="margin-bottom:1.6em;">
+                            <strong>Condense now</strong> only pays for items that are new or whose overview has
+                            changed. <strong>Redo all</strong> re-buys the whole library — use it after changing the
+                            length or the model. Both also run on a schedule, daily, under
+                            <em>Scheduled Tasks &rarr; Curator: Condense Summaries</em>.
+                        </div>
+
+                        <h3 class="sectionTitle">Settings</h3>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="UseCondensedSummaries"
+                                       name="UseCondensedSummaries" />
+                                <span>Send condensed summaries to the model</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Off until you have built them. With a half-built cache this describes half the
+                                library one way and half the other, so turn it on once coverage is complete.
+                                Items with no summary always fall back to their full overview.
+                            </div>
+                        </div>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="SummaryModelProfile">Model profile</label>
+                            <select is="emby-select" id="SummaryModelProfile" name="SummaryModelProfile"
+                                    class="emby-select-withcolor emby-select"></select>
+                            <div class="fieldDescription">
+                                Which saved profile does the condensing. This is a mechanical rewrite of one
+                                paragraph at a time and does not need the model that finds threads across a whole
+                                library — point it at a cheaper profile. Defaults to the profile runs use.
+                                <strong>Takes effect immediately</strong> on the buttons above, so you can try a
+                                model without saving; save to make it the choice the daily scheduled task uses too.
+                                The panel reports which profile actually ran.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="CondensedSummaryMaxLength">Summary length (characters)</label>
+                            <input id="CondensedSummaryMaxLength" name="CondensedSummaryMaxLength" type="number"
+                                   min="20" max="400" class="emby-input" />
+                            <div class="fieldDescription">
+                                Told to the model and enforced on its answer. 90 is about a third of a typical
+                                overview and still holds a clause about tone. Changing this needs a <em>Redo all</em>
+                                to take effect on existing summaries.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SummaryMinSourceLength">Leave overviews shorter than</label>
+                            <input id="SummaryMinSourceLength" name="SummaryMinSourceLength" type="number"
+                                   min="0" max="2000" class="emby-input" />
+                            <div class="fieldDescription">
+                                Overviews below this are already short enough — condensing them would spend a call
+                                to make the prompt no smaller.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SummaryBatchSize">Items per request</label>
+                            <input id="SummaryBatchSize" name="SummaryBatchSize" type="number" min="0" max="500"
+                                   class="emby-input" />
+                            <div class="fieldDescription">
+                                Unlike the category batch size this costs nothing in quality — each item is
+                                summarized on its own, so a batch boundary cannot hide a connection. Lower it if
+                                the log reports responses cut off by the output cap.
+                            </div>
+                        </div>
+
+                        <h3 class="sectionTitle">What it produced</h3>
+                        <div id="CuratorSummarySamples">
+                            <p class="fieldDescription">Nothing condensed yet.</p>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="CuratorSaveRow">
                     <button is="emby-button" type="submit" class="raised button-submit block">
                         <span>Save</span>
@@ -815,6 +925,8 @@
                         + escapeHtml(describeProfile(profile)) + '</option>';
                 }).join('');
 
+                syncSummaryProfileSelect();
+
                 var profile = activeProfile();
                 page.querySelector('#ModelProfileEditor').classList.toggle('hide', !profile);
                 page.querySelector('#ModelProfileEmpty').classList.toggle('hide', !!profile);
@@ -839,6 +951,19 @@
                 captureProfileEditor();
                 activeProfileId = id;
                 renderProfiles();
+            }
+
+            /**
+             * Keeps the Summaries tab's profile picker in step with the Model tab's
+             * list, preserving whatever it already pointed at. Without this, adding
+             * or renaming a profile leaves a stale picker that silently saves the
+             * wrong id.
+             */
+            function syncSummaryProfileSelect() {
+                var select = page.querySelector('#SummaryModelProfile');
+                if (select) {
+                    renderSummaryProfileSelect(select.value || '');
+                }
             }
 
             function addProfile(copyActive) {
@@ -908,6 +1033,210 @@
                 select.selectedIndex = 0;
             }
 
+            // ---- condensed summaries ----
+
+            var summaryPollTimer = null;
+
+            /** Fills the model-profile select on the Summaries tab from the saved list. */
+            function renderSummaryProfileSelect(chosenId) {
+                var select = page.querySelector('#SummaryModelProfile');
+                var options = ['<option value="">Same as runs use</option>'];
+                modelProfiles.forEach(function (profile) {
+                    var selected = profile.Id === chosenId ? ' selected' : '';
+                    options.push('<option value="' + escapeHtml(profile.Id) + '"' + selected + '>'
+                        + escapeHtml(describeProfile(profile)) + '</option>');
+                });
+                select.innerHTML = options.join('');
+            }
+
+            function summaryStatLine(label, value) {
+                return '<div class="curatorLegendItem"><span>' + escapeHtml(label)
+                    + '</span><span class="curatorLegendValue">' + escapeHtml(value) + '</span></div>';
+            }
+
+            function renderSummaryStatus(status) {
+                var phase = page.querySelector('#CuratorSummaryPhase');
+                var sub = page.querySelector('#CuratorSummarySub');
+                var pct = page.querySelector('#CuratorSummaryPct');
+                var fill = page.querySelector('#CuratorSummaryFill');
+                var track = page.querySelector('#CuratorSummaryTrack');
+                var stats = page.querySelector('#CuratorSummaryStats');
+                var last = status.LastResult;
+
+                if (status.IsRunning) {
+                    phase.innerHTML = 'Condensing&hellip;';
+                    pct.innerHTML = escapeHtml(Math.round(status.Progress) + '%');
+                    fill.style.width = status.Progress + '%';
+                    fill.classList.toggle('curatorPulsing', status.Progress < 3);
+                    track.setAttribute('aria-valuenow', String(Math.round(status.Progress)));
+                    sub.innerHTML = 'This can take several minutes on a first pass.';
+                } else {
+                    phase.innerHTML = status.StoredCount
+                        ? escapeHtml(status.StoredCount + ' condensed summaries stored')
+                        : 'No summaries yet';
+                    pct.innerHTML = status.UsedInRuns ? 'In use' : 'Not in use';
+                    fill.classList.remove('curatorPulsing');
+                    fill.style.width = status.StoredCount ? '100%' : '0';
+                    track.setAttribute('aria-valuenow', status.StoredCount ? '100' : '0');
+
+                    if (!status.StoredCount) {
+                        sub.innerHTML = 'Press <strong>Condense now</strong> to build them.';
+                    } else if (!status.UsedInRuns) {
+                        sub.innerHTML = 'Built, but runs are still sending the full overviews — '
+                            + 'tick the box below and save to use them.';
+                    } else {
+                        sub.innerHTML = 'Runs are sending these in place of the full overviews.';
+                    }
+                }
+
+                var lines = [];
+                if (status.OriginalChars > 0) {
+                    var saved = status.OriginalChars - status.CondensedChars;
+                    var pctSaved = Math.round(100 * saved / status.OriginalChars);
+                    lines.push(summaryStatLine('Original text', formatChars(status.OriginalChars)));
+                    lines.push(summaryStatLine('Condensed to', formatChars(status.CondensedChars)));
+                    lines.push(summaryStatLine('Reduction', pctSaved + '% smaller'));
+                }
+
+                if (last) {
+                    lines.push(summaryStatLine('Last pass',
+                        last.Distilled + ' condensed, ' + last.UpToDate + ' already current'));
+                    if (last.ProfileName) {
+                        lines.push(summaryStatLine('Ran with', last.ProfileName
+                            + (last.ModelId ? ' · ' + last.ModelId : '')));
+                    }
+
+                    if (last.Failed) {
+                        lines.push(summaryStatLine('Failed', String(last.Failed)));
+                    }
+
+                    if (last.EstimatedCostUsd !== null && last.EstimatedCostUsd !== undefined) {
+                        lines.push(summaryStatLine('Last pass cost', formatUsd(last.EstimatedCostUsd) || '—'));
+                    }
+
+                    if (last.Error) {
+                        lines.push(summaryStatLine('Error', last.Error));
+                    }
+                }
+
+                stats.innerHTML = lines.join('');
+                page.querySelector('#CuratorDistillButton').disabled = status.IsRunning;
+                page.querySelector('#CuratorDistillAllButton').disabled = status.IsRunning;
+                page.querySelector('#CuratorClearSummariesButton').disabled = status.IsRunning || !status.StoredCount;
+            }
+
+            function formatChars(count) {
+                if (count >= 1000000) { return (count / 1000000).toFixed(1) + 'M chars'; }
+                if (count >= 1000) { return Math.round(count / 1000) + 'k chars'; }
+                return count + ' chars';
+            }
+
+            function renderSummarySamples(samples) {
+                var container = page.querySelector('#CuratorSummarySamples');
+                if (!samples.length) {
+                    container.innerHTML = '<p class="fieldDescription">Nothing condensed yet.</p>';
+                    return;
+                }
+
+                var rows = samples.map(function (s) {
+                    return '<tr><td>' + escapeHtml(s.Title) + '</td>'
+                        + '<td>' + escapeHtml(s.Text) + '</td>'
+                        + '<td class="curatorNum">' + escapeHtml(s.SourceLength + ' → ' + s.Length) + '</td></tr>';
+                }).join('');
+
+                container.innerHTML = '<div class="curatorTableScroll"><table class="curatorDataTable">'
+                    + '<thead><tr><th>Title</th><th>Condensed summary</th>'
+                    + '<th class="curatorNum">Chars</th></tr></thead>'
+                    + '<tbody>' + rows + '</tbody></table></div>';
+            }
+
+            function refreshSummaries(alsoSamples) {
+                return ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Summaries/Status'),
+                    dataType: 'json'
+                }).then(function (status) {
+                    renderSummaryStatus(status);
+
+                    // Poll only while a pass is actually running, and stop the moment
+                    // it finishes — a settings page left open should not sit on a
+                    // timer forever.
+                    if (status.IsRunning && !summaryPollTimer) {
+                        summaryPollTimer = setInterval(function () { refreshSummaries(false); }, 3000);
+                    } else if (!status.IsRunning && summaryPollTimer) {
+                        clearInterval(summaryPollTimer);
+                        summaryPollTimer = null;
+                        loadSummarySamples();
+                    }
+
+                    if (alsoSamples) {
+                        return loadSummarySamples();
+                    }
+
+                    return null;
+                }, function () {
+                    page.querySelector('#CuratorSummaryPhase').innerHTML =
+                        'Could not read summary status — check the server log.';
+                });
+            }
+
+            function loadSummarySamples() {
+                return ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Summaries?limit=40'),
+                    dataType: 'json'
+                }).then(renderSummarySamples, function () { /* leave the previous list */ });
+            }
+
+            function startDistill(force) {
+                var message = force
+                    ? 'Re-condense every item? This re-buys the whole library from the model.'
+                    : null;
+                if (message && !window.confirm(message)) {
+                    return;
+                }
+
+                page.querySelector('#CuratorDistillButton').disabled = true;
+                page.querySelector('#CuratorDistillAllButton').disabled = true;
+                page.querySelector('#CuratorSummaryPhase').innerHTML = 'Starting&hellip;';
+
+                // The picked profile travels with the request. The server otherwise
+                // reads the *saved* configuration, so choosing one here and pressing
+                // the button would silently run the previously saved profile.
+                var profileId = page.querySelector('#SummaryModelProfile').value || '';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Summaries/Distill?force=' + (force ? 'true' : 'false')
+                        + '&profileId=' + encodeURIComponent(profileId))
+                }).then(function () {
+                    refreshSummaries(false);
+                }, function () {
+                    page.querySelector('#CuratorSummaryPhase').innerHTML =
+                        'Could not start — a pass may already be running, or no model profile is set.';
+                    refreshSummaries(false);
+                });
+            }
+
+            function clearSummaries() {
+                if (!window.confirm('Delete every condensed summary?\n\n'
+                    + 'Your library\'s own overviews are not touched — runs simply go back to sending them '
+                    + 'in full until you condense again.')) {
+                    return;
+                }
+
+                ApiClient.ajax({
+                    type: 'DELETE',
+                    url: ApiClient.getUrl('Curator/Summaries'),
+                    dataType: 'json'
+                }).then(function () {
+                    refreshSummaries(true);
+                }, function () {
+                    page.querySelector('#CuratorSummaryPhase').innerHTML =
+                        'Could not clear the cache — check the server log.';
+                });
+            }
+
             // ---- tabs ----
 
             function showTab(name) {
@@ -923,6 +1252,15 @@
 
                 // Save applies to the settings form only; Categories has its own actions.
                 page.querySelector('#CuratorSaveRow').classList.toggle('hide', name === 'categories');
+
+                // The Summaries tab shows live state, so refresh on arrival rather
+                // than polling it while the user is on some other tab.
+                if (name === 'summaries') {
+                    refreshSummaries(true);
+                } else if (summaryPollTimer) {
+                    clearInterval(summaryPollTimer);
+                    summaryPollTimer = null;
+                }
             }
 
             // ---- categories ----
@@ -1867,6 +2205,11 @@
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     normalizeProfiles(config);
                     renderProfiles();
+                    renderSummaryProfileSelect(config.SummaryModelProfileId || '');
+                    page.querySelector('#UseCondensedSummaries').checked = config.UseCondensedSummaries;
+                    page.querySelector('#CondensedSummaryMaxLength').value = config.CondensedSummaryMaxLength;
+                    page.querySelector('#SummaryMinSourceLength').value = config.SummaryMinSourceLength;
+                    page.querySelector('#SummaryBatchSize').value = config.SummaryBatchSize;
                     page.querySelector('#BatchSize').value = config.BatchSize;
                     page.querySelector('#MaxOutputTokens').value = config.MaxOutputTokens;
                     page.querySelector('#TokenBudget').value = config.TokenBudget;
@@ -1930,6 +2273,11 @@
                     config.MinWatchedForPersonalization = parseInt(page.querySelector('#MinWatchedForPersonalization').value, 10);
                     config.MaxTagsPerItem = parseInt(page.querySelector('#MaxTagsPerItem').value, 10);
                     config.SurfacedCollections = page.querySelector('#SurfacedCollections').value.trim();
+                    config.UseCondensedSummaries = page.querySelector('#UseCondensedSummaries').checked;
+                    config.CondensedSummaryMaxLength = parseInt(page.querySelector('#CondensedSummaryMaxLength').value, 10);
+                    config.SummaryMinSourceLength = parseInt(page.querySelector('#SummaryMinSourceLength').value, 10);
+                    config.SummaryBatchSize = parseInt(page.querySelector('#SummaryBatchSize').value, 10);
+                    config.SummaryModelProfileId = page.querySelector('#SummaryModelProfile').value;
                     config.OutputType = page.querySelector('#OutputType').value;
                     config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;
@@ -2045,6 +2393,14 @@
                 });
                 page.querySelector('#ModelProfileRemove').addEventListener('click', removeProfile);
 
+                page.querySelector('#CuratorDistillButton').addEventListener('click', function () {
+                    startDistill(false);
+                });
+                page.querySelector('#CuratorDistillAllButton').addEventListener('click', function () {
+                    startDistill(true);
+                });
+                page.querySelector('#CuratorClearSummariesButton').addEventListener('click', clearSummaries);
+
                 // Keeps the option label in step with the name as it is typed, so the
                 // list never shows a profile under a name the editor has replaced.
                 page.querySelector('#ProfileName').addEventListener('input', function () {
@@ -2078,6 +2434,15 @@
 
                 showTab('model');
                 loadConfiguration();
+            });
+
+            // Jellyfin keeps the page element around after navigating away, so an
+            // interval started here would otherwise keep polling the API forever.
+            document.querySelector('#CuratorConfigPage').addEventListener('pagehide', function () {
+                if (summaryPollTimer) {
+                    clearInterval(summaryPollTimer);
+                    summaryPollTimer = null;
+                }
             });
         })();
     </script>
