@@ -39,16 +39,25 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         /// the pass entirely. This is a ceiling and never a target — the whole point
         /// is that the model keeps however many genuinely apply.
         /// </param>
+        /// <param name="allowInventedTags">
+        /// Whether the model may coin a tag the scraped list does not contain, as a
+        /// last resort when nothing in it names what the rewrite just said.
+        /// </param>
         /// <returns>The system prompt.</returns>
-        public static string BuildSystemPrompt(int maxLength, int tagCeiling = 0)
+        public static string BuildSystemPrompt(int maxLength, int tagCeiling = 0, bool allowInventedTags = false)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(maxLength, 20);
 
             var body = tagCeiling > 0
                 ? SystemPromptTemplate.Replace(TagSectionToken, TagSection, StringComparison.Ordinal)
                     .Replace(OutputToken, TagOutput, StringComparison.Ordinal)
+                    .Replace(
+                        VocabularyToken,
+                        allowInventedTags ? InventedVocabulary : FixedVocabulary,
+                        StringComparison.Ordinal)
                 : SystemPromptTemplate.Replace(TagSectionToken, string.Empty, StringComparison.Ordinal)
-                    .Replace(OutputToken, PlainOutput, StringComparison.Ordinal);
+                    .Replace(OutputToken, PlainOutput, StringComparison.Ordinal)
+                    .Replace(VocabularyToken, string.Empty, StringComparison.Ordinal);
 
             return body
                 .Replace(MaxLengthToken, maxLength.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
@@ -63,6 +72,30 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
 
         /// <summary>The placeholder the tag ceiling is spliced into.</summary>
         private const string TagCeilingToken = "{TAG_CEILING}";
+
+        /// <summary>The placeholder the tag vocabulary rule is spliced into.</summary>
+        private const string VocabularyToken = "{VOCABULARY}";
+
+        /// <summary>
+        /// The default rule: the scraped list is the whole vocabulary.
+        /// </summary>
+        private const string FixedVocabulary =
+            "Lower case, and keep each tag's own wording rather than inventing new vocabulary — the same tag\n"
+            + "            has to mean the same thing across every item for these to be worth anything.";
+
+        /// <summary>
+        /// The rule when coinage is allowed. Written to make it a last resort rather
+        /// than an invitation: the failure mode is not a bad word, it is four words
+        /// for one texture across four items, which is worse than the scraped list.
+        /// </summary>
+        private const string InventedVocabulary =
+            "Lower case. Prefer the scraped list's own wording — the same tag has to mean the same thing across\n"
+            + "            every item for these to be worth anything, and a tag nothing else shares describes nothing.\n"
+            + "            Where nothing in the list names what your rewrite just said, you MAY coin one word or a\n"
+            + "            short plain phrase for it. Treat that as a last resort, not an opportunity: coin the most\n"
+            + "            ordinary wording that fits rather than a vivid one, so that another item with the same\n"
+            + "            texture would land on the same word. Never coin a second word for something the list, or a\n"
+            + "            word you have already coined, already covers.";
 
         /// <summary>
         /// The tag half of the task, added only when tags are being consolidated.
@@ -97,8 +130,7 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             should come back with one tag, a dense one with several. An item whose tags are all trivia should
             come back with an empty list — that is a correct answer, not a failure.
 
-            Lower case, and keep each tag's own wording rather than inventing new vocabulary — the same tag
-            has to mean the same thing across every item for these to be worth anything.
+            {VOCABULARY}
             """;
 
         private const string PlainOutput =

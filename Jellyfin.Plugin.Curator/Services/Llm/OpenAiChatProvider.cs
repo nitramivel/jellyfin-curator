@@ -272,6 +272,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                             ResponseShape.PersonalCategories => "curator_personal_categories",
                             ResponseShape.Summaries => "curator_summaries",
                             ResponseShape.SummariesWithTags => "curator_summaries_tagged",
+                            ResponseShape.RecommendationOrder => "curator_recommendation_order",
                             _ => "curator_categories",
                         },
                         strict = true,
@@ -302,6 +303,25 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             if (shape is ResponseShape.Summaries or ResponseShape.SummariesWithTags)
             {
                 return BuildSummarySchema(shape == ResponseShape.SummariesWithTags);
+            }
+
+            if (shape == ResponseShape.RecommendationOrder)
+            {
+                return new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        order = new
+                        {
+                            type = "array",
+                            description = "Every index from the shortlist, once each, best first.",
+                            items = new { type = "integer" },
+                        },
+                    },
+                    required = new[] { "order" },
+                    additionalProperties = false,
+                };
             }
 
             var category = new

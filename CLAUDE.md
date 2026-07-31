@@ -124,6 +124,16 @@ and the health check, and 17 with per-pass model assignment.)
    not the Reconciler's overlap coefficient: that one divides by the smaller set,
    so a six-item category would swallow the identity of the twenty-item category
    containing it.
+   **Both passes are now told what already exists.** The viewer's pass always was;
+   the discovery pass — the one that coins the library-wide rows — was told
+   nothing, which is why 0 of 16 then 0 of 33 names survived a run and identity had
+   to be rescued on member overlap every time. `BuildDiscoverySuffix` lists the
+   stored shared rows and asks the model to reuse a name when it means the same
+   thread. Phrase that as permission, never instruction: a pass told too firmly to
+   reuse names returns only the names it was given and stops finding anything,
+   which is a frozen home screen instead of a churning one. It also has to say that
+   reusing a name is not a promise about members, or the model either returns stale
+   rows or avoids reuse entirely.
    The single exception is `CategoryRetention` enforcing a configured cap, where
    the user has asked for a bounded list and something must actually go; a pruned
    category loses its identity and returns as a new one. **That cap is
@@ -144,6 +154,13 @@ and the health check, and 17 with per-pass model assignment.)
    Untagged playlists are never touched by any of it — see rule 3.
 5. **No live LLM calls in tests.** Providers are tested through a stub
    `HttpMessageHandler`; the run pipeline through a stub `ILlmProvider`.
+   **Orchestration services take `ILlmProviderFactory`, not the concrete factory.**
+   That interface is the only seam that makes the second half of this rule
+   achievable — with the concrete type there is nothing to substitute, and the only
+   testable parts are whatever pure logic can be lifted out from under the service.
+   `SummaryDistillServiceTests` is what it buys: the split-and-retry loop driven end
+   to end against canned responses, asserting a failing 8-item request becomes
+   `[8, 4, 4]` and loses nothing.
 6. **Log token count and estimated cost at INFO every run.** Runs cost money; the
    user must be able to see what a run spent. **Cache reads are charged, not
    free.** Providers that report cached tokens inside their input count have it
@@ -186,13 +203,20 @@ and the health check, and 17 with per-pass model assignment.)
    263-item library, all 60 categories came back at 5-10 members against a
    ceiling of 20, so the model sits near the floor it is given and the ceiling
    goes unused. Reach for the floor first when rows are too short.
-9. **A run log must never break the run it describes.** Every write in
+9. **Every paid pass writes a run log.** The category run always did; the
+   distillation pass did not, and diagnosing it meant grepping tens of megabytes of
+   server log — which is how a pass losing 185 items of 212 went unnoticed. It now
+   calls `Begin` with trigger `summaries` and **`trackAsCurrent: false`**: the
+   status endpoint pairs `Current()` with the *category* run's `IsRunning`, so a
+   second kind of run claiming that snapshot shows the progress panel something
+   that is not its own.
+   **A run log must never break the run it describes.** Every write in
    `Services/Runs/` swallows its own IO failures with a warning. The same applies
    to the prompt pool and the atomic temp-file rename — diagnostics are strictly
    subordinate to the run.
 10. **A model profile is the unit of "how to call a model", and its legacy fields
-   are not dead code.** `ModelProfile` carries provider, model, API key, base URL
-   **and that profile's prices**; `Core/Llm/ModelProfiles` normalizes the list on
+   are not dead code.** `ModelProfile` carries provider, model, API key, base URL,
+   **that profile's prices, and whether it thinks**; `Core/Llm/ModelProfiles` normalizes the list on
    every read. Pricing lives on the profile because a list you switch between
    turns "remember to change the prices when you change provider" from an
    occasional mistake into the normal case — rule 6 says the cost line must be
@@ -217,7 +241,20 @@ and the health check, and 17 with per-pass model assignment.)
    `SummaryPlan` keys staleness on a hash of the source overview, which is the only
    thing that makes a second pass free and stops a metadata refresh leaving a
    summary describing the wrong film.
-12. **The recommendation playlist has no stored definition, so its tether is its
+12. **Recommendation selection is arithmetic; only the order may cost money.**
+   `RecommendationRanker` decides *which* items appear and calls no model — the
+   information is already bought, since every category carries the model's own
+   ordering of its members. `ModelRankedRecommendations` (off by default) adds one
+   call per eligible viewer per refresh to reorder the top
+   `MaxRecommendationsToRank` of the shortlist, on `RecommendationModelProfileId`.
+   Two things that must stay true: the re-rank never changes membership, and
+   `RecommendationParser` treats the answer as a **preference over** the shortlist
+   rather than a replacement — anything the model omits, repeats or invents leaves
+   the weighted order in place. Dropping an index here would silently delete an
+   item from somebody's home screen row, which is why this parser appends what it
+   cannot read instead of discarding it like every other parser here. A failed
+   call costs the call and nothing else.
+   **The recommendation playlist has no stored definition, so its tether is its
    identity.** `RecommendationRanker.IdentityFor(userId)` derives a stable GUID
    from the user, stamped on the playlist as the usual `CuratorCategory`
    provider ID. That is how it is found again — never by name (rule 2), and
@@ -250,6 +287,12 @@ and the health check, and 17 with per-pass model assignment.)
    (Google needs the explicit `propertyOrdering`), which `LlmProviderTests` pins.
    `SummaryPlan` queues an item whose summary is current but whose tags are
    missing, so switching it on is incremental rather than a full redo.
+   `AllowInventedTags` (off) lets the model coin a word when nothing scraped names
+   what the rewrite said. Off by default for consistency, not quality: a tag is
+   worth something only if the same tag means the same thing across items, and free
+   coinage yields *melancholy / melancholic / wistful / quietly sad* as four
+   textures instead of one. The prompt therefore constrains coinage to a last
+   resort and to the plainest wording that fits.
    **A batch the model answers badly is split and retried, never written off.**
    `Core/Summaries/SummaryRetryPlan` holds the decision, bounded at
    `MaxAttempts = 3` because every retry is a paid call. Two distinct failures, and
@@ -284,7 +327,12 @@ and the health check, and 17 with per-pass model assignment.)
    judgements are testable without a server, and it must stay shy: a panel that
    reports normal operation as a problem gets ignored, which is worse than no
    panel. That is why a late run is not a stalled one and a manual-only schedule
-   is never reported at all.
+   is never reported at all. Two findings exist because this plugin failed exactly
+   these ways and said nothing: `summaries.notags` (consolidation on, a decent
+   sample stored, zero tags anywhere — the schema bug, which ran for weeks) and
+   `summaries.failing` (the last pass lost more than half its items). Both need a
+   real sample before firing, because a handful of items whose scraped tags were all
+   trivia genuinely produce nothing.
 17. **A run may call two models, so nothing may assume there is one.**
    `DiscoveryModelProfileId` and `PersonalModelProfileId` name the profile each
    pass uses; blank means the default, so an install that has chosen nothing

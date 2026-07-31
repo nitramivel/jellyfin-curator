@@ -52,7 +52,7 @@ namespace Jellyfin.Plugin.Curator.Services
     {
         private readonly ILibraryScanner _libraryScanner;
         private readonly IUserActivityProvider _userActivityProvider;
-        private readonly LlmProviderFactory _providerFactory;
+        private readonly ILlmProviderFactory _providerFactory;
         private readonly CategoryProposalService _proposalService;
         private readonly ICategoryStore _categoryStore;
         private readonly ICuratorPlaylistService _playlistService;
@@ -87,7 +87,7 @@ namespace Jellyfin.Plugin.Curator.Services
         public CuratorRunService(
             ILibraryScanner libraryScanner,
             IUserActivityProvider userActivityProvider,
-            LlmProviderFactory providerFactory,
+            ILlmProviderFactory providerFactory,
             CategoryProposalService proposalService,
             ICategoryStore categoryStore,
             ICuratorPlaylistService playlistService,
@@ -368,7 +368,20 @@ namespace Jellyfin.Plugin.Curator.Services
             // sharing the definition keeps one row per theme instead of one per
             // user per theme.
             var discovery = await _proposalService
-                .ProposeAsync(provider, records, settings, activity: null, cancellationToken, runLog)
+                // The rows this library already has, so the pass can reuse a name for
+                // a thread it already found rather than coining a new one and leaving
+                // CategoryIdentity to rescue the row on member overlap alone. Shared
+                // only: a viewer's personal rows are not this pass's to rename.
+                .ProposeAsync(
+                    provider,
+                    records,
+                    settings,
+                    activity: null,
+                    cancellationToken,
+                    runLog,
+                    [.. existing
+                        .Where(c => c.OwnerUserId is null)
+                        .Select(c => new ExistingCategory(c.Name, c.Description))])
                 .ConfigureAwait(false);
 
             if (discovery.Proposals.Count == 0)
@@ -610,6 +623,22 @@ namespace Jellyfin.Plugin.Curator.Services
             var stored = _categoryStore.GetAll();
             var built = 0;
 
+            // One scan for the whole pass rather than one per viewer, and only when
+            // a model is going to read it. Condensed summaries are substituted the
+            // same way the run does it, so the re-rank reads the text the rest of the
+            // pipeline reads rather than the raw provider synopsis.
+            IReadOnlyDictionary<Guid, MediaItemRecord> descriptions =
+                config.ModelRankedRecommendations
+                    ? _libraryScanner
+                        .ScanLibrary(
+                            includeEpisodes: config.IncludeEpisodes,
+                            surfacedCollections: config.SurfacedCollections,
+                            condensedSummaries: LoadCondensedSummaries(config),
+                            useCondensedTags: config.SendConsolidatedTags,
+                            surfaceAllCollections: config.SurfaceAllCollections)
+                        .ToDictionary(r => r.Id)
+                    : new Dictionary<Guid, MediaItemRecord>();
+
             foreach (var userId in targetUsers)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -638,6 +667,16 @@ namespace Jellyfin.Plugin.Curator.Services
                         mine,
                         activity,
                         new RecommendationOptions(config.MaxRecommendations, config.RecommendationsIncludeWatched));
+
+                    // Selection is done; only the order is still open. A model reads
+                    // the top slice and says what this viewer should see first, which
+                    // is the part a weighted sum is bad at. Off by default — it is the
+                    // one thing about this playlist that costs money.
+                    if (config.ModelRankedRecommendations && ranked.Count > 1)
+                    {
+                        ranked = await ReorderRecommendationsAsync(
+                            config, userId, ranked, activity, descriptions, runLog, cancellationToken).ConfigureAwait(false);
+                    }
 
                     var playlistId = await _playlistService
                         .SyncRecommendationsAsync(
@@ -752,6 +791,113 @@ namespace Jellyfin.Plugin.Curator.Services
             {
                 _logger.LogWarning(ex, "Curator: could not read condensed summaries; using the full overviews");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Asks a model to put one viewer's shortlist in a better order.
+        /// </summary>
+        /// <remarks>
+        /// Never fatal, and never destructive. A failed call, an unusable answer or a
+        /// model that omits half the list all leave the weighted order in place —
+        /// <see cref="RecommendationParser"/> treats the answer as a preference over
+        /// the shortlist rather than a replacement for it, so the worst case is that
+        /// the call was wasted rather than that somebody's row lost items.
+        /// <para>
+        /// Only the top slice is sent. A spotlight row is seen a few items at a time,
+        /// so ordering the head is nearly all the value; the tail keeps the weighted
+        /// order and is appended.
+        /// </para>
+        /// </remarks>
+        private async Task<IReadOnlyList<Guid>> ReorderRecommendationsAsync(
+            PluginConfiguration config,
+            Guid userId,
+            IReadOnlyList<Guid> ranked,
+            IReadOnlyDictionary<Guid, UserActivity> activity,
+            IReadOnlyDictionary<Guid, MediaItemRecord> descriptions,
+            IRunLog? runLog,
+            CancellationToken cancellationToken)
+        {
+            var headSize = config.MaxRecommendationsToRank > 0
+                ? Math.Min(config.MaxRecommendationsToRank, ranked.Count)
+                : ranked.Count;
+            var head = ranked.Take(headSize).ToList();
+            var tail = ranked.Skip(headSize).ToList();
+
+            try
+            {
+                var records = head
+                    .Where(descriptions.ContainsKey)
+                    .Select(id => descriptions[id])
+                    .ToList();
+
+                if (records.Count != head.Count)
+                {
+                    // A shortlist entry we cannot describe cannot be numbered for the
+                    // model without shifting every index after it. Not worth a call.
+                    _logger.LogInformation(
+                        "Curator: skipping recommendation re-rank for {User}; {Missing} shortlist item(s) could not be described",
+                        userId,
+                        head.Count - records.Count);
+                    return ranked;
+                }
+
+                var profiles = ModelProfiles.Normalize(config);
+                var profile = ModelProfiles.Resolve(profiles, config.RecommendationModelProfileId);
+                var provider = _providerFactory.Create(profile, config.EnableThinking);
+
+                var watched = activity
+                    .Where(kv => kv.Value.Played || kv.Value.PlayCount > 0)
+                    .Select(kv => kv.Key)
+                    .ToHashSet();
+
+                var request = new LlmRequest(
+                    RecommendationPromptBuilder.BuildSystemPrompt(records.Count),
+                    RecommendationPromptBuilder.BuildUserPrompt(records, watched),
+                    string.Empty,
+                    config.MaxOutputTokens,
+                    ResponseShape.RecommendationOrder);
+
+                var result = await provider.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+                var reordered = RecommendationParser.Reorder(result.Text, head);
+
+                _logger.LogInformation(
+                    "Curator: re-ranked {Count} recommendation(s) for {User} on '{Profile}' ({Discarded} discarded, {Missing} left in place)",
+                    records.Count,
+                    userId,
+                    profile.Name,
+                    reordered.DiscardedCount,
+                    reordered.MissingCount);
+
+                runLog?.Step(
+                    "recommendations.reranked",
+                    $"Re-ranked {records.Count} recommendation(s) for one viewer",
+                    new Dictionary<string, object?>
+                    {
+                        ["userId"] = userId.ToString(),
+                        ["ranked"] = records.Count,
+                        ["heldBack"] = tail.Count,
+                        ["discarded"] = reordered.DiscardedCount,
+                        ["missing"] = reordered.MissingCount,
+                        ["modelProfile"] = profile.Name,
+                    });
+
+                return [.. reordered.Ordered, .. tail];
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is FormatException or InvalidOperationException or System.Net.Http.HttpRequestException or TaskCanceledException)
+            {
+                // The weighted order is a perfectly good answer on its own — it is
+                // what shipped for months. Losing the re-rank is not losing the row.
+                _logger.LogWarning(
+                    ex,
+                    "Curator: could not re-rank recommendations for {User}; keeping the weighted order — {Message}",
+                    userId,
+                    ex.Message);
+                return ranked;
             }
         }
 

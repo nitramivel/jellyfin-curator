@@ -648,5 +648,72 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Contains("integer index", PromptBuilder.BuildSystemPrompt(new CategoryLimits(4)), StringComparison.Ordinal);
             Assert.Contains("Never invent items", PromptBuilder.BuildSystemPrompt(new CategoryLimits(4)), StringComparison.Ordinal);
         }
+
+        // ---- the discovery pass being told what already exists ----
+
+        [Fact]
+        public void DiscoverySuffix_ListsTheRowsTheLibraryAlreadyHas()
+        {
+            // The viewer's pass has always been told this; the shared pass, which
+            // actually coins the library-wide rows, was told nothing. Measured
+            // consequence: 0 of 16 names survived a run, then 0 of 33.
+            var suffix = PromptBuilder.BuildDiscoverySuffix(
+                [new ExistingCategory("Comfort Rewatch Sitcoms", "Warm ensemble shows")],
+                itemCount: 40);
+
+            Assert.Contains("Comfort Rewatch Sitcoms", suffix, StringComparison.Ordinal);
+            Assert.Contains("Warm ensemble shows", suffix, StringComparison.Ordinal);
+            Assert.Contains("REUSE ITS EXACT NAME", suffix, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void DiscoverySuffix_LeavesRoomForNewThreads()
+        {
+            // The opposite failure to churn, and the more dangerous one: a pass told
+            // too firmly to reuse names returns only the names it was given and stops
+            // finding anything, which is a frozen home screen rather than a churning
+            // one.
+            var suffix = PromptBuilder.BuildDiscoverySuffix(
+                [new ExistingCategory("Comfort Rewatch Sitcoms", string.Empty)],
+                itemCount: 40);
+
+            Assert.Contains("name it fresh", suffix, StringComparison.Ordinal);
+            Assert.Contains("do not force it onto an existing name", suffix, StringComparison.Ordinal);
+            Assert.Contains("not propose a thread only because it is listed", suffix, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void DiscoverySuffix_SaysReusingANameIsNotAPromiseAboutMembers()
+        {
+            // Identity is the name OR member similarity. A model that thought reusing
+            // a name meant returning the same items would either return stale rows or
+            // avoid reuse entirely.
+            var suffix = PromptBuilder.BuildDiscoverySuffix(
+                [new ExistingCategory("Neon Rain", string.Empty)],
+                itemCount: 10);
+
+            Assert.Contains("membership may change freely", suffix, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void DiscoverySuffix_OnAFirstRunIsJustTheClosingInstruction()
+        {
+            // Nothing stored yet, so nothing to reuse and no reason to spend tokens
+            // explaining the idea.
+            var suffix = PromptBuilder.BuildDiscoverySuffix([], itemCount: 40);
+
+            Assert.DoesNotContain("REUSE", suffix, StringComparison.Ordinal);
+            Assert.DoesNotContain("already has", suffix, StringComparison.Ordinal);
+            Assert.Contains("Propose the categories for these 40 items now", suffix, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void DiscoverySuffix_AlwaysStatesTheItemCount()
+        {
+            Assert.Contains(
+                "these 7 items",
+                PromptBuilder.BuildDiscoverySuffix([new ExistingCategory("A", "b")], itemCount: 7),
+                StringComparison.Ordinal);
+        }
     }
 }

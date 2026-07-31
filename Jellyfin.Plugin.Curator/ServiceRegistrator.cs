@@ -23,7 +23,7 @@ namespace Jellyfin.Plugin.Curator
         {
             serviceCollection.AddSingleton<ILibraryScanner, LibraryScanner>();
             serviceCollection.AddSingleton<IUserActivityProvider, UserActivityProvider>();
-            serviceCollection.AddSingleton<LlmProviderFactory>();
+            serviceCollection.AddSingleton<ILlmProviderFactory, LlmProviderFactory>();
             serviceCollection.AddSingleton<CategoryProposalService>();
             serviceCollection.AddSingleton<ICategoryStore, CategoryStore>();
             serviceCollection.AddSingleton<ICuratorPlaylistService, CuratorPlaylistService>();

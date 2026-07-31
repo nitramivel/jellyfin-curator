@@ -99,8 +99,18 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         /// </summary>
         /// <param name="trigger">"manual" or "scheduled".</param>
         /// <param name="settings">The settings that shaped the run.</param>
+        /// <param name="trackAsCurrent">
+        /// Whether this becomes the run <see cref="Current"/> reports. False for a
+        /// pass that is not the category run: the status endpoint pairs
+        /// <see cref="Current"/> with the run service's own IsRunning, so a second
+        /// kind of run claiming it would show the progress panel a snapshot that
+        /// belongs to something else. The log file is written either way.
+        /// </param>
         /// <returns>The recorder.</returns>
-        IRunLog Begin(string trigger, IReadOnlyDictionary<string, object?> settings);
+        IRunLog Begin(
+            string trigger,
+            IReadOnlyDictionary<string, object?> settings,
+            bool trackAsCurrent = true);
 
         /// <summary>
         /// Lists recorded runs, newest first.

@@ -277,5 +277,89 @@ namespace Jellyfin.Plugin.Curator.Tests
                 Assert.True(f.Detail.Length > 20, $"'{f.Id}' has no useful remedy");
             });
         }
+
+        // ---- the failures this session found, which the check used to miss ----
+
+        [Fact]
+        public void TagConsolidationOnAndProducingNothingIsReported()
+        {
+            // Shipped broken and ran for weeks: the schema forbade the field the
+            // prompt asked for, so every item came back with an empty tag list and
+            // nothing anywhere said so.
+            var findings = HealthCheck.Evaluate(new HealthFacts(
+                DateTime.UtcNow,
+                ConsolidateTags: true,
+                StoredSummaries: 232,
+                SummariesWithTags: 0));
+
+            Assert.Contains(findings, f => f.Id == "summaries.notags");
+        }
+
+        [Fact]
+        public void TagConsolidationProducingSomeTagsIsNotReported()
+        {
+            var findings = HealthCheck.Evaluate(new HealthFacts(
+                DateTime.UtcNow,
+                ConsolidateTags: true,
+                StoredSummaries: 232,
+                SummariesWithTags: 1));
+
+            Assert.DoesNotContain(findings, f => f.Id == "summaries.notags");
+        }
+
+        [Fact]
+        public void ASmallSampleWithNoTagsIsNotReported()
+        {
+            // A handful of items whose scraped tags were all production trivia
+            // genuinely produce nothing. That is a correct answer, and the check has
+            // to stay shy or it gets ignored.
+            var findings = HealthCheck.Evaluate(new HealthFacts(
+                DateTime.UtcNow,
+                ConsolidateTags: true,
+                StoredSummaries: 3,
+                SummariesWithTags: 0));
+
+            Assert.DoesNotContain(findings, f => f.Id == "summaries.notags");
+        }
+
+        [Fact]
+        public void TagsOffIsNeverReportedHoweverManySummariesHaveNone()
+        {
+            var findings = HealthCheck.Evaluate(new HealthFacts(
+                DateTime.UtcNow,
+                ConsolidateTags: false,
+                StoredSummaries: 232,
+                SummariesWithTags: 0));
+
+            Assert.DoesNotContain(findings, f => f.Id == "summaries.notags");
+        }
+
+        [Fact]
+        public void ADistillationPassThatLostMostOfItsItemsIsReported()
+        {
+            // The measured shape: 27 stored, 185 written off after being paid for.
+            var findings = HealthCheck.Evaluate(new HealthFacts(
+                DateTime.UtcNow,
+                LastSummaryPassDistilled: 27,
+                LastSummaryPassFailed: 185));
+
+            var finding = Assert.Single(findings, f => f.Id == "summaries.failing");
+            Assert.Contains("185 of 212", finding.Title, StringComparison.Ordinal);
+        }
+
+        [Theory]
+        [InlineData(212, 0)]     // a clean pass
+        [InlineData(200, 12)]    // a few losses, not worth a panel
+        [InlineData(106, 106)]   // exactly half is not "most"
+        [InlineData(0, 0)]       // no pass since restart
+        public void AHealthyOrUnremarkablePassIsNotReported(int distilled, int failed)
+        {
+            var findings = HealthCheck.Evaluate(new HealthFacts(
+                DateTime.UtcNow,
+                LastSummaryPassDistilled: distilled,
+                LastSummaryPassFailed: failed));
+
+            Assert.DoesNotContain(findings, f => f.Id == "summaries.failing");
+        }
     }
 }

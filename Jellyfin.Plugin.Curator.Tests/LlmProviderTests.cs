@@ -868,6 +868,45 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
+        public async Task Grok_RecommendationOrderSchema_MatchesTheParserContract()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.RecommendationOrder),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var schema = body.RootElement
+                .GetProperty("response_format").GetProperty("json_schema").GetProperty("schema");
+
+            Assert.Equal("order", Assert.Single(schema.GetProperty("required").EnumerateArray()).GetString());
+            Assert.Equal(
+                "integer",
+                schema.GetProperty("properties").GetProperty("order").GetProperty("items").GetProperty("type").GetString());
+        }
+
+        [Fact]
+        public async Task Google_RecommendationOrderSchema_MatchesTheParserContract()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.RecommendationOrder),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var schema = body.RootElement.GetProperty("generationConfig").GetProperty("responseSchema");
+
+            Assert.Equal("order", Assert.Single(schema.GetProperty("required").EnumerateArray()).GetString());
+            Assert.Equal(
+                "INTEGER",
+                schema.GetProperty("properties").GetProperty("order").GetProperty("items").GetProperty("type").GetString());
+        }
+
+        [Fact]
         public async Task Grok_PlainSummarySchema_DoesNotAskForTagsThePromptNeverMentions()
         {
             var handler = new StubHandler(GrokResponse);
