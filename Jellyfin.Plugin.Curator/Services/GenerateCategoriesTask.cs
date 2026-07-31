@@ -8,7 +8,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Curator.Services
 {
     /// <summary>
-    /// The scheduled task entry point: "Curator: Generate Categories".
+    /// The scheduled task entry point: "Generate Categories", under the Curator category.
     /// Runs weekly by default — LLM runs cost money, so the default cadence is
     /// deliberately wide.
     /// </summary>
@@ -24,7 +24,7 @@ namespace Jellyfin.Plugin.Curator.Services
         }
 
         /// <inheritdoc />
-        public string Name => "Curator: Generate Categories";
+        public string Name => "Generate Categories";
 
         /// <inheritdoc />
         public string Key => "CuratorGenerateCategories";

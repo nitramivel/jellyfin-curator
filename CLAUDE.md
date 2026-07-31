@@ -535,6 +535,17 @@ Playlists are still built. Never throw out of home screen integration.
   the shape, in deliberately separate dialects. They used to hardcode the
   categories schema regardless, so adding a shape without touching them forces the
   model to answer in the wrong JSON — which looks like a parser bug.
+- **Never send an empty content block.** Anthropic rejects the whole request —
+  `messages: text content blocks must be non-empty` — and Google gains nothing
+  from an empty part. Both builders guarded an empty *prefix* and not an empty
+  *suffix*, which two passes hand over by design: the distillation pass and the
+  recommendation re-rank put their whole prompt in the prefix. Measured: 195
+  items, every batch 400ing, 0 distilled, on the first run that used Anthropic for
+  that pass. A request with neither half now throws rather than reaching a
+  provider. **The cache marker goes on the prefix only when there is also a
+  suffix** — the split exists to mark what repeats across calls, so a caller with
+  no suffix is saying nothing repeats, and marking it anyway pays the 2x write
+  premium on every batch of a pass whose prompt is different every time.
 - **The schema and the prompt must ask for the same fields.** Strict mode is a
   grammar, not a hint: a field the prompt requests and the schema omits has *no
   legal position in the output*, and the model does not error — it writes the
@@ -554,6 +565,15 @@ Playlists are still built. Never throw out of home screen integration.
   save row: Runs, and Schedule — the latter writes through Jellyfin's
   `ITaskManager`, not plugin config, so the form's Save would do nothing for it. Put a new setting where its *subject* is, not where it is
   technically enforced.
+- **The Categories tab shows resolved numbers, never the stored sentinel.** `0`
+  means *inherit* on `MaxStored*Categories` and on the per-pool size ceilings, but
+  *no limit* on the per-run counts — two meanings of the same digit in adjacent
+  boxes, which is exactly how that tab became unreadable. The page resolves on
+  load and writes explicit values back, so the sentinels now survive only for
+  configs written before this and for callers reading `Effective*` in C#. It
+  follows that **`MaxCategoryMembers` has no field any more**: it is read as a
+  fallback when loading and never written, so the stored value is left alone.
+  Do not re-add it as an input — it only ever applied when another box was 0.
 - **Option order in a `<select>` is load-bearing.** `setEnumSelect` falls back to
   matching by index when a stored config carries the numeric enum value, so
   provider options must stay in enum order. Change labels freely; never reorder.

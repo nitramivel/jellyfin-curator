@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Curator.Services
 {
     /// <summary>
-    /// The scheduled task entry point: "Curator: Condense Summaries".
+    /// The scheduled task entry point: "Condense Summaries", under the Curator category.
     /// </summary>
     /// <remarks>
     /// Daily by default, which is far more often than the weekly category run and
@@ -32,7 +32,7 @@ namespace Jellyfin.Plugin.Curator.Services
         }
 
         /// <inheritdoc />
-        public string Name => "Curator: Condense Summaries";
+        public string Name => "Condense Summaries";
 
         /// <inheritdoc />
         public string Key => "CuratorCondenseSummaries";

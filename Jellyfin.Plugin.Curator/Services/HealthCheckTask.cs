@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace Jellyfin.Plugin.Curator.Services
 {
     /// <summary>
-    /// The scheduled task entry point: "Curator: Health Check".
+    /// The scheduled task entry point: "Health Check", under the Curator category.
     /// </summary>
     /// <remarks>
     /// Daily, free, and read-only. It exists because every way this plugin goes
@@ -37,7 +37,7 @@ namespace Jellyfin.Plugin.Curator.Services
         }
 
         /// <inheritdoc />
-        public string Name => "Curator: Health Check";
+        public string Name => "Health Check";
 
         /// <inheritdoc />
         public string Key => "CuratorHealthCheck";

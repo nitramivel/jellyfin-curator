@@ -168,6 +168,44 @@
                 /* Health findings. Colours carry meaning here, so each also gets a
                    word — a row that only differs by hue says nothing to anyone who
                    cannot tell the hues apart. */
+                /* The two category pools, side by side so they read as the same
+                   four questions asked twice rather than ten unrelated settings. */
+                .curatorPools {
+                    display: flex; flex-wrap: wrap; gap: 1em; margin: 0 0 1.2em;
+                }
+                .curatorPool {
+                    flex: 1 1 20em; min-width: 17em;
+                    padding: 1em 1.1em 0.9em; border-radius: 8px;
+                    background: rgba(255, 255, 255, 0.04);
+                    border-top: 3px solid transparent;
+                }
+                .curatorPoolShared   { border-top-color: #5b9dd9; }
+                .curatorPoolPersonal { border-top-color: #a97bd0; }
+                .curatorPoolName {
+                    font-size: 1.05em; font-weight: 600; margin: 0 0 0.15em;
+                }
+                .curatorPoolWho {
+                    font-size: 0.86em; opacity: 0.72; margin: 0 0 1em; line-height: 1.35;
+                }
+                .curatorField { margin-bottom: 0.9em; }
+                .curatorFieldLabel {
+                    display: block; font-size: 0.9em; margin-bottom: 0.3em;
+                }
+                .curatorFieldHint {
+                    font-size: 0.8em; opacity: 0.62; margin-top: 0.25em; line-height: 1.35;
+                }
+                /* A range reads as one setting, so its two boxes sit on one line. */
+                .curatorRange { display: flex; align-items: center; gap: 0.5em; }
+                .curatorRange input { width: 5.5em; flex: 0 0 auto; }
+                .curatorRangeTo { opacity: 0.6; font-size: 0.9em; }
+                .curatorPoolSummary {
+                    margin-top: 0.9em; padding-top: 0.8em;
+                    border-top: 1px solid rgba(255, 255, 255, 0.09);
+                    font-size: 0.87em; line-height: 1.45; opacity: 0.9;
+                }
+                .curatorPoolSummary strong { font-weight: 600; }
+                .curatorPoolWarn { color: #d9a441; }
+
                 .curatorFinding {
                     display: flex; gap: 0.7em; align-items: flex-start;
                     padding: 0.7em 0.9em; margin-bottom: 0.5em; border-radius: 6px;
@@ -586,126 +624,111 @@
 
                 <div class="curatorTabPanel hide" data-panel="categories-settings">
                     <div class="verticalSection">
-                        <h3 class="sectionTitle">Shared categories</h3>
-                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Drawn from the whole library. Every user receives all of them.</p>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MinSharedCategorySize">Items per shared row — fewest</label>
-                            <input id="MinSharedCategorySize" name="MinSharedCategorySize" type="number" min="2" max="100" class="emby-input" />
-                            <div class="fieldDescription">
-                                Smallest shared category worth keeping, in items, and the size the model is asked
-                                to meet. Raise it for fewer, broader rows; lower it to let the model name narrower
-                                threads. Minimum 2.
+                        <h3 class="sectionTitle">Rows</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            Curator builds two kinds of row, and each is asked the same two questions:
+                            <strong>how big is a row</strong>, and <strong>how many rows</strong>. Every number below
+                            is also written into the prompt, so the model aims at what it will be judged by rather
+                            than having its answer quietly trimmed.
+                        </p>
+
+                        <div class="curatorPools">
+                            <div class="curatorPool curatorPoolShared">
+                                <div class="curatorPoolName">Shared rows</div>
+                                <p class="curatorPoolWho">Drawn from the whole library. Every viewer gets all of them.</p>
+
+                                <div class="curatorField">
+                                    <label class="curatorFieldLabel" for="MinSharedCategorySize">Items per row</label>
+                                    <div class="curatorRange">
+                                        <input id="MinSharedCategorySize" name="MinSharedCategorySize" type="number"
+                                               min="2" max="100" class="emby-input curatorPoolInput" />
+                                        <span class="curatorRangeTo">to</span>
+                                        <input id="MaxSharedCategorySize" name="MaxSharedCategorySize" type="number"
+                                               min="2" max="500" class="emby-input curatorPoolInput" />
+                                    </div>
+                                    <div class="curatorFieldHint">
+                                        The first number is the one that matters: the model sits near the floor it is
+                                        given. On a measured run every row came back at 5&ndash;10 items against a
+                                        ceiling of 20.
+                                    </div>
+                                </div>
+
+                                <div class="curatorField">
+                                    <label class="curatorFieldLabel" for="MaxSharedCategories">New rows per run</label>
+                                    <input id="MaxSharedCategories" name="MaxSharedCategories" type="number"
+                                           min="0" max="200" class="emby-input curatorPoolInput" />
+                                    <div class="curatorFieldHint">How many threads one run may propose. 0 means no limit.</div>
+                                </div>
+
+                                <div class="curatorField">
+                                    <label class="curatorFieldLabel" for="MaxStoredSharedCategories">Rows kept in total</label>
+                                    <input id="MaxStoredSharedCategories" name="MaxStoredSharedCategories" type="number"
+                                           min="0" max="500" class="emby-input curatorPoolInput" />
+                                    <div class="curatorFieldHint">
+                                        How many may build up <em>across</em> runs. 0 means no limit.
+                                    </div>
+                                </div>
+
+                                <div class="curatorPoolSummary" id="SharedPoolSummary"></div>
+                            </div>
+
+                            <div class="curatorPool curatorPoolPersonal">
+                                <div class="curatorPoolName">Personal rows</div>
+                                <p class="curatorPoolWho">Invented for one viewer from their own watch history. Only they see them.</p>
+
+                                <div class="curatorField">
+                                    <label class="curatorFieldLabel" for="MinPersonalCategorySize">Items per row</label>
+                                    <div class="curatorRange">
+                                        <input id="MinPersonalCategorySize" name="MinPersonalCategorySize" type="number"
+                                               min="2" max="100" class="emby-input curatorPoolInput" />
+                                        <span class="curatorRangeTo">to</span>
+                                        <input id="MaxPersonalCategorySize" name="MaxPersonalCategorySize" type="number"
+                                               min="2" max="500" class="emby-input curatorPoolInput" />
+                                    </div>
+                                    <div class="curatorFieldHint">
+                                        Worth setting lower than the shared row. One viewer's history is a smaller pool
+                                        to draw from, so asking for as many items is asking the model to pad.
+                                    </div>
+                                </div>
+
+                                <div class="curatorField">
+                                    <label class="curatorFieldLabel" for="MaxPersonalCategories">New rows per run</label>
+                                    <input id="MaxPersonalCategories" name="MaxPersonalCategories" type="number"
+                                           min="0" max="200" class="emby-input curatorPoolInput" />
+                                    <div class="curatorFieldHint">Per viewer, per run. 0 means no limit.</div>
+                                </div>
+
+                                <div class="curatorField">
+                                    <label class="curatorFieldLabel" for="MaxStoredPersonalCategories">Rows kept per viewer</label>
+                                    <input id="MaxStoredPersonalCategories" name="MaxStoredPersonalCategories" type="number"
+                                           min="0" max="500" class="emby-input curatorPoolInput" />
+                                    <div class="curatorFieldHint">
+                                        Where crowding shows worst — on a measured run 27 of the 35 rows deleted to make
+                                        room were personal ones.
+                                    </div>
+                                </div>
+
+                                <div class="curatorPoolSummary" id="PersonalPoolSummary"></div>
                             </div>
                         </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxSharedCategorySize">Items per shared row — most</label>
-                            <input id="MaxSharedCategorySize" name="MaxSharedCategorySize" type="number" min="0" max="500" class="emby-input" />
-                            <div class="fieldDescription">
-                                The other end of the range. Together these two are the sentence the model is given
-                                — <em>"between 6 and 25 items"</em> — and the rule the result is held to, so it aims
-                                at the size it will be judged by rather than having its answer quietly shortened.
-                                <strong>The floor is the number that actually moves row length:</strong> on a measured
-                                run every one of 60 categories came back between 5 and 10 items against a ceiling of
-                                20, so the model sits near the floor it is given and the ceiling goes unused.
-                                Members are ranked strongest-first, so a longer thread is trimmed off the tail
-                                rather than dropped: a forty-item thread becomes the best twenty-five of itself.
-                                <strong>0 falls back to <em>Max items per category</em> below.</strong>
-                            </div>
-                        </div>
+
+                        <h3 class="sectionTitle">Keeping rows steady</h3>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="CategoryRetirementGraceRuns">Runs of grace before a row is dropped</label>
                             <input id="CategoryRetirementGraceRuns" name="CategoryRetirementGraceRuns" type="number"
                                    min="0" max="20" class="emby-input" />
                             <div class="fieldDescription">
-                                The model coins largely different threads each run, so a category going missing
-                                once usually means the run phrased things differently rather than your taste having
-                                changed. Dropping its row immediately makes the home screen flicker — the row
-                                vanishes and is back the next week. This waits that many runs before a category
-                                loses its row; it still goes eventually if it really has gone. 0 drops it
-                                immediately, which is how Curator behaved before this setting existed.
-                            </div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxSharedCategories">Max shared categories</label>
-                            <input id="MaxSharedCategories" name="MaxSharedCategories" type="number" min="0" max="200" class="emby-input" />
-                            <div class="fieldDescription">
-                                Ceiling on how many survive the library-wide pass, strongest first, and the number
-                                the model is asked to aim for. Set it generously — the floor above decides what is
-                                worth keeping, this only decides how many. A cap the model is not told is one it
-                                cannot aim at: given no target count, one model returned 23 categories covering 78%
-                                of the library and another returned 5 covering 10%, from an identical prompt.
-                                0 means no cap.
-                            </div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxStoredSharedCategories">Shared rows to keep in total</label>
-                            <input id="MaxStoredSharedCategories" name="MaxStoredSharedCategories" type="number" min="0" max="500" class="emby-input" />
-                            <div class="fieldDescription">
-                                How large a library of shared rows may build up <em>across</em> runs, as opposed to how
-                                many one run may propose. <strong>Set this above the number above</strong> to let good
-                                threads accumulate: with the two equal, every run that proposes a full set deletes
-                                something to make room, and a row deleted by the cap loses its identity and returns as
-                                a brand-new row rather than the one you had. <strong>0 keeps them tied</strong>, which
-                                is how Curator behaved before this setting existed.
-                            </div>
-                        </div>
-
-                        <h3 class="sectionTitle">Personal categories</h3>
-                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">Invented for one viewer from their own watch history.</p>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MinPersonalCategorySize">Items per personal row — fewest</label>
-                            <input id="MinPersonalCategorySize" name="MinPersonalCategorySize" type="number" min="2" max="100" class="emby-input" />
-                            <div class="fieldDescription">
-                                Smallest category invented for one viewer. Defaults to the same value as the
-                                shared floor above. Lower it if invented categories start being discarded on
-                                size — a viewer's history is a smaller pool to draw from than the whole
-                                library. Minimum 2.
-                            </div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxPersonalCategorySize">Items per personal row — most</label>
-                            <input id="MaxPersonalCategorySize" name="MaxPersonalCategorySize" type="number" min="0" max="500" class="emby-input" />
-                            <div class="fieldDescription">
-                                The end of the range worth lowering. A personal row is drawn from one viewer's
-                                history rather than the whole library, so asking it for as many items as a shared
-                                row is asking the model to pad. <strong>0 falls back to <em>Max items per
-                                category</em> below.</strong>
-                            </div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxPersonalCategories">Max personal categories per user</label>
-                            <input id="MaxPersonalCategories" name="MaxPersonalCategories" type="number" min="0" max="200" class="emby-input" />
-                            <div class="fieldDescription">
-                                Ceiling on the categories invented for one viewer in a single run. Defaults to the
-                                same value as the shared cap above. 0 means no cap.
-                            </div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxStoredPersonalCategories">Personal rows to keep per viewer</label>
-                            <input id="MaxStoredPersonalCategories" name="MaxStoredPersonalCategories" type="number" min="0" max="500" class="emby-input" />
-                            <div class="fieldDescription">
-                                The same distinction for one viewer's own rows, and where the churn shows worst — on a
-                                measured run 27 of the 35 rows deleted by the cap were personal ones. <strong>0 keeps
-                                it tied</strong> to the per-run number above.
-                            </div>
-                        </div>
-
-                        <h3 class="sectionTitle">Both pools</h3>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="MaxCategoryMembers">Max items per category</label>
-                            <input id="MaxCategoryMembers" name="MaxCategoryMembers" type="number" min="0" max="500" class="emby-input" />
-                            <div class="fieldDescription">
-                                The fallback ceiling, used by whichever of the two ranges above is left at 0 — set
-                                those and this stops applying to that pool. A category is a home screen row either
-                                way, and Collection Sections renders only the first 16 items of one. 0 means no
-                                limit, which a pool inheriting from here inherits too.
+                                The model coins largely different threads each run, so a row going missing once
+                                usually means the run phrased things differently rather than your taste having
+                                changed. Dropping it immediately makes the home screen flicker — the row vanishes and
+                                is back the next week. This waits that many runs before a row goes; it still goes
+                                eventually if it really has gone. 0 drops it immediately.
                             </div>
                         </div>
                         <p class="fieldDescription" style="margin:0.6em 0 0;">
                             None of this touches <em>Recommended for you</em> — that playlist is ranked rather than
-                            curated, and its length is <em>Max recommendations</em> on the Home screen tab.
+                            curated, and its length is <em>Length</em> on the Home screen tab.
                         </p>
-
                     </div>
                 </div>
 
@@ -898,7 +921,7 @@
                             <strong>Condense now</strong> only pays for items that are new or whose overview has
                             changed. <strong>Redo all</strong> re-buys the whole library — use it after changing the
                             length or the model. Both also run on a schedule, daily, under
-                            <em>Scheduled Tasks &rarr; Curator: Condense Summaries</em>.
+                            <em>Scheduled Tasks &rarr; Curator &rarr; Condense Summaries</em>.
                         </div>
 
                         <h3 class="sectionTitle">Settings</h3>
@@ -1042,8 +1065,11 @@
                         Jellyfin's own page, that is what this will overwrite.
                     </p>
                     <p class="fieldDescription" style="margin:0 0 1.4em;">
-                        Only <strong>Generate Categories</strong> costs money. Condensing is cheap after the first
-                        pass and cleanup is free, so both can run often.
+                        <strong>Generate Categories</strong> is the only task that always costs money. Condensing is
+                        cheap after the first pass, and cleanup and the health check are free, so those can run often.
+                        Refresh Recommendations is free too <em>unless</em> you have switched on model-ranked
+                        ordering, which spends one call per viewer every time it fires — check its cadence below if
+                        you have.
                     </p>
 
                     <div id="CuratorHealth"><p class="fieldDescription">Checking&hellip;</p></div>
@@ -1058,8 +1084,12 @@
                         <button is="emby-button" type="button" id="CuratorRunMaintenance" class="raised">
                             <span>Clean up and sync now</span>
                         </button>
+                        <button is="emby-button" type="button" id="CuratorRunHealthCheck" class="raised">
+                            <span>Health check now</span>
+                        </button>
                     </div>
                     <p class="fieldDescription" id="CuratorScheduleState" style="margin-top:0.8em;"></p>
+                    <p class="fieldDescription" id="CuratorHealthState" style="margin-top:0.4em;"></p>
                 </div>
             </div>
 
@@ -1072,7 +1102,7 @@
                     </button>
                     <div class="fieldDescription" style="margin-top:0.5em;">
                         Save your settings first. A run can take several minutes and costs money. The same run
-                        happens on schedule via the <em>Curator: Generate Categories</em> scheduled task.
+                        happens on schedule via the <em>Generate Categories</em> scheduled task.
                     </div>
 
                     <button is="emby-button" type="button" id="CuratorSyncRowsButton" class="raised block"
@@ -1436,10 +1466,129 @@
                 select.selectedIndex = 0;
             }
 
+            // ---- category pools ----
+
+            function poolNumber(id) {
+                var value = parseInt(page.querySelector('#' + id).value, 10);
+                return isNaN(value) ? 0 : value;
+            }
+
+            /**
+             * Reads each pool's four numbers back as one sentence.
+             *
+             * This is the whole point of the layout: "6 to 25, 15, 40" means nothing
+             * on its own, and the settings were previously ten stacked boxes with a
+             * paragraph each. A sentence you can read back is what tells you whether
+             * you have said what you meant.
+             */
+            function renderPoolSummary(which) {
+                var shared = which === 'Shared';
+                var summary = page.querySelector('#' + which + 'PoolSummary');
+                if (!summary) {
+                    return;
+                }
+
+                var min = poolNumber('Min' + which + 'CategorySize');
+                var max = poolNumber('Max' + which + 'CategorySize');
+                var perRun = poolNumber('Max' + which + 'Categories');
+                var kept = poolNumber('MaxStored' + which + 'Categories');
+                var each = shared ? 'Each shared row' : "Each viewer's own rows";
+                var verb = shared ? 'holds' : 'hold';
+
+                var text = each + ' ' + verb + ' <strong>' + escapeHtml(String(min))
+                    + '&ndash;' + escapeHtml(String(max)) + ' items</strong>. ';
+
+                if (perRun > 0) {
+                    text += 'A run proposes up to <strong>' + escapeHtml(String(perRun)) + '</strong>';
+                } else {
+                    text += 'A run proposes <strong>as many as the library supports</strong>';
+                }
+
+                if (kept > 0) {
+                    text += ', and <strong>' + escapeHtml(String(kept)) + '</strong> are kept'
+                        + (shared ? '' : ' per viewer') + '.';
+                } else {
+                    text += ', and <strong>none are ever deleted</strong> to make room.';
+                }
+
+                // The two ways these numbers contradict each other, said plainly
+                // rather than left for someone to discover from a churning home
+                // screen or an empty pool.
+                var warnings = [];
+                if (max > 0 && min > 0 && max <= min) {
+                    warnings.push('The second number must be larger than the first, or the ceiling is ignored.');
+                }
+
+                if (kept > 0 && perRun > 0 && kept < perRun) {
+                    warnings.push('Keeping fewer than one run proposes means every run deletes rows to make room — '
+                        + 'and a deleted row comes back as a new one rather than the one you had.');
+                } else if (kept > 0 && perRun > 0 && kept === perRun) {
+                    warnings.push('Keeping exactly what one run proposes leaves no room to accumulate. '
+                        + 'Raise this to let good rows survive several runs.');
+                }
+
+                if (warnings.length) {
+                    text += '<div class="curatorPoolWarn" style="margin-top:0.5em;">'
+                        + escapeHtml(warnings.join(' ')) + '</div>';
+                }
+
+                summary.innerHTML = text;
+            }
+
+            function renderPoolSummaries() {
+                renderPoolSummary('Shared');
+                renderPoolSummary('Personal');
+            }
+
             // ---- health ----
+
+            /** The one-line verdict beneath the buttons: when it ran, and what it found. */
+            function renderHealthState(report) {
+                var state = page.querySelector('#CuratorHealthState');
+                if (!state) {
+                    return;
+                }
+
+                var when = 'just now';
+                if (report.CheckedAt) {
+                    var at = new Date(report.CheckedAt);
+                    if (!isNaN(at.getTime())) {
+                        when = at.toLocaleTimeString();
+                    }
+                }
+
+                var problems = 0;
+                var warnings = 0;
+                report.Findings.forEach(function (f) {
+                    if (f.Severity === 'Problem') {
+                        problems++;
+                    } else {
+                        warnings++;
+                    }
+                });
+
+                var verdict;
+                if (!report.Findings.length) {
+                    verdict = 'Healthy — nothing to report.';
+                } else {
+                    var parts = [];
+                    if (problems) {
+                        parts.push(problems + (problems === 1 ? ' problem' : ' problems'));
+                    }
+
+                    if (warnings) {
+                        parts.push(warnings + (warnings === 1 ? ' warning' : ' warnings'));
+                    }
+
+                    verdict = parts.join(', ') + ' — listed above.';
+                }
+
+                state.innerHTML = escapeHtml('Checked at ' + when + '. ' + verdict);
+            }
 
             function renderHealth(report) {
                 var container = page.querySelector('#CuratorHealth');
+                renderHealthState(report);
                 if (!report.Findings.length) {
                     container.innerHTML = '<div class="curatorFinding curatorFindingOk">'
                         + '<span class="curatorFindingTag">OK</span>'
@@ -1464,9 +1613,32 @@
                     type: 'GET',
                     url: ApiClient.getUrl('Curator/Health'),
                     dataType: 'json'
-                }).then(renderHealth, function () {
+                }).then(renderHealth, function (error) {
+                    var status = (error && (error.status || (error.response && error.response.status))) || 0;
                     page.querySelector('#CuratorHealth').innerHTML =
-                        '<p class="fieldDescription">Could not run the health check — see the server log.</p>';
+                        '<p class="fieldDescription">Could not run the health check.</p>';
+                    page.querySelector('#CuratorHealthState').innerHTML = escapeHtml(
+                        status
+                            ? 'The server returned ' + status + '.'
+                            : 'The request did not reach the server.');
+                });
+            }
+
+            /**
+             * Re-runs the health check on demand. The check reads only and calls no
+             * model, so this is free and safe to press repeatedly — it evaluates the
+             * facts fresh rather than showing what the daily task last found.
+             */
+            function runHealthCheck() {
+                var button = page.querySelector('#CuratorRunHealthCheck');
+                var state = page.querySelector('#CuratorHealthState');
+                button.disabled = true;
+                state.innerHTML = 'Checking&hellip;';
+
+                loadHealth().then(function () {
+                    button.disabled = false;
+                }, function () {
+                    button.disabled = false;
                 });
             }
 
@@ -2904,12 +3076,23 @@
                     page.querySelector('#MaxSharedCategories').value = config.MaxSharedCategories;
                     page.querySelector('#MinSharedCategorySize').value = config.MinSharedCategorySize;
                     page.querySelector('#MaxPersonalCategories').value = config.MaxPersonalCategories;
-                    page.querySelector('#MaxStoredSharedCategories').value = config.MaxStoredSharedCategories || 0;
-                    page.querySelector('#MaxStoredPersonalCategories').value = config.MaxStoredPersonalCategories || 0;
+
+                    // Resolved values, never the stored sentinel. A ceiling of 0 used
+                    // to mean "inherit the fallback below" and a kept-count of 0 meant
+                    // "inherit the per-run number" — two different meanings of the same
+                    // digit, in adjacent boxes. The page now shows the number that
+                    // actually applies and writes it back explicitly, so the sentinels
+                    // survive only for configs written before this.
+                    page.querySelector('#MaxSharedCategorySize').value =
+                        config.MaxSharedCategorySize || config.MaxCategoryMembers || 25;
+                    page.querySelector('#MaxPersonalCategorySize').value =
+                        config.MaxPersonalCategorySize || config.MaxCategoryMembers || 25;
+                    page.querySelector('#MaxStoredSharedCategories').value =
+                        config.MaxStoredSharedCategories || config.MaxSharedCategories || 0;
+                    page.querySelector('#MaxStoredPersonalCategories').value =
+                        config.MaxStoredPersonalCategories || config.MaxPersonalCategories || 0;
+                    renderPoolSummaries();
                     page.querySelector('#MinPersonalCategorySize').value = config.MinPersonalCategorySize;
-                    page.querySelector('#MaxSharedCategorySize').value = config.MaxSharedCategorySize || 0;
-                    page.querySelector('#MaxPersonalCategorySize').value = config.MaxPersonalCategorySize || 0;
-                    page.querySelector('#MaxCategoryMembers').value = config.MaxCategoryMembers;
                     page.querySelector('#PortraitThreshold').value = config.PortraitThreshold;
                     page.querySelector('#MinWatchedForPersonalization').value = config.MinWatchedForPersonalization;
                     page.querySelector('#MaxTagsPerItem').value = config.MaxTagsPerItem;
@@ -2965,7 +3148,6 @@
                     config.MinPersonalCategorySize = parseInt(page.querySelector('#MinPersonalCategorySize').value, 10);
                     config.MaxSharedCategorySize = parseInt(page.querySelector('#MaxSharedCategorySize').value, 10);
                     config.MaxPersonalCategorySize = parseInt(page.querySelector('#MaxPersonalCategorySize').value, 10);
-                    config.MaxCategoryMembers = parseInt(page.querySelector('#MaxCategoryMembers').value, 10);
                     config.PortraitThreshold = parseInt(page.querySelector('#PortraitThreshold').value, 10);
                     config.MinWatchedForPersonalization = parseInt(page.querySelector('#MinWatchedForPersonalization').value, 10);
                     config.MaxTagsPerItem = parseInt(page.querySelector('#MaxTagsPerItem').value, 10);
@@ -3115,6 +3297,14 @@
 
                 page.querySelector('#CuratorSaveSchedules').addEventListener('click', saveSchedules);
                 page.querySelector('#CuratorRunMaintenance').addEventListener('click', runMaintenance);
+                page.querySelector('#CuratorRunHealthCheck').addEventListener('click', runHealthCheck);
+
+                // The summary is the setting's only readable form, so it has to track
+                // the boxes as they are typed in rather than on save.
+                var poolInputs = page.querySelectorAll('.curatorPoolInput');
+                for (var pi = 0; pi < poolInputs.length; pi++) {
+                    poolInputs[pi].addEventListener('input', renderPoolSummaries);
+                }
                 page.querySelector('#CuratorRefreshRecommendations')
                     .addEventListener('click', refreshRecommendations);
                 page.querySelector('#CuratorSchedules').addEventListener('change', onScheduleChange);

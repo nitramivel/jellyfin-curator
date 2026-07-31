@@ -168,26 +168,54 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// <remarks>
         /// The 1-hour TTL costs 2x on the write instead of 1.25x, but the default
         /// 5-minute window is too short to survive the gap between passes over the
-        /// same batch. An empty prefix is sent as a single unmarked block, since a
-        /// marker on a short prefix caches nothing and still pays the write premium.
+        /// same batch.
+        /// <para>
+        /// <b>An empty block is never sent.</b> Anthropic rejects the whole request
+        /// with "text content blocks must be non-empty", and two passes hand this an
+        /// empty suffix by design — the distillation pass and the recommendation
+        /// re-rank both put their whole prompt in the prefix. Measured: 195 items,
+        /// every batch 400ing, 0 distilled, on a model that had simply never been
+        /// used for that pass before.
+        /// </para>
+        /// <para>
+        /// The cache marker goes on only when there is <em>also</em> a suffix. The
+        /// split exists to mark the part that repeats across calls, so a caller that
+        /// puts everything in the prefix is telling us there is nothing to reuse —
+        /// and marking it anyway would pay the write premium on every batch of a pass
+        /// whose prompt is different every time.
+        /// </para>
         /// </remarks>
         private static object[] BuildUserContent(LlmRequest request)
         {
-            if (string.IsNullOrEmpty(request.CacheablePrefix))
+            var hasPrefix = !string.IsNullOrEmpty(request.CacheablePrefix);
+            var hasSuffix = !string.IsNullOrEmpty(request.VariableSuffix);
+
+            if (!hasPrefix && !hasSuffix)
             {
-                return [new { type = "text", text = request.VariableSuffix }];
+                throw new InvalidOperationException(
+                    "Curator: an LLM request must carry some user prompt; both the cacheable prefix and the variable suffix are empty.");
             }
 
-            return
-            [
-                new
-                {
-                    type = "text",
-                    text = request.CacheablePrefix,
-                    cache_control = new { type = "ephemeral", ttl = "1h" },
-                },
-                new { type = "text", text = request.VariableSuffix },
-            ];
+            var blocks = new List<object>(2);
+
+            if (hasPrefix)
+            {
+                blocks.Add(hasSuffix
+                    ? new
+                    {
+                        type = "text",
+                        text = request.CacheablePrefix,
+                        cache_control = new { type = "ephemeral", ttl = "1h" },
+                    }
+                    : (object)new { type = "text", text = request.CacheablePrefix });
+            }
+
+            if (hasSuffix)
+            {
+                blocks.Add(new { type = "text", text = request.VariableSuffix });
+            }
+
+            return [.. blocks];
         }
 
         /// <inheritdoc />
