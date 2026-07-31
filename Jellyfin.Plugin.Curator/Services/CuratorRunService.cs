@@ -32,6 +32,17 @@ namespace Jellyfin.Plugin.Curator.Services
         int CategoriesRemoved,
         int PlaylistsRemoved);
 
+    /// <summary>What the daily maintenance pass did.</summary>
+    /// <param name="Skipped">True when a run was in progress and nothing was touched.</param>
+    /// <param name="Sync">The playlist reconcile result, or null when skipped.</param>
+    /// <param name="RecommendationsRefreshed">Recommendation playlists rebuilt against current watch activity.</param>
+    /// <param name="SummariesPruned">Condensed summaries dropped for items no longer in the library.</param>
+    public sealed record MaintenanceResult(
+        bool Skipped,
+        PlaylistSyncResult? Sync,
+        int RecommendationsRefreshed,
+        int SummariesPruned);
+
     /// <summary>
     /// The end-to-end run: scan → propose → reconcile → build playlists →
     /// publish home screen rows. Shared by the scheduled task and the manual
@@ -531,15 +542,15 @@ namespace Jellyfin.Plugin.Curator.Services
         /// so a failure here must not lose the categories and playlists the run has
         /// already paid a model to produce.
         /// </remarks>
-        private async Task BuildRecommendationsAsync(
+        private async Task<int> BuildRecommendationsAsync(
             PluginConfiguration config,
             IReadOnlyList<Guid> targetUsers,
-            IRunLog runLog,
+            IRunLog? runLog,
             CancellationToken cancellationToken)
         {
             if (!config.RecommendationPlaylists)
             {
-                return;
+                return 0;
             }
 
             var stored = _categoryStore.GetAll();
@@ -598,13 +609,15 @@ namespace Jellyfin.Plugin.Curator.Services
             }
 
             _logger.LogInformation("Curator: built {Count} recommendation playlist(s)", built);
-            runLog.Step("recommendations.built", $"Built {built} recommendation playlist(s)", new Dictionary<string, object?>
+            runLog?.Step("recommendations.built", $"Built {built} recommendation playlist(s)", new Dictionary<string, object?>
             {
                 ["playlistCount"] = built,
                 ["name"] = config.RecommendationPlaylistName,
                 ["maxItems"] = config.MaxRecommendations,
                 ["includeWatched"] = config.RecommendationsIncludeWatched,
             });
+
+            return built;
         }
 
         /// <summary>
@@ -908,6 +921,91 @@ namespace Jellyfin.Plugin.Curator.Services
         /// </remarks>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>What changed.</returns>
+        /// <summary>
+        /// The daily housekeeping pass: reconcile, refresh, prune. Costs nothing —
+        /// no model call is made anywhere in here.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Everything a category run leaves behind drifts between runs. Playlists get
+        /// deleted by hand, items leave the library, and — the reason this is daily
+        /// rather than weekly — people watch things. The recommendation playlists are
+        /// ranked by what a viewer has *not* seen, so they go stale the moment
+        /// somebody watches something. Rebuilding them nightly is free and keeps a
+        /// spotlight row honest between the weekly runs that cost money.
+        /// </para>
+        /// <para>
+        /// Skips entirely while a run is in progress. A run is rewriting the same
+        /// playlists and definitions this would reconcile, and the two racing would
+        /// have maintenance delete something the run had not finished claiming yet.
+        /// </para>
+        /// </remarks>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>What was reconciled, refreshed and pruned.</returns>
+        public async Task<MaintenanceResult> RunMaintenanceAsync(CancellationToken cancellationToken)
+        {
+            if (IsRunning)
+            {
+                _logger.LogInformation("Curator: a run is in progress; skipping maintenance this time");
+                return new MaintenanceResult(true, null, 0, 0);
+            }
+
+            var config = Plugin.Instance?.Configuration
+                ?? throw new InvalidOperationException("Curator: plugin configuration unavailable.");
+
+            // Reconciles playlists against stored categories and re-publishes the
+            // home screen rows at the end of it.
+            var sync = await SyncPlaylistsAsync(cancellationToken).ConfigureAwait(false);
+
+            var targetUsers = ResolveTargetUsers(config);
+            var refreshed = await BuildRecommendationsAsync(config, targetUsers, null, cancellationToken)
+                .ConfigureAwait(false);
+
+            var prunedSummaries = PruneSummaries();
+
+            _logger.LogInformation(
+                "Curator maintenance: {Rebuilt} playlist(s) rebuilt, {RemovedCategories} empty categor(ies) removed, "
+                + "{RemovedPlaylists} orphaned playlist(s) deleted, {Refreshed} recommendation playlist(s) refreshed, "
+                + "{Pruned} stale summary/summaries pruned",
+                sync.CategoriesRebuilt,
+                sync.CategoriesRemoved,
+                sync.PlaylistsRemoved,
+                refreshed,
+                prunedSummaries);
+
+            return new MaintenanceResult(false, sync, refreshed, prunedSummaries);
+        }
+
+        /// <summary>
+        /// Drops condensed summaries for items that have left the library.
+        /// </summary>
+        /// <remarks>
+        /// Never fatal, and deliberately conservative: if the scan comes back empty
+        /// the prune is skipped entirely rather than treated as "every item is gone",
+        /// which would throw away the whole summary cache the first time a library
+        /// was briefly unavailable.
+        /// </remarks>
+        private int PruneSummaries()
+        {
+            try
+            {
+                var items = _libraryScanner.ScanLibrary(includeEpisodes: false);
+                if (items.Count == 0)
+                {
+                    _logger.LogWarning(
+                        "Curator maintenance: library scan returned nothing; leaving the summary cache alone");
+                    return 0;
+                }
+
+                return _summaryStore.Prune([.. items.Select(i => i.Id)]);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Curator maintenance: could not prune summaries — {Message}", ex.Message);
+                return 0;
+            }
+        }
+
         public async Task<PlaylistSyncResult> SyncPlaylistsAsync(CancellationToken cancellationToken)
         {
             var config = Plugin.Instance?.Configuration

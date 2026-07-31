@@ -61,12 +61,16 @@ Jellyfin.Plugin.Curator/
 │   ├── Playlists/            # PlaylistSyncDecision (the ownership decision table)
 │   ├── Recommendations/      # RecommendationRanker (merge a viewer's categories
 │   │                         #   into one ranked list; per-user playlist identity)
+│   ├── Scheduling/           # ScheduleSpec + ScheduleTranslator (the page's one
+│   │                         #   cadence <-> Jellyfin's trigger list)
 │   ├── HomeScreen/           # SectionConfigMerger (JSON merge for both integrations)
 │   └── Models/               # MediaItemRecord, CategoryProposal, ReconciledCategory,
 │                             #   CategoryDefinition, UserActivity
 ├── Services/                 # Everything that touches Jellyfin or the network
 │   ├── CuratorRunService.cs  # The end-to-end run; both entry points call this
 │   ├── GenerateCategoriesTask.cs   # IScheduledTask, weekly default
+│   ├── DistillSummariesTask.cs     # IScheduledTask, daily default
+│   ├── MaintenanceTask.cs          # IScheduledTask, daily; reconcile + refresh + prune
 │   ├── Library/              # LibraryScanner, UserActivityProvider
 │   ├── Llm/                  # ILlmProvider + Anthropic/Google/Grok/OpenAI/compatible,
 │   │                         #   TransientHttpRetry (shared 429/5xx backoff), factory,
@@ -194,7 +198,15 @@ playlist.)
    forgetting to claim would delete every viewer's spotlight row. And because
    nothing is stored, handoff needs no flag: a missing ownership tag says the
    viewer took it, on this run and every future one.
-13. **Ask before adding dependencies** beyond the Jellyfin packages and an
+13. **The Schedule tab edits Jellyfin's triggers, not Curator's config.**
+   `IScheduledTaskWorker.Triggers` is settable and persists on assignment, so the
+   tab and Dashboard → Scheduled Tasks are two editors over one store. Saving
+   **replaces** a task's triggers: the page offers one cadence and Jellyfin allows
+   several of mixed kinds, so keeping a hidden extra would mean the page showed
+   something other than what runs. `ScheduleTranslator` is the whole conversion and
+   is round-trip tested — what the page saves must be what it reads back, or the
+   settings drift every time they are opened.
+14. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 
@@ -348,8 +360,10 @@ Playlists are still built. Never throw out of home screen integration.
   model to answer in the wrong JSON — which looks like a parser bug.
 - **Settings live on five tabs**: Model (profiles, request, spend), Library
   (what is sent and who for), Categories (the two pools' size and count), Home
-  screen (rows), Summaries (the condensing pass and its settings). A sixth tab,
-  Runs, is not part of the settings form — the save row hides on it. Put a new setting where its *subject* is, not where it is
+  screen (rows and the recommendation playlist), Summaries (the condensing pass
+  and its settings). **Two tabs are NOT part of the settings form** and hide the
+  save row: Runs, and Schedule — the latter writes through Jellyfin's
+  `ITaskManager`, not plugin config, so the form's Save would do nothing for it. Put a new setting where its *subject* is, not where it is
   technically enforced.
 - **Option order in a `<select>` is load-bearing.** `setEnumSelect` falls back to
   matching by index when a stored config carries the numeric enum value, so
