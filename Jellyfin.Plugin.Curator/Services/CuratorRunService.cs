@@ -8,6 +8,7 @@ using Jellyfin.Plugin.Curator.Core;
 using Jellyfin.Plugin.Curator.Core.Llm;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Reconciliation;
+using Jellyfin.Plugin.Curator.Core.Recommendations;
 using Jellyfin.Plugin.Curator.Services.Categories;
 using Jellyfin.Plugin.Curator.Services.HomeScreen;
 using Jellyfin.Plugin.Curator.Services.Library;
@@ -499,6 +500,11 @@ namespace Jellyfin.Plugin.Curator.Services
 
             await EnforceCategoryCapsAsync(config, runLog, cancellationToken).ConfigureAwait(false);
 
+            // 5b. Per-viewer recommendation playlists, merged from the categories
+            // each viewer now has. No model call: every category already carries the
+            // model's own ordering of its members.
+            await BuildRecommendationsAsync(config, targetUsers, runLog, cancellationToken).ConfigureAwait(false);
+
             Report(progress, runLog, 92);
 
             // 6. Publish home screen rows.
@@ -513,6 +519,91 @@ namespace Jellyfin.Plugin.Curator.Services
             runLog.Step("run.complete", $"Run complete — {allCategoryIds.Count} categories live", new Dictionary<string, object?>
             {
                 ["categoryCount"] = allCategoryIds.Count,
+            });
+        }
+
+        /// <summary>
+        /// Builds each viewer's recommendation playlist by merging the categories
+        /// they hold into one ranked list.
+        /// </summary>
+        /// <remarks>
+        /// Never fatal. This is a convenience row on top of the run's real output,
+        /// so a failure here must not lose the categories and playlists the run has
+        /// already paid a model to produce.
+        /// </remarks>
+        private async Task BuildRecommendationsAsync(
+            PluginConfiguration config,
+            IReadOnlyList<Guid> targetUsers,
+            IRunLog runLog,
+            CancellationToken cancellationToken)
+        {
+            if (!config.RecommendationPlaylists)
+            {
+                return;
+            }
+
+            var stored = _categoryStore.GetAll();
+            var built = 0;
+
+            foreach (var userId in targetUsers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                try
+                {
+                    // A category belongs to this viewer's ranking if it is shared
+                    // (OwnerUserId null — every viewer has it) or was invented for
+                    // them. Another viewer's personal category is not theirs to be
+                    // recommended from.
+                    var mine = stored
+                        .Where(c => c.OwnerUserId is null || c.OwnerUserId == userId)
+                        .Select(c => new RankedCategory(c.Members, c.OwnerUserId == userId))
+                        .ToList();
+
+                    if (mine.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    // Only the items actually in play need looking up, which for a
+                    // viewer's own categories is a small slice of the library.
+                    var candidates = mine.SelectMany(c => c.Members).Distinct().ToArray();
+                    var activity = _userActivityProvider.GetActivity(userId, candidates);
+                    var ranked = RecommendationRanker.Rank(
+                        mine,
+                        activity,
+                        new RecommendationOptions(config.MaxRecommendations, config.RecommendationsIncludeWatched));
+
+                    var playlistId = await _playlistService
+                        .SyncRecommendationsAsync(
+                            userId,
+                            config.RecommendationPlaylistName,
+                            ranked,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (playlistId is not null)
+                    {
+                        built++;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Curator: could not build recommendations for user {UserId} — {Message}",
+                        userId,
+                        ex.Message);
+                }
+            }
+
+            _logger.LogInformation("Curator: built {Count} recommendation playlist(s)", built);
+            runLog.Step("recommendations.built", $"Built {built} recommendation playlist(s)", new Dictionary<string, object?>
+            {
+                ["playlistCount"] = built,
+                ["name"] = config.RecommendationPlaylistName,
+                ["maxItems"] = config.MaxRecommendations,
+                ["includeWatched"] = config.RecommendationsIncludeWatched,
             });
         }
 

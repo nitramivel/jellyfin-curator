@@ -578,6 +578,58 @@
                             </div>
                         </div>
 
+                        <h3 class="sectionTitle">Recommendation playlist</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            One long playlist per viewer, ordered most recommended first, built by merging the
+                            categories that viewer already has. <strong>Costs nothing</strong> — no extra model
+                            call — because every category already carries the model's own ordering of its members.
+                            Intended for a spotlight banner such as the Media&nbsp;Bar plugin, or any row that
+                            takes a playlist name.
+                        </p>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="RecommendationPlaylists"
+                                       name="RecommendationPlaylists" />
+                                <span>Build a recommendation playlist for each viewer</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Rebuilt at the end of every run. Turning this off leaves existing playlists in
+                                place rather than deleting them.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="RecommendationPlaylistName">Playlist name</label>
+                            <input id="RecommendationPlaylistName" name="RecommendationPlaylistName" type="text"
+                                   class="emby-input" />
+                            <div class="fieldDescription">
+                                <strong>This is the name to give the Media Bar plugin.</strong> Every viewer gets a
+                                playlist with this same name — Jellyfin playlists are per-user, so each person sees
+                                only their own, and one name in one setting serves everybody. Renaming it here
+                                renames the playlists on the next run, so anything pointing at the old name has to
+                                be repointed.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxRecommendations">Length</label>
+                            <input id="MaxRecommendations" name="MaxRecommendations" type="number" min="0" max="1000"
+                                   class="emby-input" />
+                            <div class="fieldDescription">
+                                How many items the playlist holds. 0 means everything the viewer's categories
+                                cover. A spotlight bar cycles, so a long list keeps it from repeating.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="RecommendationsIncludeWatched"
+                                       name="RecommendationsIncludeWatched" />
+                                <span>Include things they have already watched</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Kept but always below everything unwatched, so the head of the list stays discovery
+                                and the tail becomes rewatch material — with favourites leading that tail. Turn it
+                                off for a shorter, strictly unseen list.
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -2206,6 +2258,10 @@
                     normalizeProfiles(config);
                     renderProfiles();
                     renderSummaryProfileSelect(config.SummaryModelProfileId || '');
+                    page.querySelector('#RecommendationPlaylists').checked = config.RecommendationPlaylists;
+                    page.querySelector('#RecommendationPlaylistName').value = config.RecommendationPlaylistName || '';
+                    page.querySelector('#MaxRecommendations').value = config.MaxRecommendations;
+                    page.querySelector('#RecommendationsIncludeWatched').checked = config.RecommendationsIncludeWatched;
                     page.querySelector('#UseCondensedSummaries').checked = config.UseCondensedSummaries;
                     page.querySelector('#CondensedSummaryMaxLength').value = config.CondensedSummaryMaxLength;
                     page.querySelector('#SummaryMinSourceLength').value = config.SummaryMinSourceLength;
@@ -2273,6 +2329,10 @@
                     config.MinWatchedForPersonalization = parseInt(page.querySelector('#MinWatchedForPersonalization').value, 10);
                     config.MaxTagsPerItem = parseInt(page.querySelector('#MaxTagsPerItem').value, 10);
                     config.SurfacedCollections = page.querySelector('#SurfacedCollections').value.trim();
+                    config.RecommendationPlaylists = page.querySelector('#RecommendationPlaylists').checked;
+                    config.RecommendationPlaylistName = page.querySelector('#RecommendationPlaylistName').value.trim();
+                    config.MaxRecommendations = parseInt(page.querySelector('#MaxRecommendations').value, 10);
+                    config.RecommendationsIncludeWatched = page.querySelector('#RecommendationsIncludeWatched').checked;
                     config.UseCondensedSummaries = page.querySelector('#UseCondensedSummaries').checked;
                     config.CondensedSummaryMaxLength = parseInt(page.querySelector('#CondensedSummaryMaxLength').value, 10);
                     config.SummaryMinSourceLength = parseInt(page.querySelector('#SummaryMinSourceLength').value, 10);

@@ -59,6 +59,8 @@ Jellyfin.Plugin.Curator/
 │   │                         #   source hash), SummaryPromptBuilder, SummaryParser
 │   ├── Reconciliation/       # Reconciler, StringSimilarity
 │   ├── Playlists/            # PlaylistSyncDecision (the ownership decision table)
+│   ├── Recommendations/      # RecommendationRanker (merge a viewer's categories
+│   │                         #   into one ranked list; per-user playlist identity)
 │   ├── HomeScreen/           # SectionConfigMerger (JSON merge for both integrations)
 │   └── Models/               # MediaItemRecord, CategoryProposal, ReconciledCategory,
 │                             #   CategoryDefinition, UserActivity
@@ -90,7 +92,8 @@ test.
 
 These are invariants, not preferences. Breaking one produces a plugin that
 silently misbehaves. (Rules 1-9 predate the model profile list; rule 10 came with
-it, and rule 11 with condensed summaries.)
+it, rule 11 with condensed summaries, and rule 12 with the recommendation
+playlist.)
 
 1. **The model never sees Jellyfin GUIDs.** `PromptBuilder` assigns batch-local
    integer indexes; `ProposalParser` discards any index outside `0..n-1` and maps
@@ -180,7 +183,18 @@ it, and rule 11 with condensed summaries.)
    `SummaryPlan` keys staleness on a hash of the source overview, which is the only
    thing that makes a second pass free and stops a metadata refresh leaving a
    summary describing the wrong film.
-12. **Ask before adding dependencies** beyond the Jellyfin packages and an
+12. **The recommendation playlist has no stored definition, so its tether is its
+   identity.** `RecommendationRanker.IdentityFor(userId)` derives a stable GUID
+   from the user, stamped on the playlist as the usual `CuratorCategory`
+   provider ID. That is how it is found again — never by name (rule 2), and
+   without a store file. Two consequences that bite: the orphan sweep in
+   `RemoveOrphanedPlaylistsAsync` deletes Curator-tagged playlists no definition
+   claims, which is *exactly* this playlist's shape, so it self-identifies via
+   `IsRecommendationPlaylist` rather than relying on callers to claim it —
+   forgetting to claim would delete every viewer's spotlight row. And because
+   nothing is stored, handoff needs no flag: a missing ownership tag says the
+   viewer took it, on this run and every future one.
+13. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 
