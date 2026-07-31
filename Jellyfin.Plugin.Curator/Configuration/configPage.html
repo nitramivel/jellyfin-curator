@@ -165,6 +165,26 @@
                 .curatorScheduleMeta { font-size: 0.85em; opacity: 0.55; margin-top: 0.7em; }
                 .curatorCostly { color: #d9a441; }
 
+                /* Health findings. Colours carry meaning here, so each also gets a
+                   word — a row that only differs by hue says nothing to anyone who
+                   cannot tell the hues apart. */
+                .curatorFinding {
+                    display: flex; gap: 0.7em; align-items: flex-start;
+                    padding: 0.7em 0.9em; margin-bottom: 0.5em; border-radius: 6px;
+                    border-left: 3px solid transparent;
+                    background: rgba(255, 255, 255, 0.04);
+                }
+                .curatorFindingProblem { border-left-color: #d9534f; background: rgba(217, 83, 79, 0.10); }
+                .curatorFindingWarning { border-left-color: #d9a441; background: rgba(217, 164, 65, 0.09); }
+                .curatorFindingOk      { border-left-color: #4caf76; background: rgba(76, 175, 118, 0.09); }
+                .curatorFindingTag {
+                    font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.07em;
+                    font-weight: 600; opacity: 0.75; flex: 0 0 auto; margin-top: 0.25em;
+                    min-width: 4.6em;
+                }
+                .curatorFindingTitle { font-weight: 600; }
+                .curatorFindingDetail { font-size: 0.9em; opacity: 0.7; margin-top: 0.2em; }
+
                 /* Detail panels — shared by the category list and the run history.
                    The old panels indented with padding-left, which spent width in an already
                    narrow dashboard column and still left the panel visually loose from its row.
@@ -673,6 +693,17 @@
                                 off for a shorter, strictly unseen list.
                             </div>
                         </div>
+                        <div style="margin-top:1.2em;">
+                            <button is="emby-button" type="button" id="CuratorRefreshRecommendations" class="raised">
+                                <span>Generate now</span>
+                            </button>
+                            <div class="fieldDescription" style="margin-top:0.5em;" id="CuratorRecommendationState">
+                                Rebuilds every viewer's playlist from the categories they already have, ranked
+                                against what they have watched as of right now. Free — no model call. Also runs
+                                on a schedule every six hours, and at the end of every category run.
+                                <strong>Save first</strong> if you have just changed the settings above.
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -846,6 +877,9 @@
                         pass and cleanup is free, so both can run often.
                     </p>
 
+                    <div id="CuratorHealth"><p class="fieldDescription">Checking&hellip;</p></div>
+
+                    <h3 class="sectionTitle" style="margin-top:1.6em;">Tasks</h3>
                     <div id="CuratorSchedules"><p class="fieldDescription">Loading&hellip;</p></div>
 
                     <div style="margin-top:1.4em;">
@@ -1197,6 +1231,66 @@
                 select.selectedIndex = 0;
             }
 
+            // ---- health ----
+
+            function renderHealth(report) {
+                var container = page.querySelector('#CuratorHealth');
+                if (!report.Findings.length) {
+                    container.innerHTML = '<div class="curatorFinding curatorFindingOk">'
+                        + '<span class="curatorFindingTag">OK</span>'
+                        + '<div><div class="curatorFindingTitle">Nothing to report</div>'
+                        + '<div class="curatorFindingDetail">Runs are happening, both integration plugins are '
+                        + 'loaded, and the library looks clean.</div></div></div>';
+                    return;
+                }
+
+                container.innerHTML = report.Findings.map(function (f) {
+                    var cls = f.Severity === 'Problem' ? 'curatorFindingProblem' : 'curatorFindingWarning';
+                    var tag = f.Severity === 'Problem' ? 'Problem' : 'Warning';
+                    return '<div class="curatorFinding ' + cls + '">'
+                        + '<span class="curatorFindingTag">' + tag + '</span>'
+                        + '<div><div class="curatorFindingTitle">' + escapeHtml(f.Title) + '</div>'
+                        + '<div class="curatorFindingDetail">' + escapeHtml(f.Detail) + '</div></div></div>';
+                }).join('');
+            }
+
+            function loadHealth() {
+                return ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Health'),
+                    dataType: 'json'
+                }).then(renderHealth, function () {
+                    page.querySelector('#CuratorHealth').innerHTML =
+                        '<p class="fieldDescription">Could not run the health check — see the server log.</p>';
+                });
+            }
+
+            function refreshRecommendations() {
+                var button = page.querySelector('#CuratorRefreshRecommendations');
+                var state = page.querySelector('#CuratorRecommendationState');
+                button.disabled = true;
+                state.innerHTML = 'Generating&hellip;';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Recommendations/Refresh'),
+                    dataType: 'json'
+                }).then(function (built) {
+                    button.disabled = false;
+                    if (built < 0) {
+                        state.innerHTML = 'Skipped — a run is in progress, and it rebuilds these itself.';
+                    } else if (built === 0) {
+                        state.innerHTML = 'Nothing built. Either the setting above is off and unsaved, or no '
+                            + 'viewer has any categories yet — run Curator once first.';
+                    } else {
+                        state.innerHTML = 'Rebuilt ' + built + ' playlist(s), ranked against watch activity as of now.';
+                    }
+                }, function () {
+                    button.disabled = false;
+                    state.innerHTML = 'Could not generate — check the server log.';
+                });
+            }
+
             // ---- schedule ----
 
             var schedules = [];
@@ -1374,9 +1468,9 @@
                         + (sync.CategoriesRebuilt || 0) + ' playlist(s) rebuilt, '
                         + (sync.CategoriesRemoved || 0) + ' empty categor(ies) removed, '
                         + (sync.PlaylistsRemoved || 0) + ' orphaned playlist(s) deleted, '
-                        + (result.RecommendationsRefreshed || 0) + ' recommendation playlist(s) refreshed, '
                         + (result.SummariesPruned || 0) + ' stale summary/summaries pruned.';
                     loadSchedules();
+                    loadHealth();
                 }, function () {
                     button.disabled = false;
                     state.innerHTML = 'Cleanup failed — check the server log.';
@@ -1612,6 +1706,7 @@
 
                 if (name === 'schedule') {
                     loadSchedules();
+                    loadHealth();
                 }
 
                 // The Summaries tab shows live state, so refresh on arrival rather
@@ -2780,6 +2875,8 @@
 
                 page.querySelector('#CuratorSaveSchedules').addEventListener('click', saveSchedules);
                 page.querySelector('#CuratorRunMaintenance').addEventListener('click', runMaintenance);
+                page.querySelector('#CuratorRefreshRecommendations')
+                    .addEventListener('click', refreshRecommendations);
                 page.querySelector('#CuratorSchedules').addEventListener('change', onScheduleChange);
 
                 // Keeps the option label in step with the name as it is typed, so the

@@ -8,8 +8,23 @@ namespace Jellyfin.Plugin.Curator.Services.Library
     /// <summary>
     /// Enumerates the media library and reduces items to their LLM-facing records.
     /// </summary>
+    /// <summary>Counts from a cheap look at the library, for the health check.</summary>
+    /// <param name="Items">Movies and series inside a configured library folder.</param>
+    /// <param name="Orphaned">
+    /// Rows whose path sits outside every configured library folder — left behind
+    /// when a folder is removed or a mount renamed. Indistinguishable from real
+    /// items in Jellyfin, and they play back as nothing.
+    /// </param>
+    public sealed record LibraryHealth(int Items, int Orphaned);
+
     public interface ILibraryScanner
     {
+        /// <summary>
+        /// Counts real and orphaned library rows without building records for them.
+        /// </summary>
+        /// <returns>The counts.</returns>
+        LibraryHealth Inspect();
+
         /// <summary>
         /// Scans the library for movies and series, plus episodes when requested,
         /// reduced to compact records. Virtual items (e.g. missing episodes) are excluded.

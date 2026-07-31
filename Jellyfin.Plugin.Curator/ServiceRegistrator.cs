@@ -1,5 +1,6 @@
 using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
+using Jellyfin.Plugin.Curator.Services.Health;
 using Jellyfin.Plugin.Curator.Services.HomeScreen;
 using Jellyfin.Plugin.Curator.Services.Library;
 using Jellyfin.Plugin.Curator.Services.Llm;
@@ -31,10 +32,13 @@ namespace Jellyfin.Plugin.Curator
             serviceCollection.AddSingleton<IRunLogStore, RunLogStore>();
             serviceCollection.AddSingleton<ISummaryStore, SummaryStore>();
             serviceCollection.AddSingleton<SummaryDistillService>();
+            serviceCollection.AddSingleton<HealthService>();
             serviceCollection.AddSingleton<CuratorRunService>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, GenerateCategoriesTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, DistillSummariesTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, MaintenanceTask>();
+            serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, HealthCheckTask>();
+            serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, RefreshRecommendationsTask>();
         }
     }
 }
