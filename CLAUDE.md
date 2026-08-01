@@ -99,10 +99,8 @@ test.
 ## Hard rules
 
 These are invariants, not preferences. Breaking one produces a plugin that
-silently misbehaves. (Rules 1-9 predate the model profile list; rule 10 came with
-it, rule 11 with condensed summaries, rule 12 with the recommendation playlist,
-rules 13-14 with scheduling and tag consolidation, 15-16 with the task set
-and the health check, and 17 with per-pass model assignment.)
+silently misbehaves. Rule 3 is the newest and was the most expensive to learn:
+every one of these was a real failure on a real server before it was a rule.
 
 1. **The model never sees Jellyfin GUIDs.** `PromptBuilder` assigns batch-local
    integer indexes; `ProposalParser` discards any index outside `0..n-1` and maps
@@ -112,11 +110,37 @@ and the health check, and 17 with per-pass model assignment.)
 2. **Never resolve our own playlists by name.** Always by stored GUID, with
    recovery via the `CuratorCategory` provider-ID tether. Duplicate playlist names
    are legal in Jellyfin; SmartLists removed exactly this fallback for good reason.
-3. **The `curator` tag is the ownership contract.** A playlist without it belongs
+3. **A category's audience is `CategoryAudience.For(OwnerUserId, targetUsers)` —
+   never the raw target list.** Shared goes to everyone targeted; personal goes to
+   its one owner, and to nobody at all if that owner is no longer targeted. The
+   run got this right where it built categories and wrong in the reconcile pass,
+   which walked every stored definition and handed all of them the full list — so
+   once that pass became a nightly task, every viewer ended up on every row.
+   Measured: 102 definitions, 80 personal, all six users on each. `SyncCategoryAsync`
+   is now **authoritative** about its audience: a link held by anyone outside it is
+   run through the same ownership table with `hasMembers: false`, so it is deleted
+   if Curator still owns it, handed off if the tag has gone, and left alone forever
+   if it was handed off before. That is what repairs a store this has already
+   spread, without a migration.
+4. **Shared rows go to everyone; only their order is personalized.** Making them
+   opt-in was tried and collapsed — a category no viewer picked went unbuilt for
+   the whole household, and on a real library the model declined 16 of 25 offers
+   because it was choosing from watch histories missing all television. So the
+   viewer's pass earns its keep by inventing, not by vetoing. `MemberOrdering`
+   reorders each viewer's own copy of a shared playlist instead: no row can ever
+   be taken from anyone, and because Jellyfin playlists are per-user it needs no
+   client support, unlike anything routed through the home screen plugins. It
+   **nudges** — the model ranked members by belonging and that stays the primary
+   signal; a favourite thirty places down rises but must not lead the row.
+   Per-viewer row *order* is not available at all: Home Screen Sections keeps
+   `OrderIndex` in its global `SectionSettings`, and the only per-user structure is
+   `EnabledSections`, which is a set. Hiding a row per viewer is possible there and
+   is deliberately not done — it is the same veto in a smaller blast radius.
+5. **The `curator` tag is the ownership contract.** A playlist without it belongs
    to the user permanently — never modify, delete, or replace it, and never create
    a replacement for that user. Handoff takes precedence over deletion, even when
    the category empties.
-4. **Empty category ≠ deleted category.** Remove the Jellyfin playlist, null the
+6. **Empty category ≠ deleted category.** Remove the Jellyfin playlist, null the
    stored playlist ID, keep the definition so a later run reuses the same identity.
    Identity is name **or** member similarity, not name alone — the model renames
    every thread every run (measured: 0 of 16 then 0 of 33 names survived), and a
@@ -151,8 +175,8 @@ and the health check, and 17 with per-pass model assignment.)
    `POST /Curator/Playlists/Sync` applies the same judgement on demand: it
    rebuilds a playlist a category has lost, then deletes definitions still
    holding none, then deletes Curator-owned playlists no definition claims.
-   Untagged playlists are never touched by any of it — see rule 3.
-5. **No live LLM calls in tests.** Providers are tested through a stub
+   Untagged playlists are never touched by any of it — see rule 5.
+7. **No live LLM calls in tests.** Providers are tested through a stub
    `HttpMessageHandler`; the run pipeline through a stub `ILlmProvider`.
    **Orchestration services take `ILlmProviderFactory`, not the concrete factory.**
    That interface is the only seam that makes the second half of this rule
@@ -161,7 +185,7 @@ and the health check, and 17 with per-pass model assignment.)
    `SummaryDistillServiceTests` is what it buys: the split-and-retry loop driven end
    to end against canned responses, asserting a failing 8-item request becomes
    `[8, 4, 4]` and loses nothing.
-6. **Log token count and estimated cost at INFO every run.** Runs cost money; the
+8. **Log token count and estimated cost at INFO every run.** Runs cost money; the
    user must be able to see what a run spent. **Cache reads are charged, not
    free.** Providers that report cached tokens inside their input count have it
    subtracted before costing, so pricing only `InputTokens` silently drops them
@@ -171,12 +195,12 @@ and the health check, and 17 with per-pass model assignment.)
    to err for a number whose only job is telling the owner what a run spent.
    Cache *writes* carry their own premium and are still unpriced, which the
    `RunLogCost` doc comment says out loud.
-7. **`BatchSize = 0` means the whole library in one request, and is the default.**
+9. **`BatchSize = 0` means the whole library in one request, and is the default.**
    A thread running through items split across two batches is one the model
    never gets to see: each call only sees its own slice, so the categories it
    proposes can only join up what is in front of it. Raise it off 0 only for a
    model whose context cannot hold the library.
-8. **Every category limit is told to the model, not only applied to its answer.**
+10. **Every category limit is told to the model, not only applied to its answer.**
    `CategoryLimits` is the single value both `PromptBuilder` and `Reconciler`
    take — build one per pool and pass the *same instance* to both. Do not unpack
    it into loose ints on the way, and do not add a limit that only one side sees.
@@ -203,7 +227,7 @@ and the health check, and 17 with per-pass model assignment.)
    263-item library, all 60 categories came back at 5-10 members against a
    ceiling of 20, so the model sits near the floor it is given and the ceiling
    goes unused. Reach for the floor first when rows are too short.
-9. **Every paid pass writes a run log.** The category run always did; the
+11. **Every paid pass writes a run log.** The category run always did; the
    distillation pass did not, and diagnosing it meant grepping tens of megabytes of
    server log — which is how a pass losing 185 items of 212 went unnoticed. It now
    calls `Begin` with trigger `summaries` and **`trackAsCurrent: false`**: the
@@ -214,12 +238,12 @@ and the health check, and 17 with per-pass model assignment.)
    `Services/Runs/` swallows its own IO failures with a warning. The same applies
    to the prompt pool and the atomic temp-file rename — diagnostics are strictly
    subordinate to the run.
-10. **A model profile is the unit of "how to call a model", and its legacy fields
+12. **A model profile is the unit of "how to call a model", and its legacy fields
    are not dead code.** `ModelProfile` carries provider, model, API key, base URL,
    **that profile's prices, and whether it thinks**; `Core/Llm/ModelProfiles` normalizes the list on
    every read. Pricing lives on the profile because a list you switch between
    turns "remember to change the prices when you change provider" from an
-   occasional mistake into the normal case — rule 6 says the cost line must be
+   occasional mistake into the normal case — rule 8 says the cost line must be
    right, and a shared price block cannot be. The pre-profile scalars on
    `PluginConfiguration` (`Provider`, `Model`, `ApiKey`, `BaseUrl`, the three
    `*CostPerMillion`) look unused and **must not be deleted**: XmlSerializer
@@ -229,7 +253,7 @@ and the health check, and 17 with per-pass model assignment.)
    list, and the config page blanks them on the next save so migration happens
    exactly once. Migration is deliberately *only* for an empty list — re-importing
    them afterwards would resurrect a deleted profile on every run.
-11. **Condensed summaries are a cache, never a write-back.** The distillation pass
+13. **Condensed summaries are a cache, never a write-back.** The distillation pass
    reads Jellyfin's `Overview`, stores a short rewrite in
    `data/curator/summaries.json`, and substitutes it *on the way out of*
    `LibraryScanner`. Nothing ever writes to the library, so clearing the store
@@ -241,7 +265,7 @@ and the health check, and 17 with per-pass model assignment.)
    `SummaryPlan` keys staleness on a hash of the source overview, which is the only
    thing that makes a second pass free and stops a metadata refresh leaving a
    summary describing the wrong film.
-12. **Recommendation selection is arithmetic; only the order may cost money.**
+14. **Recommendation selection is arithmetic; only the order may cost money.**
    `RecommendationRanker` decides *which* items appear and calls no model — the
    information is already bought, since every category carries the model's own
    ordering of its members. `ModelRankedRecommendations` (off by default) adds one
@@ -265,7 +289,7 @@ and the health check, and 17 with per-pass model assignment.)
    forgetting to claim would delete every viewer's spotlight row. And because
    nothing is stored, handoff needs no flag: a missing ownership tag says the
    viewer took it, on this run and every future one.
-13. **The Schedule tab edits Jellyfin's triggers, not Curator's config.**
+15. **The Schedule tab edits Jellyfin's triggers, not Curator's config.**
    `IScheduledTaskWorker.Triggers` is settable and persists on assignment, so the
    tab and Dashboard → Scheduled Tasks are two editors over one store. Saving
    **replaces** a task's triggers: the page offers one cadence and Jellyfin allows
@@ -273,7 +297,7 @@ and the health check, and 17 with per-pass model assignment.)
    something other than what runs. `ScheduleTranslator` is the whole conversion and
    is round-trip tested — what the page saves must be what it reads back, or the
    settings drift every time they are opened.
-14. **Two settings govern tags and they are not interchangeable.**
+16. **Two settings govern tags and they are not interchangeable.**
    `MaxTagsPerItem` takes the first N of the **raw** scraped list and defaults to 0;
    `ConsolidateTags` has the distillation pass keep however many genuinely describe
    the item, with `MaxConsolidatedTags` as a **ceiling and never a target** — a
@@ -309,7 +333,7 @@ and the health check, and 17 with per-pass model assignment.)
    every pass. When `SendConsolidatedTags` is on the run service raises the
    effective tag cap, because `MaxTagsPerItem` is normally 0 and would otherwise
    substitute the consolidated tags onto every record and then write none of them.
-15. **Four scheduled tasks, one job each.** Generate Categories (weekly, the only
+17. **Four scheduled tasks, one job each.** Generate Categories (weekly, the only
    one that costs money), Condense Summaries (daily), Refresh Recommendations
    (6-hourly), Clean Up and Sync (daily), Health Check (daily). The recommendation
    refresh deliberately does **not** live in the maintenance task any more: it
@@ -319,7 +343,7 @@ and the health check, and 17 with per-pass model assignment.)
    cadence there is a taste decision rather than a spending one. All four skip or
    no-op while a run is in progress — a run rewrites the same playlists and
    definitions, and racing it loses work.
-16. **The health check exists because this plugin fails silently.** Both
+18. **The health check exists because this plugin fails silently.** Both
    integrations degrade quietly by design, a run dies mid-flight whenever
    installing any plugin tears the host down, and library rows outlive their
    folder. From the outside all of these look identical to "Curator stopped
@@ -333,7 +357,7 @@ and the health check, and 17 with per-pass model assignment.)
    `summaries.failing` (the last pass lost more than half its items). Both need a
    real sample before firing, because a handful of items whose scraped tags were all
    trivia genuinely produce nothing.
-17. **A run may call two models, so nothing may assume there is one.**
+19. **A run may call two models, so nothing may assume there is one.**
    `DiscoveryModelProfileId` and `PersonalModelProfileId` name the profile each
    pass uses; blank means the default, so an install that has chosen nothing
    behaves exactly as it always did. The split exists because the two passes are
@@ -358,7 +382,7 @@ and the health check, and 17 with per-pass model assignment.)
      stored against the viewer pass's `ModelId`, and the run-log settings snapshot
      names both passes — one model reported for a two-model run is how a bug
      report gets read wrongly.
-18. **Ask before adding dependencies** beyond the Jellyfin packages and an
+20. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
    xUnit.
 
@@ -535,6 +559,16 @@ Playlists are still built. Never throw out of home screen integration.
   the shape, in deliberately separate dialects. They used to hardcode the
   categories schema regardless, so adding a shape without touching them forces the
   model to answer in the wrong JSON — which looks like a parser bug.
+- **Prompt caching needs a routing hint, and each vendor spells it differently.**
+  Cache entries live on the server that wrote them, so without one the calls of a
+  run scatter and each lands somewhere that has never seen the prefix. xAI takes
+  the `x-grok-conv-id` **header**; OpenAI takes a `prompt_cache_key` **body
+  field**; both are given the run id, so a run's calls pin together. Measured on
+  the same 263-item library: Grok served 82k of 147k input from cache, while
+  OpenAI reported **zero** cached tokens on a byte-identical 139k prompt across
+  two runs eight minutes apart. Send neither to `CreateCompatible` — Ollama, LM
+  Studio, vLLM and OpenRouter are entitled to reject a body field they do not
+  know, and this one class drives all of them.
 - **Never send an empty content block.** Anthropic rejects the whole request —
   `messages: text content blocks must be non-empty` — and Google gains nothing
   from an empty part. Both builders guarded an empty *prefix* and not an empty

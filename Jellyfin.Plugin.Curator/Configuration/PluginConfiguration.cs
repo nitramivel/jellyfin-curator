@@ -190,7 +190,7 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// is how large a library of them is allowed to accumulate. Tying them
         /// together caps the collection at one pass's worth, so every run over the
         /// number deletes something — and a category deleted by the cap loses its
-        /// identity and comes back as a new row (hard rule 4), which is what makes the
+        /// identity and comes back as a new row (hard rule 6), which is what makes the
         /// home screen churn. Measured on a single run with the two tied: 35
         /// categories pruned, 21 renamed, 49 un-proposed and held on grace.
         /// </para>
