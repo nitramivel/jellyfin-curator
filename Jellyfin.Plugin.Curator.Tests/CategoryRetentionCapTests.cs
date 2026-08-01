@@ -13,7 +13,7 @@ namespace Jellyfin.Plugin.Curator.Tests
     /// keeps". They used to be one number, which capped the collection at a single
     /// pass's worth: every run that proposed a full set deleted something to make
     /// room, and a category removed by the cap loses its identity and comes back as
-    /// a new row (hard rule 4). Measured on one run with the two tied — 35 pruned,
+    /// a new row (hard rule 6). Measured on one run with the two tied — 35 pruned,
     /// 21 renamed, 49 held on grace.
     /// </summary>
     public class CategoryRetentionCapTests

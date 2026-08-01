@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -31,6 +32,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         private readonly TimeSpan? _initialRetryDelay;
         private readonly string _providerName;
         private readonly bool _useConversationRouting;
+        private readonly bool _usePromptCacheKey;
 
         private OpenAiChatProvider(
             HttpClient httpClient,
@@ -41,7 +43,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             bool useStructuredOutputs,
             string providerName,
             TimeSpan? initialRetryDelay,
-            bool useConversationRouting = false)
+            bool useConversationRouting = false,
+            bool usePromptCacheKey = false)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(model);
             _httpClient = httpClient;
@@ -53,6 +56,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
             _providerName = providerName;
             _initialRetryDelay = initialRetryDelay;
             _useConversationRouting = useConversationRouting;
+            _usePromptCacheKey = usePromptCacheKey;
         }
 
         /// <inheritdoc />
@@ -76,7 +80,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 useLegacyMaxTokens: false,
                 useStructuredOutputs: false,
                 providerName: "OpenAI",
-                initialRetryDelay: null);
+                initialRetryDelay: null,
+                usePromptCacheKey: true);
         }
 
         /// <summary>
@@ -250,20 +255,38 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 new { role = "user", content = request.UserPrompt },
             };
 
-            if (!_useStructuredOutputs)
+            var body = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
-                return _useLegacyMaxTokens
-                    ? new { model = ModelId, max_tokens = request.MaxOutputTokens, messages }
-                    : (object)new { model = ModelId, max_completion_tokens = request.MaxOutputTokens, messages };
+                ["model"] = ModelId,
+                ["messages"] = messages,
+            };
+
+            body[_useLegacyMaxTokens && !_useStructuredOutputs ? "max_tokens" : "max_completion_tokens"]
+                = request.MaxOutputTokens;
+
+            // OpenAI's answer to the same problem xAI's header solves: cache entries
+            // are held per server, and without a routing hint the calls of one run
+            // scatter and each lands somewhere that has never seen the prefix.
+            // Measured before this: a 139k-token prompt, byte-identical across six
+            // calls of a run, reported ZERO cached tokens on both of two runs eight
+            // minutes apart — while Grok, through this same class but with its
+            // header, served 82k of 147k from cache on the same library.
+            //
+            // OpenAI only. xAI uses the header above and this class also drives
+            // arbitrary OpenAI-compatible servers, which are entitled to reject a
+            // body field they have never heard of.
+            if (_usePromptCacheKey && !string.IsNullOrEmpty(request.ConversationId))
+            {
+                body["prompt_cache_key"] = request.ConversationId;
             }
 
-            return new
+            if (!_useStructuredOutputs)
             {
-                model = ModelId,
-                max_completion_tokens = request.MaxOutputTokens,
-                messages,
-                response_format = new
-                {
+                return body;
+            }
+
+            body["response_format"] = new
+            {
                     type = "json_schema",
                     json_schema = new
                     {
@@ -278,8 +301,9 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                         strict = true,
                         schema = BuildResponseSchema(request.Shape),
                     },
-                },
             };
+
+            return body;
         }
 
         /// <summary>

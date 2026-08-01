@@ -60,6 +60,8 @@ Curator also sets each row's placement in Home Screen Sections: **order index 50
 
 Shared categories go to **everyone**. They were once opt-in — each viewer's pass named the ones it wanted — and that collapsed in practice: the model declined 16 of 25 offers, and three of eight shared categories ended up built for a single user. A category drawn from the whole library belongs to the whole household; the per-viewer pass earns its keep by inventing, not by vetoing.
 
+They are still personalized, just not by removal. **Each viewer's own copy of a shared playlist is ordered for them** — Jellyfin playlists are per-user, so the same row can lead with different items for different people, and Collection Sections renders the first 16 in playlist order. A favourite rises, something rated 2 out of 10 sinks, and anything the viewer has no opinion about keeps exactly the order the model gave it. It is a nudge rather than a re-sort: the model ranked members by how strongly each belongs to the thread, and a favourite sitting thirtieth in a thread it barely belongs to rises without leading the row. Because this happens inside the playlist, it needs no client support at all — it works in Infuse and everything else, unlike the home screen rows.
+
 Items orphaned by a removed or renamed library folder never reach the model. Jellyfin keeps their database rows — same path, same media source — so they are indistinguishable from real items and play back as nothing; on one server 36 of 298 items were such ghosts, and they were landing in real playlists.
 
 ## ⚙️ Configuration
@@ -111,6 +113,8 @@ Leave any of them blank to use the default profile.
 | **Portrait row threshold** | Rows with at least this many items render as portrait posters; shorter rows render as landscape. Default 10. 0 makes every row portrait |
 
 **Grok** talks the OpenAI wire format at `https://api.x.ai/v1`, with `response_format: json_schema` in strict mode — so valid JSON is an API guarantee, as with Gemini. Needs `grok-2-1212` or newer for that. Cached input and reasoning tokens are read from the usage detail blocks, so cache hits and thinking spend show up in the run log. Rate limits and transient 5xx are retried with backoff.
+
+OpenAI's prompt caching is automatic above about 1,000 tokens, and Curator sends a `prompt_cache_key` so a run's calls route to the same cache — without it a 139,000-token prompt, byte-identical across six calls, reported zero cached tokens on two consecutive runs.
 
 xAI's prompt caching is automatic and needs no configuration, but **cache entries live on the server that wrote them** — so every call of a run is tagged with the run's ID via the `x-grok-conv-id` header to pin them all to one machine. Without it the calls scatter across the fleet and each lands on a server that has never seen the item list: measured on a real library, 16 of 18 calls reported 128 cached tokens against a byte-identical 28,000-token prefix, while the two that happened to land warm cost a fortieth of the ones that missed.
 

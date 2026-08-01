@@ -8,6 +8,7 @@ using Jellyfin.Plugin.Curator.Core;
 using Jellyfin.Plugin.Curator.Core.Llm;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Reconciliation;
+using Jellyfin.Plugin.Curator.Core.Playlists;
 using Jellyfin.Plugin.Curator.Core.Recommendations;
 using Jellyfin.Plugin.Curator.Services.Categories;
 using Jellyfin.Plugin.Curator.Services.HomeScreen;
@@ -565,7 +566,10 @@ namespace Jellyfin.Plugin.Curator.Services
                         var definition = MergeIntoStore(existing, category, personalProvider.ModelId, ownerUserId: userId, runLog);
                         allCategoryIds.Add(definition.Id);
                         await _playlistService
-                            .SyncCategoryAsync(definition, [userId], cancellationToken)
+                            .SyncCategoryAsync(
+                                definition,
+                                CategoryAudience.For(definition.OwnerUserId, targetUsers),
+                                cancellationToken)
                             .ConfigureAwait(false);
                         LogCategoryBuilt(runLog, definition, [userId], "personal");
                     }
@@ -1344,9 +1348,19 @@ namespace Jellyfin.Plugin.Curator.Services
                     continue;
                 }
 
+                // The category's own audience, not the whole target list. A personal
+                // category belongs to one viewer; passing everyone here is what put
+                // every viewer on every row, once a night, since this pass became a
+                // scheduled task.
+                var audience = CategoryAudience.For(category.OwnerUserId, targetUsers);
+                if (audience.Count == 0)
+                {
+                    continue;
+                }
+
                 var before = category.UserPlaylists.Count(link => link.PlaylistId is not null);
                 await _playlistService
-                    .SyncCategoryAsync(category, targetUsers, cancellationToken)
+                    .SyncCategoryAsync(category, audience, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (category.UserPlaylists.Count(link => link.PlaylistId is not null) > before)

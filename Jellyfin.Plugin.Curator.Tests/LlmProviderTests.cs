@@ -876,6 +876,80 @@ namespace Jellyfin.Plugin.Curator.Tests
         /// Measured on a live server — 195 items, every batch 400ing, 0 distilled,
         /// $0.00, on a model that simply had not been used for that pass before.
         /// </summary>
+        /// <summary>
+        /// The OpenAI half of the routing problem xAI's header solves. Cache entries
+        /// are held per server, and without a hint the calls of one run scatter.
+        /// Measured before this: a 139k-token prompt, byte-identical across six calls,
+        /// reported ZERO cached tokens on two runs eight minutes apart — while Grok,
+        /// through this same class but with its header, served 82k from cache on the
+        /// same library.
+        /// </summary>
+        [Fact]
+        public async Task OpenAi_PinsARunsCallsTogetherWithAPromptCacheKey()
+        {
+            var handler = new StubHandler(OpenAiResponse);
+            var provider = OpenAiChatProvider.CreateOpenAi(new HttpClient(handler), "gpt-5", "sk-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.Categories, "run-abc123"),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.Equal("run-abc123", body.RootElement.GetProperty("prompt_cache_key").GetString());
+        }
+
+        [Fact]
+        public async Task OpenAi_WithoutAConversationId_SendsNoCacheKey()
+        {
+            var handler = new StubHandler(OpenAiResponse);
+            var provider = OpenAiChatProvider.CreateOpenAi(new HttpClient(handler), "gpt-5", "sk-test");
+
+            await provider.CompleteAsync(Request, CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.False(body.RootElement.TryGetProperty("prompt_cache_key", out _));
+        }
+
+        [Fact]
+        public async Task Grok_UsesItsHeaderRatherThanTheCacheKey()
+        {
+            // xAI routes on the header and has never been sent this field. Adding it
+            // would be an untested body parameter on a vendor that already has a
+            // working answer.
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.Categories, "run-abc123"),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.False(body.RootElement.TryGetProperty("prompt_cache_key", out _));
+            Assert.Equal("run-abc123", handler.Request!.Headers.GetValues("x-grok-conv-id").Single());
+        }
+
+        [Fact]
+        public async Task ACompatibleEndpoint_IsSentNothingItMayNotUnderstand()
+        {
+            // This class also drives Ollama, LM Studio, vLLM and OpenRouter, which are
+            // entitled to reject a body field they have never heard of.
+            var handler = new StubHandler(OpenAiResponse);
+            var provider = OpenAiChatProvider.CreateCompatible(
+                new HttpClient(handler), "llama3.3", "http://localhost:11434/v1");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.Categories, "run-abc123"),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            Assert.False(body.RootElement.TryGetProperty("prompt_cache_key", out _));
+            Assert.False(handler.Request!.Headers.Contains("x-grok-conv-id"));
+
+            // And still speaks the older dialect it was built for.
+            Assert.True(body.RootElement.TryGetProperty("max_tokens", out _));
+            Assert.False(body.RootElement.TryGetProperty("max_completion_tokens", out _));
+        }
+
         [Fact]
         public async Task Anthropic_AnEmptySuffix_SendsOneBlockRatherThanAnEmptyOne()
         {

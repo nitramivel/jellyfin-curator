@@ -9,6 +9,7 @@ using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Playlists;
 using Jellyfin.Plugin.Curator.Core.Recommendations;
 using Jellyfin.Plugin.Curator.Services.Categories;
+using Jellyfin.Plugin.Curator.Services.Library;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
@@ -44,6 +45,7 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
         private readonly ICategoryStore _categoryStore;
+        private readonly IUserActivityProvider _activityProvider;
         private readonly ILogger<CuratorPlaylistService> _logger;
 
         public CuratorPlaylistService(
@@ -51,13 +53,42 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
             ILibraryManager libraryManager,
             IUserManager userManager,
             ICategoryStore categoryStore,
+            IUserActivityProvider activityProvider,
             ILogger<CuratorPlaylistService> logger)
         {
+            _activityProvider = activityProvider;
             _playlistManager = playlistManager;
             _libraryManager = libraryManager;
             _userManager = userManager;
             _categoryStore = categoryStore;
             _logger = logger;
+        }
+
+        /// <summary>
+        /// This viewer's activity for these members, or null when it cannot be read.
+        /// </summary>
+        /// <remarks>
+        /// Ordering is a nicety; building the playlist is not. A provider that throws
+        /// costs the viewer a personalized order and nothing else, so this swallows
+        /// rather than letting a reconcile pass die partway through the library.
+        /// </remarks>
+        private IReadOnlyDictionary<Guid, UserActivity>? SafeActivity(Guid userId, IReadOnlyList<Guid> members)
+        {
+            if (members.Count < 2)
+            {
+                return null;
+            }
+
+            try
+            {
+                return _activityProvider.GetActivity(userId, members);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex, "Curator: could not read activity for user {UserId}; leaving the model's order", userId);
+                return null;
+            }
         }
 
         /// <inheritdoc />
@@ -71,8 +102,22 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
 
             var members = ResolveMembers(category);
 
-            foreach (var userId in targetUserIds)
+            // The audience is authoritative: a playlist held by anyone outside it is
+            // one this category should never have had, so it is treated exactly as an
+            // empty category is for that user — deleted if Curator still owns it,
+            // handed off if the tag has gone, never touched if it was handed off
+            // before. That reuses the ownership table rather than second-guessing it,
+            // and it is what repairs the definitions that a nightly reconcile already
+            // spread across every viewer.
+            var audience = new HashSet<Guid>(targetUserIds);
+            var strays = category.UserPlaylists
+                .Select(link => link.UserId)
+                .Where(id => !audience.Contains(id))
+                .ToList();
+
+            foreach (var userId in targetUserIds.Concat(strays))
             {
+                var wanted = audience.Contains(userId);
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (_userManager.GetUserById(userId) is null)
@@ -81,13 +126,24 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
                     continue;
                 }
 
+                // Ordered for this viewer. Shared rows go to everyone by design, so
+                // the order inside a viewer's own copy is the only personalization
+                // available that cannot take a row away from somebody. A personal
+                // category is already theirs alone and needs no reordering.
+                var ordered = wanted && category.OwnerUserId is null
+                    ? MemberOrdering.For(
+                        members,
+                        item => item.Id,
+                        SafeActivity(userId, [.. members.Select(item => item.Id)]))
+                    : members;
+
                 var link = category.GetOrAddLink(userId);
                 var playlist = ResolvePlaylist(category, link);
                 var action = PlaylistSyncDecision.Decide(
                     link.HandedOff,
                     playlist is not null,
                     playlist is not null && HasOwnershipTag(playlist),
-                    members.Count > 0);
+                    wanted && members.Count > 0);
 
                 switch (action)
                 {
@@ -107,7 +163,9 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
 
                     case SyncAction.Delete:
                         _logger.LogInformation(
-                            "Curator: category '{Category}' is empty; removing playlist for user {UserId} (definition kept)",
+                            wanted
+                                ? "Curator: category '{Category}' is empty; removing playlist for user {UserId} (definition kept)"
+                                : "Curator: category '{Category}' does not belong to user {UserId}; removing their copy",
                             category.Name,
                             userId);
                         _libraryManager.DeleteItem(playlist!, new DeleteOptions { DeleteFileLocation = true }, true);
@@ -115,11 +173,11 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
                         break;
 
                     case SyncAction.Create:
-                        link.PlaylistId = await CreatePlaylistAsync(category, userId, members, cancellationToken).ConfigureAwait(false);
+                        link.PlaylistId = await CreatePlaylistAsync(category, userId, ordered, cancellationToken).ConfigureAwait(false);
                         break;
 
                     case SyncAction.Update:
-                        await UpdatePlaylistAsync(playlist!, category, members, cancellationToken).ConfigureAwait(false);
+                        await UpdatePlaylistAsync(playlist!, category, ordered, cancellationToken).ConfigureAwait(false);
                         link.PlaylistId = playlist!.Id;
                         break;
                 }
