@@ -288,13 +288,31 @@ namespace Jellyfin.Plugin.Curator.Services
             // out when the owner has switched them on; an empty store simply means
             // nothing is substituted and the run behaves exactly as before.
             var condensed = LoadCondensedSummaries(config);
-            var records = _libraryScanner.ScanLibrary(
+            var scanned = _libraryScanner.ScanLibrary(
                 config.IncludeEpisodes,
                 config.SurfacedCollections,
                 ItemReducer.DefaultMaxOverviewLength,
                 condensed,
                 config.SendConsolidatedTags,
                 config.SurfaceAllCollections);
+
+            // Two rows for one film — a director's cut beside a theatrical one —
+            // reach the model identical in every field it can see, so it puts both in
+            // the same category and the row shows the poster twice. Collapsed here
+            // rather than at the playlist, so the model never spends a slot on the
+            // second copy and the prompt is that much smaller.
+            var collapsed = config.CollapseDuplicateVersions
+                ? DuplicateItems.Collapse(scanned)
+                : new DuplicateItems.CollapseResult(scanned, new Dictionary<Guid, Guid>());
+            var records = collapsed.Items;
+
+            if (collapsed.Aliases.Count > 0)
+            {
+                _logger.LogInformation(
+                    "Curator: collapsed {Count} duplicate library row(s) into the copy with the longer runtime",
+                    collapsed.Aliases.Count);
+            }
+
             if (records.Count == 0)
             {
                 _logger.LogWarning("Curator: library scan produced no items; nothing to categorize");
@@ -454,8 +472,14 @@ namespace Jellyfin.Plugin.Curator.Services
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    var activity = _userActivityProvider.GetActivity(
-                        userId, records.Select(r => r.Id).ToArray());
+                    // Queried against everything scanned, then folded onto the rows
+                    // actually being sent: a viewer who watched the theatrical cut
+                    // must not read as never having seen the film because the
+                    // director's cut is the copy that survived.
+                    var activity = DuplicateItems.FoldActivity(
+                        _userActivityProvider.GetActivity(
+                            userId, scanned.Select(r => r.Id).ToArray()),
+                        collapsed.Aliases);
 
                     var watched = PersonalizationEligibility.CountWatched(activity);
                     if (!PersonalizationEligibility.IsEligible(watched, config.MinWatchedForPersonalization))

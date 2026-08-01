@@ -190,7 +190,7 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// is how large a library of them is allowed to accumulate. Tying them
         /// together caps the collection at one pass's worth, so every run over the
         /// number deletes something — and a category deleted by the cap loses its
-        /// identity and comes back as a new row (hard rule 6), which is what makes the
+        /// identity and comes back as a new row (hard rule 7), which is what makes the
         /// home screen churn. Measured on a single run with the two tied: 35
         /// categories pruned, 21 renamed, 49 un-proposed and held on grace.
         /// </para>
@@ -334,6 +334,25 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// episodes rather than only whole series.
         /// </summary>
         public bool IncludeEpisodes { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets whether two library rows for the same title are collapsed to
+        /// one before the model sees them. On by default.
+        /// </summary>
+        /// <remarks>
+        /// A director's cut and a theatrical cut are two items in Jellyfin and one
+        /// film to a viewer. Sent as two they arrive with identical titles, years,
+        /// genres and overviews, so the model puts both in the same category and the
+        /// row shows the same poster twice.
+        /// <para>
+        /// Matching is deliberately strict — kind, title and year must all agree.
+        /// On the library this was built against, "Freaky Friday" exists as 2003 and
+        /// 1995, and a title-only rule would merge two genuinely different films.
+        /// The longest runtime wins, so the fuller cut is the one kept, and watch
+        /// activity from the dropped row is folded onto it rather than lost.
+        /// </para>
+        /// </remarks>
+        public bool CollapseDuplicateVersions { get; set; } = true;
 
         /// <summary>
         /// Gets or sets how many tags per item are sent to the model. 0 sends none.

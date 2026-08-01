@@ -41,7 +41,7 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         /// Unlike a category this has no stored definition, so its identity is
         /// derived from the user ID and carried on the playlist as the usual
         /// provider-ID tether. It is still found by that tether and never by name —
-        /// hard rule 2 — and it still hands off permanently the moment its ownership
+        /// hard rule 3 — and it still hands off permanently the moment its ownership
         /// tag is removed, exactly like a category playlist.
         /// </remarks>
         /// <param name="userId">The viewer.</param>
