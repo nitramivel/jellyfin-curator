@@ -131,6 +131,22 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         bool Configured);
 
     /// <summary>
+    /// Which model a call went to, and at what rates.
+    /// </summary>
+    /// <remarks>
+    /// One value rather than a loose pricing argument, because the two facts are
+    /// inseparable: a rate means nothing without the model it belongs to, and a
+    /// cost attributed to the wrong model is worse than no attribution at all.
+    /// A run may put its discovery pass on one model, its viewer passes on
+    /// another and its summaries on a third, so the run's headline model cannot
+    /// answer "what did each model cost" — only the calls can.
+    /// </remarks>
+    /// <param name="Provider">The provider name, e.g. "Grok".</param>
+    /// <param name="Model">The model identifier, e.g. "grok-4.5".</param>
+    /// <param name="Pricing">That model's rates.</param>
+    public sealed record RunLogModel(string Provider, string Model, RunLogPricing Pricing);
+
+    /// <summary>
     /// One complete LLM exchange, including the failed attempts — a retry after a
     /// malformed response appears here as two calls, and the discarded first one is
     /// usually the interesting half.
@@ -146,6 +162,13 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
     /// <param name="Response">What came back, or null when the call itself threw.</param>
     /// <param name="Outcome">"ok", "unparseable", or "error".</param>
     /// <param name="Error">The failure message, when there was one.</param>
+    /// <param name="Model">
+    /// The model this call went to. Empty on files written before schema 2, where
+    /// the run's headline model is the only answer available — readers fall back to
+    /// it, which is exactly right for the single-model runs that were the norm then
+    /// and merely imprecise for the rest.
+    /// </param>
+    /// <param name="Provider">The provider this call went to, on the same terms.</param>
     public sealed record RunLogCall(
         int Seq,
         DateTime At,
@@ -157,7 +180,9 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         RunLogPrompt Request,
         RunLogResponse? Response,
         string Outcome,
-        string? Error);
+        string? Error,
+        string Model = "",
+        string Provider = "");
 
     /// <summary>
     /// Everything a run spent.
@@ -205,8 +230,16 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
     /// </summary>
     public sealed class RunLogDocument
     {
-        /// <summary>The document layout version, so a reader can tell old files apart.</summary>
-        public const int CurrentSchemaVersion = 1;
+        /// <summary>
+        /// The document layout version, so a reader can tell old files apart.
+        /// </summary>
+        /// <remarks>
+        /// 2 added <see cref="RunLogCall.Model"/> and <see cref="RunLogCall.Provider"/>,
+        /// without which a mixed-model run cannot say what each model cost. Version 1
+        /// files still read: their calls carry no model and are attributed to the
+        /// run's headline one.
+        /// </remarks>
+        public const int CurrentSchemaVersion = 2;
 
         /// <summary>Gets or sets the schema version.</summary>
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;

@@ -28,7 +28,15 @@ namespace Jellyfin.Plugin.Curator
             serviceCollection.AddSingleton<ICategoryStore, CategoryStore>();
             serviceCollection.AddSingleton<ICuratorPlaylistService, CuratorPlaylistService>();
             serviceCollection.AddSingleton<IApiKeyProvider, ServerApiKeyProvider>();
+            serviceCollection.AddSingleton<ISectionRegistrar, HomeScreenSectionRegistrar>();
             serviceCollection.AddSingleton<IHomeScreenIntegrationService, HomeScreenIntegrationService>();
+
+            // CuratorSectionResults is deliberately absent. Home Screen Sections
+            // constructs it itself with ActivatorUtilities, which builds an
+            // unregistered type as long as every constructor argument resolves from
+            // this container — so what matters is that its dependencies are
+            // registered here, which they are, and registering the type as well
+            // would only suggest something in Curator resolves it.
             serviceCollection.AddSingleton<IRunLogStore, RunLogStore>();
             serviceCollection.AddSingleton<ISummaryStore, SummaryStore>();
             serviceCollection.AddSingleton<SummaryDistillService>();
@@ -39,6 +47,7 @@ namespace Jellyfin.Plugin.Curator
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, MaintenanceTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, HealthCheckTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, RefreshRecommendationsTask>();
+            serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, PublishHomeScreenRowsTask>();
         }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -360,7 +361,8 @@ namespace Jellyfin.Plugin.Curator.Services
                     ? Math.Max(config.MaxTagsPerItem, Math.Max(1, config.MaxConsolidatedTags))
                     : config.MaxTagsPerItem,
                 sharedLimits,
-                personalLimits);
+                personalLimits,
+                discoveryProfile.Provider.ToString());
 
             // Same settings, the viewer pass's own prices. Everything else about the
             // two passes — budgets, caps, limits — is deliberately shared; only what
@@ -373,6 +375,7 @@ namespace Jellyfin.Plugin.Curator.Services
                     InputCostPerMillion = personalProfile.InputCostPerMillion,
                     OutputCostPerMillion = personalProfile.OutputCostPerMillion,
                     CachedCostPerMillion = personalProfile.CachedInputCostPerMillion,
+                    ProviderName = personalProfile.Provider.ToString(),
                 };
 
             var personalized = config.OutputType == OutputKind.Playlist && config.PersonalizedPlaylists;
@@ -886,7 +889,42 @@ namespace Jellyfin.Plugin.Curator.Services
                     config.MaxOutputTokens,
                     ResponseShape.RecommendationOrder);
 
-                var result = await provider.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+                // Its own model and rates: this pass has its own profile setting, so
+                // pricing it at the run's would report a cheap re-rank at the
+                // discovery model's price, or an expensive one at a cheap model's.
+                var rerankModel = new RunLogModel(
+                    profile.Provider.ToString(),
+                    provider.ModelId,
+                    new RunLogPricing(
+                        profile.InputCostPerMillion,
+                        profile.CachedInputCostPerMillion,
+                        profile.OutputCostPerMillion,
+                        profile.InputCostPerMillion > 0 || profile.OutputCostPerMillion > 0));
+
+                var startedAt = Stopwatch.GetTimestamp();
+                LlmResult result;
+                try
+                {
+                    result = await provider.CompleteAsync(request, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // A call that threw was still dispatched and may still be billed,
+                    // and it is the one whose prompt someone will want to read.
+                    runLog?.LlmCall(
+                        "rerank", 0, 1, userId, Stopwatch.GetElapsedTime(startedAt),
+                        request, null, "error", ex.Message, rerankModel);
+                    throw;
+                }
+
+                // Recorded before the answer is parsed, because an unusable answer is
+                // charged exactly like a usable one. This pass spends one call per
+                // viewer every six hours and used to record nothing at all — the only
+                // paid work in the plugin that was invisible.
+                runLog?.LlmCall(
+                    "rerank", 0, 1, userId, Stopwatch.GetElapsedTime(startedAt),
+                    request, result, "ok", null, rerankModel);
+
                 var reordered = RecommendationParser.Reorder(result.Text, head);
 
                 _logger.LogInformation(
@@ -1316,8 +1354,56 @@ namespace Jellyfin.Plugin.Curator.Services
             }
 
             var targetUsers = ResolveTargetUsers(config);
-            return await BuildRecommendationsAsync(config, targetUsers, null, cancellationToken)
-                .ConfigureAwait(false);
+
+            // A run log only when the pass actually buys something. Selection is
+            // arithmetic and costs nothing (rule 15), so the usual shape of this task
+            // is free — and a free pass logging itself four times a day would evict
+            // the category runs from a directory that keeps the last fifty. When the
+            // re-rank is on it is one paid call per viewer per refresh, which is
+            // precisely the spend that used to go unrecorded.
+            IRunLog? runLog = config.ModelRankedRecommendations
+                ? _runLogStore.Begin(
+                    "recommendations",
+                    DescribeRecommendationSettings(config, targetUsers),
+
+                    // Not the current run: that snapshot belongs to the category run,
+                    // which the status endpoint pairs with its own IsRunning.
+                    trackAsCurrent: false)
+                : null;
+
+            try
+            {
+                var built = await BuildRecommendationsAsync(config, targetUsers, runLog, cancellationToken)
+                    .ConfigureAwait(false);
+                runLog?.Step("recommendations.complete", $"Refreshed {built} recommendation playlist(s)");
+                runLog?.Complete();
+                return built;
+            }
+            catch (Exception ex)
+            {
+                runLog?.Fail(ex.Message);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// The settings that shaped a standalone recommendation refresh, for its run
+        /// log — the question asked of one is always "what was it set to then".
+        /// </summary>
+        private static IReadOnlyDictionary<string, object?> DescribeRecommendationSettings(
+            PluginConfiguration config,
+            IReadOnlyList<Guid> targetUsers)
+        {
+            return new Dictionary<string, object?>
+            {
+                ["trigger"] = "recommendations",
+                ["targetUsers"] = targetUsers.Count,
+                ["modelRankedRecommendations"] = config.ModelRankedRecommendations,
+                ["recommendationModelProfileId"] = config.RecommendationModelProfileId,
+                ["maxRecommendations"] = config.MaxRecommendations,
+                ["maxRecommendationsToRank"] = config.MaxRecommendationsToRank,
+                ["recommendationsIncludeWatched"] = config.RecommendationsIncludeWatched,
+            };
         }
 
         /// <summary>
@@ -1452,7 +1538,7 @@ namespace Jellyfin.Plugin.Curator.Services
         /// </remarks>
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>True when the integration reported success.</returns>
-        public async Task<bool> SyncHomeScreenAsync(CancellationToken cancellationToken)
+        public async Task<SectionSyncResult> SyncHomeScreenAsync(CancellationToken cancellationToken)
         {
             var config = Plugin.Instance?.Configuration
                 ?? throw new InvalidOperationException("Curator: plugin configuration unavailable.");
@@ -1461,7 +1547,7 @@ namespace Jellyfin.Plugin.Curator.Services
             if (targetUsers.Count == 0)
             {
                 _logger.LogWarning("Curator: no target users resolved; nothing to sync");
-                return false;
+                return SectionSyncResult.Failed;
             }
 
             var categories = _categoryStore.GetAll();
@@ -1471,7 +1557,12 @@ namespace Jellyfin.Plugin.Curator.Services
 
             _logger.LogInformation(
                 "Curator: home screen sync {Outcome} — {Count} stored categor(ies), {Users} user(s)",
-                synced ? "completed" : "did not run",
+                synced switch
+                {
+                    { Published: false } => "did not run",
+                    { Degraded: true } => "completed through Collection Sections",
+                    _ => "completed",
+                },
                 categories.Count,
                 targetUsers.Count);
 

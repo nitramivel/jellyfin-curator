@@ -8,6 +8,7 @@ using Jellyfin.Plugin.Curator.Configuration;
 using Jellyfin.Plugin.Curator.Core;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Summaries;
+using Jellyfin.Plugin.Curator.Core.Usage;
 using Jellyfin.Plugin.Curator.Services.Library;
 using Jellyfin.Plugin.Curator.Services.Llm;
 using Jellyfin.Plugin.Curator.Services.Runs;
@@ -145,6 +146,8 @@ namespace Jellyfin.Plugin.Curator.Tests
             }
 
             public IReadOnlyList<RunLogSummary> List(int limit = 50) => [];
+
+            public UsageReport Usage(int days = 30, int limit = 50) => UsageReport.Empty;
 
             public RunLogSummary? Current() => null;
 

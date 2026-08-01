@@ -21,15 +21,33 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
     /// <summary>
     /// Default <see cref="IHomeScreenIntegrationService"/>.
     ///
-    /// Sections go through Collection Sections' own configuration rather than
-    /// registering with Home Screen Sections directly: its RegisterSection call
-    /// is in-memory only and would vanish on restart, whereas saving Collection
-    /// Sections' config persists the sections and makes it re-register them
-    /// itself on every startup and on each configuration change.
+    /// <para>
+    /// There are two ways a category becomes a home screen row and this picks
+    /// between them. <b>Integrated</b> registers the row with Home Screen Sections
+    /// directly and answers for its contents in
+    /// <see cref="CuratorSectionResults"/>. <b>Collection Sections</b> writes the
+    /// row into that plugin's configuration and lets it answer instead — the
+    /// original path, kept because a home screen that has stopped working is a bad
+    /// place to have no second option.
+    /// </para>
     ///
-    /// Both writes are plain HTTP calls against this server's own API, because
-    /// the target plugins expose no in-process interface we can reference
-    /// without taking a hard dependency on them being installed.
+    /// <para>
+    /// The integrated path exists because the other one loses items. Collection
+    /// Sections resolves a row's playlist <i>by name</i>, out of a cache built once
+    /// at server startup and never refreshed, so a row shows whatever that playlist
+    /// held at the last restart — measured here as a ten-item category rendering
+    /// seven cards in the wrong order, while the same playlist was correct in every
+    /// other client. Curator cannot fix that from outside: it holds a playlist GUID
+    /// per user and there is no field to pass one, and six viewers share one
+    /// category name.
+    /// </para>
+    ///
+    /// <para>
+    /// What owning the row does <b>not</b> remove is Home Screen Sections itself.
+    /// Row order and card shape live in that plugin's own configuration and it
+    /// overrides whatever a registration claims, so the section settings write
+    /// below runs in both modes. Two plugin dependencies become one, not zero.
+    /// </para>
     /// </summary>
     public class HomeScreenIntegrationService : IHomeScreenIntegrationService
     {
@@ -45,22 +63,25 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
         private readonly IServerApplicationHost _applicationHost;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IApiKeyProvider _apiKeyProvider;
+        private readonly ISectionRegistrar _registrar;
         private readonly ILogger<HomeScreenIntegrationService> _logger;
 
         public HomeScreenIntegrationService(
             IServerApplicationHost applicationHost,
             IHttpClientFactory httpClientFactory,
             IApiKeyProvider apiKeyProvider,
+            ISectionRegistrar registrar,
             ILogger<HomeScreenIntegrationService> logger)
         {
             _applicationHost = applicationHost;
             _httpClientFactory = httpClientFactory;
             _apiKeyProvider = apiKeyProvider;
+            _registrar = registrar;
             _logger = logger;
         }
 
         /// <inheritdoc />
-        public async Task<bool> SyncSectionsAsync(
+        public async Task<SectionSyncResult> SyncSectionsAsync(
             IReadOnlyList<CategoryDefinition> categories,
             IReadOnlyList<Guid> targetUserIds,
             CancellationToken cancellationToken)
@@ -72,45 +93,73 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             if (config is null)
             {
                 _logger.LogWarning("Curator: plugin configuration unavailable; skipping home screen integration");
-                return false;
+                return SectionSyncResult.Failed;
             }
 
             if (!IsPluginLoaded("HomeScreenSections"))
             {
                 _logger.LogWarning(
                     "Curator: the Home Screen Sections plugin is not installed, so categories cannot appear as home screen rows. "
-                    + "Playlists were still created and are available under Playlists. Install Home Screen Sections and Collection Sections to enable rows.");
-                return false;
-            }
-
-            if (!IsPluginLoaded("CollectionSections"))
-            {
-                _logger.LogWarning(
-                    "Curator: the Collection Sections plugin is not installed, so categories cannot appear as home screen rows. "
-                    + "Playlists were still created and are available under Playlists. Install Collection Sections to enable rows.");
-                return false;
+                    + "Playlists were still created and are available under Playlists. Install Home Screen Sections to enable rows.");
+                return SectionSyncResult.Failed;
             }
 
             // Only categories that actually have a playlist somewhere can render a row.
-            var desired = categories
+            var claimed = categories
                 .Where(category => category.UserPlaylists.Exists(link => link.PlaylistId is not null))
-                .Select(category => new DesiredSection(
-                    SectionConfigMerger.SectionIdFor(category.Id),
-                    category.Name,
-                    category.Members.Count))
+                .Select(category => (
+                    Section: new DesiredSection(
+                        SectionConfigMerger.SectionIdFor(category.Id),
+                        category.Name,
+                        category.Members.Count),
+                    CategoryId: category.Id))
                 .ToList();
+
+            var desired = claimed.ConvertAll(entry => entry.Section);
 
             try
             {
                 using var client = await CreateClientAsync().ConfigureAwait(false);
 
-                if (!await WriteCollectionSectionsConfigAsync(client, desired, config, cancellationToken).ConfigureAwait(false))
+                var integrated = config.SectionDelivery == SectionDelivery.Integrated
+                    && _registrar.RegisterSections(claimed) is not null;
+
+                if (integrated)
                 {
-                    return false;
+                    // Both plugins register under the same section IDs, and the
+                    // registration table is a dictionary keyed on that ID — so
+                    // leaving Curator's rows in Collection Sections' configuration
+                    // makes the two race, and whichever registered last owns the
+                    // row. Clearing them is what makes the integrated path
+                    // actually take effect rather than usually take effect.
+                    await ClearCollectionSectionsAsync(client, config, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    if (config.SectionDelivery == SectionDelivery.Integrated)
+                    {
+                        _logger.LogWarning(
+                            "Curator: could not register home screen rows directly; falling back to Collection Sections for this sync");
+                    }
+
+                    if (!IsPluginLoaded("CollectionSections"))
+                    {
+                        _logger.LogWarning(
+                            "Curator: the Collection Sections plugin is not installed, so categories cannot appear as home screen rows. "
+                            + "Playlists were still created and are available under Playlists. "
+                            + "Install Collection Sections, or set the home screen row source to Curator, to enable rows.");
+                        return SectionSyncResult.Failed;
+                    }
+
+                    if (!await WriteCollectionSectionsConfigAsync(client, desired, config, cancellationToken).ConfigureAwait(false))
+                    {
+                        return SectionSyncResult.Failed;
+                    }
                 }
 
                 // Row order and card shape live in Home Screen Sections' own
-                // configuration, not Collection Sections'. Done after the
+                // configuration, whichever plugin answers for the row's contents —
+                // it overrides what a registration claims. Done after the
                 // registration above, because a section has to exist before its
                 // settings mean anything.
                 await WriteSectionSettingsAsync(client, desired, cancellationToken).ConfigureAwait(false);
@@ -126,14 +175,20 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                         desired.Count);
                 }
 
-                return true;
+                // Degraded only when the integrated path was wanted and not used.
+                // Choosing Collection Sections deliberately is not a degradation,
+                // and reporting it as one would have the startup task retry
+                // something that is already doing what was asked.
+                return new SectionSyncResult(
+                    Published: true,
+                    Degraded: !integrated && config.SectionDelivery == SectionDelivery.Integrated);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
             {
                 _logger.LogWarning(
                     ex,
                     "Curator: home screen integration failed; playlists were still created. Categories can be added as rows manually in Collection Sections.");
-                return false;
+                return SectionSyncResult.Failed;
             }
         }
 
@@ -190,6 +245,61 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 SectionConfigMerger.OrderIndex,
                 portrait,
                 desired.Count - portrait);
+        }
+
+        /// <summary>
+        /// Removes Curator's sections from Collection Sections' configuration,
+        /// leaving every section the owner made there untouched.
+        /// </summary>
+        /// <remarks>
+        /// Never fatal, and a no-op when that plugin is not installed. Failing to
+        /// clean up costs a row its ordering fix, because the stale entry may win
+        /// the registration race; failing the whole sync over it would cost every
+        /// row its existence.
+        /// </remarks>
+        private async Task ClearCollectionSectionsAsync(
+            HttpClient client,
+            PluginConfiguration config,
+            CancellationToken cancellationToken)
+        {
+            if (!IsPluginLoaded("CollectionSections"))
+            {
+                return;
+            }
+
+            var path = $"/Plugins/{CollectionSectionsPluginId}/Configuration";
+
+            using var getResponse = await client.GetAsync(path, cancellationToken).ConfigureAwait(false);
+            if (!getResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Curator: could not read Collection Sections configuration ({Status}); any rows it still holds for Curator may override the integrated ones",
+                    (int)getResponse.StatusCode);
+                return;
+            }
+
+            var body = await getResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var configJson = JsonNode.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body) ?? new JsonObject();
+
+            // An empty desired list removes every Curator-owned entry and touches
+            // nothing else — the merge already knows which entries are ours.
+            if (!SectionConfigMerger.MergeSections(configJson, [], config.OutputType == OutputKind.Playlist))
+            {
+                return;
+            }
+
+            using var content = new StringContent(configJson.ToJsonString(), Encoding.UTF8, "application/json");
+            using var postResponse = await client.PostAsync(path, content, cancellationToken).ConfigureAwait(false);
+            if (postResponse.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("Curator: removed its own sections from Collection Sections; rows are served directly now");
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Curator: could not save Collection Sections configuration ({Status}); the rows it still holds for Curator may override the integrated ones",
+                    (int)postResponse.StatusCode);
+            }
         }
 
         /// <summary>

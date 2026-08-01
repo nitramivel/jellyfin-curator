@@ -76,7 +76,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         bool UseBatchApi = false,
         int MaxTagsPerItem = 0,
         CategoryLimits? SharedLimits = null,
-        CategoryLimits? PersonalLimits = null)
+        CategoryLimits? PersonalLimits = null,
+        string ProviderName = "")
     {
         /// <summary>Gets the shared-pool limits, defaulted for callers that supply none.</summary>
         public CategoryLimits Shared => SharedLimits ?? new CategoryLimits(6);
@@ -191,7 +192,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                         log.LlmCall(
                             "discovery", i, attempt + 1, null, Stopwatch.GetElapsedTime(startedAt),
                             request, null, "error", ex.Message,
-                            PricingOf(settings));
+                            ModelOf(provider, settings));
                         throw;
                     }
 
@@ -225,7 +226,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     log.LlmCall(
                         "discovery", i, attempt + 1, null, Stopwatch.GetElapsedTime(startedAt),
                         request, result, outcome, parseError,
-                        PricingOf(settings));
+                        ModelOf(provider, settings));
                 }
 
                 if (parsed is null)
@@ -339,7 +340,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                         log.LlmCall(
                             "personal", i, attempt + 1, userId, Stopwatch.GetElapsedTime(startedAt),
                             request, null, "error", ex.Message,
-                            PricingOf(settings));
+                            ModelOf(provider, settings));
                         throw;
                     }
 
@@ -371,7 +372,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     log.LlmCall(
                         "personal", i, attempt + 1, userId, Stopwatch.GetElapsedTime(startedAt),
                         request, result, outcome, parseError,
-                        PricingOf(settings));
+                        ModelOf(provider, settings));
                 }
 
                 if (parsed is null)
@@ -462,7 +463,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     log.LlmCall(
                         "discovery-batch", i, 1, null, TimeSpan.Zero,
                         requests[i].Request, null, "error", "missing from job results",
-                        PricingOf(settings));
+                        ModelOf(provider, settings));
                     continue;
                 }
 
@@ -476,7 +477,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                     log.LlmCall(
                         "discovery-batch", i, 1, null, TimeSpan.Zero,
                         requests[i].Request, null, "error", entry.Error ?? "unknown",
-                        PricingOf(settings));
+                        ModelOf(provider, settings));
                     continue;
                 }
 
@@ -513,7 +514,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 log.LlmCall(
                     "discovery-batch", i, 1, null, TimeSpan.Zero,
                     requests[i].Request, result, outcome, parseError,
-                    PricingOf(settings));
+                    ModelOf(provider, settings));
             }
 
             LogRunTotals(provider, settings, inputTokens, cacheReadTokens, outputTokens, proposals.Count, completed, skipped);
@@ -576,15 +577,19 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         }
 
         /// <summary>
-        /// This pass's own rates, so the run log prices its calls correctly even when
-        /// another pass of the same run is on a different model.
+        /// The model this pass is on and its own rates, so the run log both prices
+        /// and attributes its calls correctly when another pass of the same run is
+        /// on a different model.
         /// </summary>
-        private static RunLogPricing PricingOf(ProposalRunSettings settings)
+        private static RunLogModel ModelOf(ILlmProvider provider, ProposalRunSettings settings)
             => new(
-                settings.InputCostPerMillion,
-                settings.CachedCostPerMillion,
-                settings.OutputCostPerMillion,
-                settings.InputCostPerMillion > 0 || settings.OutputCostPerMillion > 0);
+                settings.ProviderName,
+                provider.ModelId,
+                new RunLogPricing(
+                    settings.InputCostPerMillion,
+                    settings.CachedCostPerMillion,
+                    settings.OutputCostPerMillion,
+                    settings.InputCostPerMillion > 0 || settings.OutputCostPerMillion > 0));
 
         private void LogRunTotals(
             ILlmProvider provider,

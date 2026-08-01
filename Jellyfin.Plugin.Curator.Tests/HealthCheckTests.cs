@@ -164,6 +164,34 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal(HealthSeverity.Problem, Find(facts, id).Severity);
         }
 
+        [Fact]
+        public void CollectionSectionsMissingIsNotReportedWhenNothingGoesThroughIt()
+        {
+            // Curator serving its own rows makes that plugin an escape hatch, not a
+            // prerequisite. A Problem raised over an uninstalled plugin nothing
+            // depends on is the noise that gets the whole panel ignored.
+            var facts = Healthy() with
+            {
+                CollectionSectionsLoaded = false,
+                CollectionSectionsRequired = false,
+            };
+
+            Assert.DoesNotContain(HealthCheck.Evaluate(facts), f => f.Id == "integration.collectionsections");
+        }
+
+        [Fact]
+        public void HomeScreenSectionsMissingIsReportedWhicheverRowSourceIsSet()
+        {
+            // Owning the row removes one dependency, not both.
+            var facts = Healthy() with
+            {
+                HomeScreenSectionsLoaded = false,
+                CollectionSectionsRequired = false,
+            };
+
+            Assert.Equal(HealthSeverity.Problem, Find(facts, "integration.homescreensections").Severity);
+        }
+
         // ---- library ----
 
         [Fact]

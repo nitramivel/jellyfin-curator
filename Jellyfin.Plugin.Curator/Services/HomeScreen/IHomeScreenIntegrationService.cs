@@ -7,9 +7,10 @@ using Jellyfin.Plugin.Curator.Core.Models;
 namespace Jellyfin.Plugin.Curator.Services.HomeScreen
 {
     /// <summary>
-    /// Publishes Curator's categories as home screen rows by writing into
-    /// Collection Sections' configuration and, optionally, enabling the
-    /// resulting sections for target users through Modular Home settings.
+    /// Publishes Curator's categories as home screen rows — by registering them
+    /// with Home Screen Sections directly, or by writing them into Collection
+    /// Sections' configuration — then sets their order and card shape and,
+    /// optionally, enables them for target users through Modular Home settings.
     /// </summary>
     public interface IHomeScreenIntegrationService
     {
@@ -34,8 +35,8 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
         /// <param name="categories">The categories that currently have playlists.</param>
         /// <param name="targetUserIds">Users to enable sections for when auto-enable is on.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
-        /// <returns>True when the home screen was updated; false when integration was unavailable.</returns>
-        Task<bool> SyncSectionsAsync(
+        /// <returns>Whether rows were published, and whether by the configured route.</returns>
+        Task<SectionSyncResult> SyncSectionsAsync(
             IReadOnlyList<CategoryDefinition> categories,
             IReadOnlyList<Guid> targetUserIds,
             CancellationToken cancellationToken);

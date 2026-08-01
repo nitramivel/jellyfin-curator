@@ -132,7 +132,8 @@ namespace Jellyfin.Plugin.Curator.Services.Health
                 // restart. That is the right way round: reporting a stale failure
                 // from before a restart would send someone chasing a fixed problem.
                 LastSummaryPassDistilled: _distillService.LastResult?.Distilled ?? 0,
-                LastSummaryPassFailed: _distillService.LastResult?.Failed ?? 0);
+                LastSummaryPassFailed: _distillService.LastResult?.Failed ?? 0,
+                CollectionSectionsRequired: config.SectionDelivery == SectionDelivery.CollectionSections);
         }
 
         /// <summary>

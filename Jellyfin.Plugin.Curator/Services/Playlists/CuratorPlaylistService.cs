@@ -275,15 +275,7 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         /// </remarks>
         private Playlist? FindByTether(Guid identity, Guid userId)
         {
-            var tether = identity.ToString("N");
-            return _libraryManager.GetItemsResult(new InternalItemsQuery
-            {
-                IncludeItemTypes = [BaseItemKind.Playlist],
-                Recursive = true,
-            }).Items
-                .OfType<Playlist>()
-                .FirstOrDefault(p => p.OwnerUserId == userId
-                    && string.Equals(p.GetProviderId(CategoryProviderKey), tether, StringComparison.OrdinalIgnoreCase));
+            return PlaylistLookup.FindByTether(_libraryManager, identity.ToString("N"), userId);
         }
 
         /// <inheritdoc />
@@ -417,15 +409,7 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
                 return null;
             }
 
-            var tether = category.Id.ToString("N");
-            var recovered = _libraryManager.GetItemsResult(new InternalItemsQuery
-            {
-                IncludeItemTypes = [BaseItemKind.Playlist],
-                Recursive = true,
-            }).Items
-                .OfType<Playlist>()
-                .FirstOrDefault(p => p.OwnerUserId == link.UserId
-                    && string.Equals(p.GetProviderId(CategoryProviderKey), tether, StringComparison.OrdinalIgnoreCase));
+            var recovered = FindByTether(category.Id, link.UserId);
 
             if (recovered is not null)
             {

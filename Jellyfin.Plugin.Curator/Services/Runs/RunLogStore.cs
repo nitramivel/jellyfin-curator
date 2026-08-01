@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Jellyfin.Plugin.Curator.Core.Usage;
 using Jellyfin.Plugin.Curator.Services.Llm;
 using MediaBrowser.Controller;
 using Microsoft.Extensions.Logging;
@@ -170,6 +171,78 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             }
 
             return summaries;
+        }
+
+        /// <inheritdoc />
+        public UsageReport Usage(int days = 30, int limit = 50)
+        {
+            if (!Directory.Exists(_basePath))
+            {
+                return UsageRollup.Build([], [], days, DateTime.UtcNow);
+            }
+
+            var calls = new List<UsageCall>();
+            var runs = new List<UsageRun>();
+
+            foreach (var file in EnumerateRunFiles().Take(limit))
+            {
+                if (TryRead(file) is not { } document)
+                {
+                    continue;
+                }
+
+                var runModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var runCalls = new List<UsageCall>();
+
+                foreach (var call in document.LlmCalls)
+                {
+                    // Schema 1 recorded no model per call. Attributing those to the
+                    // run's headline model is exactly right for the single-model runs
+                    // that were the norm then, and merely imprecise for the rest —
+                    // which beats dropping them or filing them all under "unknown".
+                    var model = string.IsNullOrWhiteSpace(call.Model) ? document.Model : call.Model;
+                    var provider = string.IsNullOrWhiteSpace(call.Provider) ? document.Provider : call.Provider;
+
+                    if (!string.IsNullOrWhiteSpace(model))
+                    {
+                        runModels.Add(model);
+                    }
+
+                    var usage = new UsageCall(
+                        call.At,
+                        call.Phase,
+                        model,
+                        provider,
+                        call.Response?.InputTokens ?? 0,
+                        call.Response?.CacheReadTokens ?? 0,
+                        call.Response?.OutputTokens ?? 0,
+                        call.Response?.CacheWriteTokens ?? 0,
+
+                        // A call that never came back has no response and so no cost,
+                        // which reads as unpriced rather than as free. That is the
+                        // honest answer: the request was dispatched and may well have
+                        // been billed, and nothing here knows whether it was.
+                        call.Response?.Cost?.TotalUsd,
+                        call.Outcome,
+                        document.RunId);
+
+                    calls.Add(usage);
+                    runCalls.Add(usage);
+                }
+
+                runs.Add(new UsageRun(
+                    document.RunId,
+                    document.Trigger,
+                    document.Status == RunStatus.Running && IsStale(document)
+                        ? RunStatus.Abandoned
+                        : document.Status,
+                    document.StartedAt,
+                    runModels.OrderBy(m => m, StringComparer.Ordinal).ToList(),
+                    UsageRollup.Sum(runCalls)));
+            }
+
+            runs.Sort((a, b) => b.StartedAt.CompareTo(a.StartedAt));
+            return UsageRollup.Build(calls, runs, days, DateTime.UtcNow);
         }
 
         /// <inheritdoc />
@@ -419,7 +492,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                 LlmResult? result,
                 string outcome,
                 string? error,
-                RunLogPricing? pricing = null)
+                RunLogModel? model = null)
             {
                 ArgumentNullException.ThrowIfNull(request);
 
@@ -443,7 +516,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                             result.CacheWriteTokens,
                             result.Truncated,
                             result.ThinkingTokens,
-                            Cost(result.InputTokens, result.CacheReadTokens, result.OutputTokens, pricing));
+                            Cost(result.InputTokens, result.CacheReadTokens, result.OutputTokens, model?.Pricing));
 
                         _document.Totals.InputTokens += result.InputTokens;
                         _document.Totals.OutputTokens += result.OutputTokens;
@@ -488,7 +561,14 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
                         prompt,
                         response,
                         outcome,
-                        error));
+                        error,
+
+                        // Resolved here rather than left to the reader. A call that
+                        // named no model belongs to the run's own, and writing that
+                        // down once beats every future reader reinventing the
+                        // fallback — the only files needing it now are schema 1.
+                        model?.Model ?? _document.Model,
+                        model?.Provider ?? _document.Provider));
 
                     Write();
                 }

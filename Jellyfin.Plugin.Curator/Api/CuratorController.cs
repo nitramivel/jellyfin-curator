@@ -5,9 +5,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Scheduling;
+using Jellyfin.Plugin.Curator.Core.Usage;
 using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
 using Jellyfin.Plugin.Curator.Services.Health;
+using Jellyfin.Plugin.Curator.Services.HomeScreen;
 using Jellyfin.Plugin.Curator.Services.Playlists;
 using Jellyfin.Plugin.Curator.Services.Runs;
 using Jellyfin.Plugin.Curator.Services.Summaries;
@@ -277,6 +279,26 @@ namespace Jellyfin.Plugin.Curator.Api
         }
 
         /// <summary>
+        /// What every recorded run spent, by model, by pass and by day.
+        /// </summary>
+        /// <remarks>
+        /// Built from the run logs on disk, so it describes exactly as much history
+        /// as is still there — the directory keeps the last fifty files. Reads every
+        /// one of them, which makes this a page-open request rather than something
+        /// to poll.
+        /// </remarks>
+        /// <param name="days">How many days the daily series should span.</param>
+        /// <param name="limit">How many run logs to read, newest first.</param>
+        /// <response code="200">The breakdown.</response>
+        /// <returns>The usage report.</returns>
+        [HttpGet("Usage")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<UsageReport> GetUsage([FromQuery] int days = 30, [FromQuery] int limit = 50)
+        {
+            return Ok(_runLogStore.Usage(Math.Clamp(days, 1, 365), Math.Clamp(limit, 1, 200)));
+        }
+
+        /// <summary>
         /// Gets one run's whole record, including every prompt and response.
         /// </summary>
         /// <remarks>
@@ -310,11 +332,11 @@ namespace Jellyfin.Plugin.Curator.Api
         /// Re-publishes the home screen rows from the stored categories, without an
         /// LLM call and without spending anything.
         /// </summary>
-        /// <response code="200">Sync ran; the body says whether it succeeded.</response>
-        /// <returns>Whether the integration reported success.</returns>
+        /// <response code="200">Sync ran; the body says whether it succeeded, and how.</response>
+        /// <returns>Whether rows were published, and whether by the configured route.</returns>
         [HttpPost("HomeScreen/Sync")]
         [ProducesResponseType(StatusCodes.Status200OK)]
-        public async Task<ActionResult<bool>> SyncHomeScreen()
+        public async Task<ActionResult<SectionSyncResult>> SyncHomeScreen()
         {
             return Ok(await _runService.SyncHomeScreenAsync(HttpContext.RequestAborted).ConfigureAwait(false));
         }
