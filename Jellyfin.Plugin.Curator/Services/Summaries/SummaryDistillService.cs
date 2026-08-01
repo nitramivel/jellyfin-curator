@@ -543,7 +543,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
 
         /// <summary>
         /// Prices a pass the same way a category run is priced, including cache
-        /// reads at their own rate. See hard rule 8.
+        /// reads at their own rate. See hard rule 9.
         /// </summary>
         private static decimal? EstimateCost(
             ModelProfile profile,

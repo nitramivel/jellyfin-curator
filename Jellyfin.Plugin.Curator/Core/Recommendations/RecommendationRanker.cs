@@ -174,7 +174,7 @@ namespace Jellyfin.Plugin.Curator.Core.Recommendations
         /// <remarks>
         /// Derived from the user ID so it is the same on every run without anything
         /// being stored. That is what lets the playlist be found again by its
-        /// provider-ID tether rather than by its name — hard rule 2 — even though,
+        /// provider-ID tether rather than by its name — hard rule 3 — even though,
         /// unlike a category, there is no definition file to keep an ID in.
         /// </remarks>
         /// <param name="userId">The viewer.</param>

@@ -28,7 +28,7 @@ namespace Jellyfin.Plugin.Curator.Tests
     /// helpers it delegates to, never through the loop that calls them.
     /// </para>
     ///
-    /// <para>Hard rule 7: no live calls. Every response here is canned.</para>
+    /// <para>Hard rule 8: no live calls. Every response here is canned.</para>
     /// </summary>
     public class SummaryDistillServiceTests
     {

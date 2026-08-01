@@ -184,6 +184,7 @@ The health panel reports what it can actually diagnose — a prerequisite plugin
 |---|---|
 | **Output type** | Playlists (default) or collections |
 | **Personalized playlists** | Attach each target user's watch activity so their playlists reflect their taste. Playlists only; runs the model once per user, so cost scales with user count — see **min watched items to personalize** for the floor that keeps dormant accounts out of that multiplier |
+| **Send one row per title** | On by default. A director's cut and a theatrical cut are two items in Jellyfin and one film to a viewer — sent as two they arrive with identical titles, years, genres and overviews, so the model puts both in the same category and the row shows the same poster twice. Keeps the copy with the longest runtime and folds the other's watch history onto it. Matching is strict: kind, title **and** year must all agree, so *Freaky Friday* (2003) and *Freaky Friday* (1995) stay two different films |
 | **Include episodes** | Allow the model to select individual episodes, not just whole series |
 | **Target users** | Which users get playlists generated for them (empty = all users) |
 | **Auto-enable sections** | Enable newly created sections on the home screen automatically |

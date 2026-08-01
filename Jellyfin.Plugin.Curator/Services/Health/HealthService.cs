@@ -248,7 +248,7 @@ namespace Jellyfin.Plugin.Curator.Services.Health
                 // a health signal about what the owner would actually see, and the
                 // consumer of these — Media Bar, Collection Sections — resolves them
                 // by name too. Nothing is modified on the strength of this count, so
-                // hard rule 2 is not in play.
+                // hard rule 3 is not in play.
                 return _libraryManager.GetItemsResult(new InternalItemsQuery
                 {
                     IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Playlist],

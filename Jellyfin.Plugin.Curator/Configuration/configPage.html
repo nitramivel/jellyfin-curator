@@ -542,6 +542,23 @@
                         </div>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
+                                <input is="emby-checkbox" type="checkbox" id="CollapseDuplicateVersions"
+                                       name="CollapseDuplicateVersions" />
+                                <span>Send one row per title</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                A director's cut and a theatrical cut are two items in Jellyfin and one film to a
+                                viewer. Sent as two they reach the model with identical titles, years, genres and
+                                overviews, so it puts both in the same category and the row shows the same poster
+                                twice. This keeps the copy with the <strong>longest runtime</strong> — the fuller
+                                cut — and folds the other's watch history onto it, so nothing reads as unseen just
+                                because you watched the copy that was dropped. Matching is strict: kind, title
+                                <em>and</em> year must all agree, so <em>Freaky Friday</em> (2003) and
+                                <em>Freaky Friday</em> (1995) stay two different films.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
                                 <input is="emby-checkbox" type="checkbox" id="IncludeEpisodes" name="IncludeEpisodes" />
                                 <span>Include individual episodes</span>
                             </label>
@@ -3100,6 +3117,7 @@
                     page.querySelector('#SurfaceAllCollections').checked = config.SurfaceAllCollections;
                     setEnumSelect(page.querySelector('#OutputType'), config.OutputType);
                     page.querySelector('#PersonalizedPlaylists').checked = config.PersonalizedPlaylists;
+                    page.querySelector('#CollapseDuplicateVersions').checked = config.CollapseDuplicateVersions;
                     page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
                     page.querySelector('#AutoEnableSections').checked = config.AutoEnableSections;
                     page.querySelector('#UseBatchApi').checked = config.UseBatchApi;
@@ -3174,6 +3192,7 @@
                     config.PersonalModelProfileId = page.querySelector('#PersonalModelProfileId').value;
                     config.OutputType = page.querySelector('#OutputType').value;
                     config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
+                    config.CollapseDuplicateVersions = page.querySelector('#CollapseDuplicateVersions').checked;
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;
                     config.AutoEnableSections = page.querySelector('#AutoEnableSections').checked;
                     config.UseBatchApi = page.querySelector('#UseBatchApi').checked;

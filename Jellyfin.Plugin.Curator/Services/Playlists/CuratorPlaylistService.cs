@@ -269,7 +269,7 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         /// <remarks>
         /// The recommendation playlist has no stored ID to look up, so the tether is
         /// its only identity. Matching on name instead would be wrong for the reason
-        /// hard rule 2 gives: duplicate playlist names are legal in Jellyfin, and a
+        /// hard rule 3 gives: duplicate playlist names are legal in Jellyfin, and a
         /// viewer who made their own "Recommended for You" would have it silently
         /// taken over and overwritten.
         /// </remarks>
