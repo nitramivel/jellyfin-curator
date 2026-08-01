@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Jellyfin.Plugin.Curator.Core.Usage;
 using Jellyfin.Plugin.Curator.Services.Llm;
 
 namespace Jellyfin.Plugin.Curator.Services.Runs
@@ -43,10 +44,11 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         /// <param name="result">What came back, or null when the call threw.</param>
         /// <param name="outcome">"ok", "unparseable", or "error".</param>
         /// <param name="error">The failure message, when there was one.</param>
-        /// <param name="pricing">
-        /// This call's own rates, when the pass it belongs to runs on a different
-        /// model from the rest of the run. Null uses the run's rates, which is every
-        /// call of a run that uses one model throughout.
+        /// <param name="model">
+        /// The model this call went to and its rates, when the pass it belongs to
+        /// runs on a different model from the rest of the run. Null attributes the
+        /// call to the run's own model and rates, which is every call of a run that
+        /// uses one model throughout.
         /// </param>
         void LlmCall(
             string phase,
@@ -58,7 +60,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             LlmResult? result,
             string outcome,
             string? error,
-            RunLogPricing? pricing = null);
+            RunLogModel? model = null);
 
         /// <summary>
         /// Records the model and provider once they are known, which is after the
@@ -147,6 +149,19 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
         /// <param name="runId">The run ID.</param>
         /// <returns>The JSON, or null when there is no such run.</returns>
         string? ReadRaw(Guid runId);
+
+        /// <summary>
+        /// What every recorded run spent, broken down by model, by pass and by day.
+        /// </summary>
+        /// <remarks>
+        /// Reads the same files <see cref="List"/> does and reduces them to costs,
+        /// so it carries the same limit: the run directory keeps the last fifty
+        /// files, and this can only describe what is still there.
+        /// </remarks>
+        /// <param name="days">How many days the daily series should span.</param>
+        /// <param name="limit">How many run files to read, newest first.</param>
+        /// <returns>The breakdown.</returns>
+        UsageReport Usage(int days = 30, int limit = 50);
     }
 
     /// <summary>
@@ -182,7 +197,7 @@ namespace Jellyfin.Plugin.Curator.Services.Runs
             LlmResult? result,
             string outcome,
             string? error,
-            RunLogPricing? pricing = null)
+            RunLogModel? model = null)
         {
         }
 

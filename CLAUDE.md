@@ -2,7 +2,7 @@
 
 Sends the media library to an LLM, asks what threads run through it, turns the
 answers into ordered Jellyfin playlists, and publishes those as home screen rows
-through the Collection Sections plugin.
+through the Home Screen Sections plugin.
 
 **Scope discipline:** Curator does LLM inference and nothing else. Rule-based
 filtering, metadata queries, and external list sources are explicitly out of
@@ -65,7 +65,11 @@ Jellyfin.Plugin.Curator/
 │   ├── Scheduling/           # ScheduleSpec + ScheduleTranslator (the page's one
 │   │                         #   cadence <-> Jellyfin's trigger list)
 │   ├── Health/               # HealthCheck (facts in, findings out — pure)
-│   ├── HomeScreen/           # SectionConfigMerger (JSON merge for both integrations)
+│   ├── Usage/                # UsageRollup + models — every billable call reduced
+│   │                         #   to cost by model, by pass and by day
+│   ├── HomeScreen/           # SectionConfigMerger (JSON merge for both integrations),
+│   │                         #   SectionRegistration (the payload that registers a
+│   │                         #   row directly with Home Screen Sections)
 │   └── Models/               # MediaItemRecord, CategoryProposal, ReconciledCategory,
 │                             #   CategoryDefinition, UserActivity
 ├── Services/                 # Everything that touches Jellyfin or the network
@@ -84,8 +88,13 @@ Jellyfin.Plugin.Curator/
 │   │                         #   SummaryDistillService (the condensing pass)
 │   ├── Runs/                 # IRunLogStore — one JSON file per run: every step,
 │   │                         #   every prompt and response, written incrementally
-│   ├── Playlists/            # CuratorPlaylistService — create/update/delete, tagging
-│   └── HomeScreen/           # HomeScreenIntegrationService, API key provider
+│   ├── Playlists/            # CuratorPlaylistService — create/update/delete, tagging;
+│   │                         #   PlaylistLookup (the one by-GUID/by-tether resolver)
+│   ├── PublishHomeScreenRowsTask.cs # IScheduledTask, startup; re-registers the rows
+│   └── HomeScreen/           # HomeScreenIntegrationService (picks the path),
+│                             #   HomeScreenSectionRegistrar (reflects into the other
+│                             #   plugin), CuratorSectionResults (answers for a row),
+│                             #   API key provider
 ├── Api/CuratorController.cs  # Admin: Status, Run, runs, delete category + playlists
 └── Configuration/            # PluginConfiguration + configPage.html
 ```
@@ -121,6 +130,15 @@ every one of these was a real failure on a real server before it was a rule.
 3. **Never resolve our own playlists by name.** Always by stored GUID, with
    recovery via the `CuratorCategory` provider-ID tether. Duplicate playlist names
    are legal in Jellyfin; SmartLists removed exactly this fallback for good reason.
+   `Services/Playlists/PlaylistLookup` is the single implementation, shared by the
+   service that writes playlists and the home screen row that reads them, so the
+   rule cannot hold in one and drift in the other.
+   **This is also why Curator owns its home screen rows.** Collection Sections
+   resolves a row's playlist by name string, and Curator gives all six of a shared
+   category's per-user playlists the *same* name by design — there is no field to
+   pass a GUID through, so the fragility this rule forbids internally was being
+   imposed from outside. A registered section carries the category GUID in its
+   `additionalData`, and `CuratorSectionResults` resolves from there.
 4. **A category's audience is `CategoryAudience.For(OwnerUserId, targetUsers)` —
    never the raw target list.** Shared goes to everyone targeted; personal goes to
    its one owner, and to nobody at all if that owner is no longer targeted. The
@@ -206,6 +224,22 @@ every one of these was a real failure on a real server before it was a rule.
    to err for a number whose only job is telling the owner what a run spent.
    Cache *writes* carry their own premium and are still unpriced, which the
    `RunLogCost` doc comment says out loud.
+   **Every call records the model it went to.** `RunLogCall.Model`/`.Provider`
+   (schema 2) exist because the document's headline model is discovery's, so a
+   mixed run could not say what each model cost — the Usage tab's whole subject.
+   Callers pass a `RunLogModel` (provider + model + that profile's rates); the
+   store resolves a null one to the run's own and writes it down resolved, so no
+   reader reinvents the fallback. Schema 1 files carry no per-call model and are
+   attributed to the run's, which is exactly right for the single-model runs of
+   the time.
+   **The Usage tab is the readable form of this rule**, over `Core/Usage`
+   (pure: calls in, breakdown out) and `IRunLogStore.Usage`. Two invariants there
+   and both exist because the alternative misleads: an **unpriced call is counted
+   and reported, never costed at zero** — a run made before the rates were typed
+   in still cost money — and a **wasted call is still charged**, since an answer
+   that would not parse was billed exactly like one that did. An unrecognised
+   phase is shown under its own raw name rather than swept into "other": a pass
+   that starts spending unnoticed is the thing this is for.
 10. **`BatchSize = 0` means the whole library in one request, and is the default.**
    A thread running through items split across two batches is one the model
    never gets to see: each call only sees its own slice, so the categories it
@@ -245,6 +279,17 @@ every one of these was a real failure on a real server before it was a rule.
    status endpoint pairs `Current()` with the *category* run's `IsRunning`, so a
    second kind of run claiming that snapshot shows the progress panel something
    that is not its own.
+   **The recommendation re-rank was the last pass spending money in silence.**
+   It called the provider and only wrote a `Step`, and the six-hourly task that
+   drives it passed **no run log at all** — so `ModelRankedRecommendations` on a
+   six-user library bought up to twenty calls a day that nothing recorded. It now
+   records an `LlmCall` under phase `rerank` with its own profile's model and
+   rates, including the attempt that threw, and `RefreshRecommendationsAsync`
+   opens a log with trigger `recommendations`.
+   **Open that log only when the pass will actually buy something.** Selection is
+   arithmetic (rule 15), so the usual shape of that task is free — and a free pass
+   logging itself four times a day would evict the category runs from a directory
+   that keeps the last fifty. Gate on `ModelRankedRecommendations`.
    **A run log must never break the run it describes.** Every write in
    `Services/Runs/` swallows its own IO failures with a warning. The same applies
    to the prompt pool and the atomic temp-file rename — diagnostics are strictly
@@ -344,9 +389,11 @@ every one of these was a real failure on a real server before it was a rule.
    every pass. When `SendConsolidatedTags` is on the run service raises the
    effective tag cap, because `MaxTagsPerItem` is normally 0 and would otherwise
    substitute the consolidated tags onto every record and then write none of them.
-18. **Four scheduled tasks, one job each.** Generate Categories (weekly, the only
+18. **Six scheduled tasks, one job each.** Generate Categories (weekly, the only
    one that costs money), Condense Summaries (daily), Refresh Recommendations
-   (6-hourly), Clean Up and Sync (daily), Health Check (daily). The recommendation
+   (6-hourly), Clean Up and Sync (daily), Health Check (daily), Publish Home
+   Screen Rows (**every server start**, and the only one with a startup
+   trigger — see rule 22). The recommendation
    refresh deliberately does **not** live in the maintenance task any more: it
    tracks watch activity and wants a far shorter cadence than reconciling
    playlists does, and having two tasks rebuild the same playlists was duplicate
@@ -395,7 +442,32 @@ every one of these was a real failure on a real server before it was a rule.
      report gets read wrongly.
 21. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
-   xUnit.
+   xUnit. **This is why the home screen integration is reflection and HTTP rather
+   than a project reference.** Neither plugin is on NuGet, so referencing one means
+   vendoring somebody else's DLL — and worse, a plugin assembly whose reference
+   cannot be resolved does not degrade, it fails to load. Curator would cease to
+   exist on a server that had not installed the other plugin, instead of logging
+   that rows are unavailable and carrying on building playlists.
+22. **A section registered with Home Screen Sections lives in memory and is never
+   written down.** Its `RegisterSection` puts the handler in a dictionary; restart
+   the server and every Curator row is *absent* — not empty, not broken, gone.
+   Under the old path this never came up, because Collection Sections stored the
+   rows in its own config and re-registered them on its own startup task. Owning
+   the row means owning that job, which is what `PublishHomeScreenRowsTask` is for,
+   and it is a genuinely new way for the home screen to be wrong: if that task does
+   not run, the rows do not come back. It retries, because plugins start in no
+   defined order and the other plugin's entry point throws rather than queues when
+   asked too early.
+   Two more consequences of that dictionary, both load-bearing:
+   - **Registration is keyed on the section ID, and last write wins.** Both plugins
+     register Curator's rows under the same `curator-<guid>` IDs, so leaving them in
+     Collection Sections' config makes the two race. The integrated path therefore
+     *clears* Curator's entries out of that config — `MergeSections` with an empty
+     desired list, which already only touches entries carrying our prefix.
+   - **Nothing unregisters.** A category deleted since the last restart is still
+     asked for its contents. That is handled by the section settings write and the
+     per-user enabled list dropping it, so the row is never drawn; the handler
+     returning empty for an unknown category is the backstop, not the mechanism.
 
 ## Verified integration facts
 
@@ -413,6 +485,18 @@ counterintuitive; do not "correct" them from memory.
 - Its playlist handler groups episodes into parent series then takes 16, so an
   episode playlist renders as deduplicated **series cards in playlist order**. Its
   collection handler applies **no sort** — hence playlists are the default.
+- **It reads playlists from a cache built once at server startup and never
+  refreshed** (`LibraryCache.CachedPlaylists`, filled by its `StartupService`, and
+  only ever added to when the key is absent). So a row shows the playlist *as it
+  was at the last restart*. This is the measured cause of the bug that prompted
+  Curator to own its rows: "Quietly Devastating Portraits" rendered 7 cards in the
+  wrong order for a 10-member category whose six per-user playlists each held
+  exactly 10, and which Infuse showed correctly. Note what it is **not** — the
+  `GroupBy` and the `Take(16)` were the obvious suspects and both are innocent
+  here: the members are films, so each groups to itself, and 10 is under 16. Do
+  not re-investigate those.
+  Its HTTP controller does the same work against live data with a cap of 32, but
+  registration uses the in-process reflection path, so the cached one is what runs.
 - We write sections by `GET` then `POST /Plugins/{guid}/Configuration`. Saving
   fires its `ConfigurationChanged`, which re-registers every section with Home
   Screen Sections. This is why we go through its config rather than registering
@@ -423,8 +507,43 @@ counterintuitive; do not "correct" them from memory.
 
 **Home Screen Sections** (GUID `b8298e01-2697-407a-b44d-aa8dc795e850`)
 
-- `PluginInterface.RegisterSection` is **in-memory only and does not persist** —
-  anything registered that way vanishes on restart. Never call it directly.
+- `PluginInterface.RegisterSection(JObject)` is **in-memory only and does not
+  persist** — anything registered that way vanishes on restart, which rule 22
+  covers. Curator calls it, by reflection, and the whole contract below was read
+  out of the 2.5.11.0 DLL and then exercised against it:
+  - The payload is `SectionRegisterPayload` and Curator sends **camelCase** keys
+    `id`, `displayText`, `limit`, `additionalData`, `resultsAssembly`,
+    `resultsClass`, `resultsMethod` — the same shape Collection Sections sends.
+  - `limit` is an **instance count, not an item count**. Above 1 the plugin asks a
+    section for several copies of itself (that is how "Because You Watched" becomes
+    three rows). A category is one row, so it is always 1.
+  - Contents come either from an HTTP `resultsEndpoint` or from the
+    assembly/class/method triple. **Use the triple.** The endpoint form builds a
+    bare `HttpClient` with no credentials, so it can only call something anonymous,
+    and it reads the server URL off a *private* property. The triple is resolved
+    with `ActivatorUtilities.CreateInstance` against the server's root container,
+    so the named class must be public, must be registered, and every constructor
+    argument must resolve from that container.
+  - The method is found with `Type.GetMethod(string)` — which **throws on an
+    overload** — and its result is cast with `as QueryResult<BaseItemDto>`, so a
+    wrong return type yields an empty row and no error. It takes one parameter,
+    deserialized by Newtonsoft from the plugin's own `HomeScreenSectionPayload`,
+    which carries only `UserId` and `AdditionalData`. Curator declares a
+    structurally identical `CuratorSectionPayload` rather than referencing theirs.
+    `SectionRegistrationTests` pins all of this from our side.
+  - `AdditionalData` is **echoed back by the client**, not remembered by the
+    server, so it is untrusted input on the way in. `CuratorSectionResults`
+    validates it and only ever returns items already in that viewer's own playlist.
+- **Rows in one `OrderIndex` group are shuffled** — `CacheSectionsForUser` calls
+  `Shuffle` on each group before returning it. Curator gives every row
+  `OrderIndex` 500, so its rows appear in a different order on every home screen
+  load. Row *order*, not item order; the row contents are unaffected. Not yet
+  addressed — spreading the rows over distinct indices would fix it and would
+  reverse the "Curator takes one lane" decision below, so it is the owner's call.
+- `GetInfo` on a plugin-defined section hardcodes `ViewMode = Landscape`, but
+  `SectionToInfo` overwrites it from `SectionSettings` before returning. **So the
+  section settings write is what actually sets card shape, in both integration
+  modes** — owning the row does not remove that write.
 - **Row order and card shape live here, not in Collection Sections.** Its plugin
   config carries `SectionSettings[]`, each `{ SectionId, Enabled,
   AllowUserOverride, LowerLimit, UpperLimit, OrderIndex, ViewMode,
@@ -480,6 +599,14 @@ default would be racing it.
 **Both integrations degrade gracefully.** Assembly probing detects whether each
 plugin is loaded; a missing one logs a clear explanation and returns `false`.
 Playlists are still built. Never throw out of home screen integration.
+
+**`SectionDelivery` picks which plugin answers for a row, and defaults to
+`Integrated`.** The fallback to `CollectionSections` is for what a machine cannot
+detect — rows that render, but render wrongly. Registration failing *is*
+detectable, so `Integrated` falls back on its own for that sync and says so in the
+log; the registrar reports "none of N accepted" as unavailable rather than as a
+count of zero precisely so that fallback can fire. Keep the old path working for a
+release or two, and only remove it once a few restarts have been survived.
 
 ## Jellyfin API notes
 
@@ -603,13 +730,31 @@ Playlists are still built. Never throw out of home screen integration.
   cannot serve both prompts. `LlmProviderTests` pins both directions for both
   providers. Symptoms of this class of bug look like model stupidity or a parser
   fault; check the schema against the prompt first.
+- **`SectionDelivery` is on the Home screen tab as "Row source"**, above Output
+  type. Both are `setEnumSelect` selects, so their option order is load-bearing in
+  the way described below.
+- **The Usage tab draws its own SVG.** No chart library — the page takes no
+  dependencies (rule 21) and a config page is not the place to start. The
+  categorical colours are declared once as CSS custom properties on
+  `.curatorUsage` and read back in JS, so there is a single source of truth; they
+  are the dark steps of the project's data-viz palette, **validated as a set
+  against Jellyfin's own `#101010`** for lightness band, chroma floor, adjacent
+  CVD separation, normal-vision floor and 3:1 contrast. Assign them in fixed
+  order and never cycle: a ninth model folds into "Other" rather than getting a
+  generated hue nobody with a colour-vision deficiency could tell from slot 3.
+  Colour is keyed on the **model name**, not its rank, so changing the date range
+  cannot repaint the survivors. Two SVG traps, both load-bearing: a `transparent`
+  fill is *not painted* and so receives no pointer events without
+  `pointer-events: all`, and the bars must be `pointer-events: none` or they
+  swallow the hover meant for the band behind them.
 - **Settings live on five tabs**: Model (profiles, request, spend), Library
   (what is sent and who for), Categories (the two pools' size and count), Home
   screen (rows and the recommendation playlist), Summaries (the condensing pass
-  and its settings). **Two tabs are NOT part of the settings form** and hide the
-  save row: Runs, and Schedule — the latter writes through Jellyfin's
-  `ITaskManager`, not plugin config, so the form's Save would do nothing for it. Put a new setting where its *subject* is, not where it is
-  technically enforced.
+  and its settings). **Three tabs are NOT part of the settings form** and hide the
+  save row: Runs, Schedule and Usage — Schedule writes through Jellyfin's
+  `ITaskManager` rather than plugin config, and Usage only reads, so the form's
+  Save would do nothing for either. Put a new setting where its *subject* is, not
+  where it is technically enforced.
 - **The Schedule tab's running badge and the Runs tab's progress bar read one
   object.** `refreshStatus` stores each `Curator/Status` payload in `lastStatus`
   and both renderers draw from it; the badge never polls for itself. A second
@@ -668,6 +813,18 @@ round-trip — are confirmed working. What remains:
 4. **Whole-series playlist members** — series go in as `Series` LinkedChildren
    without episode expansion. Home rows render correctly; in-library playback of
    such a playlist may behave oddly.
+5. **Curator's own home screen rows.** The registration contract was read out of
+   the 2.5.11.0 DLL and then exercised against it — the payload Curator builds
+   deserializes into that plugin's `SectionRegisterPayload` with every field
+   populated, and its `HomeScreenSectionPayload` deserializes into
+   `CuratorSectionPayload` with the category GUID round-tripping. What that
+   *cannot* show is a row rendering. Still to verify on the server: all ten cards
+   in playlist order, two viewers seeing one shared row differently, rows
+   surviving a restart, and the card shape still following `PortraitThreshold`.
+   One transitional wrinkle: on the first startup after upgrading, Collection
+   Sections' own startup task may re-register Curator's rows from its config
+   before Curator clears them, so that boot can still show the old behaviour. It
+   self-heals — once cleared, the entries are gone.
 
 ## Reference
 

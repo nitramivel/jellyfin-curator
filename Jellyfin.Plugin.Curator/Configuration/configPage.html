@@ -305,6 +305,145 @@
                     .curatorProgressPct { font-size: 1.25em; }
                     .curatorCostLegend { gap: 0.3em 1em; }
                 }
+
+                /* ---- Usage tab ----
+                   The eight-slot categorical order from the plugin's data-viz
+                   reference, in its dark steps: this dashboard is dark by default and
+                   the rest of this page is already built for that surface. Validated
+                   as a set against Jellyfin's own #101010 — lightness band, chroma
+                   floor, adjacent CVD separation, normal-vision floor and 3:1
+                   contrast all pass. Assigned in fixed order and never cycled; a
+                   ninth model folds into "Other" rather than inventing a hue. */
+                .curatorUsage {
+                    --usage-surface: #101010;
+                    --usage-grid: rgba(255,255,255,0.08);
+                    --usage-axis: rgba(255,255,255,0.18);
+                    --usage-muted: #898781;
+                    --series-1: #3987e5;
+                    --series-2: #d95926;
+                    --series-3: #199e70;
+                    --series-4: #c98500;
+                    --series-5: #d55181;
+                    --series-6: #008300;
+                    --series-7: #9085e9;
+                    --series-8: #e66767;
+                    --usage-other: #6f6e69;
+                }
+
+                /* KPI row. The lead figure is the total, sized as a hero number —
+                   this tab exists to answer "what has this cost me". */
+                .curatorKpiRow {
+                    display: grid; gap: 0.9em; margin-bottom: 1.6em;
+                    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                }
+                .curatorKpi {
+                    padding: 0.9em 1em; border-radius: 10px;
+                    border: 1px solid rgba(255,255,255,0.10);
+                    background: rgba(255,255,255,0.035);
+                }
+                .curatorKpiLabel {
+                    font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.06em;
+                    opacity: 0.6;
+                }
+                .curatorKpiValue {
+                    font-size: 1.7em; font-weight: 600; margin-top: 0.25em;
+                    font-variant-numeric: tabular-nums;
+                }
+                .curatorKpi.curatorKpiLead .curatorKpiValue { font-size: 2.4em; }
+                .curatorKpiSub { font-size: 0.82em; opacity: 0.6; margin-top: 0.2em; }
+
+                .curatorUsageCard {
+                    padding: 1.1em 1.2em 1.2em; border-radius: 10px; margin-bottom: 1.4em;
+                    border: 1px solid rgba(255,255,255,0.10);
+                    background: rgba(255,255,255,0.035);
+                }
+                .curatorUsageCard h4 { margin: 0 0 0.15em 0; font-size: 1.02em; }
+                .curatorUsageCard .curatorUsageNote {
+                    font-size: 0.85em; opacity: 0.6; margin: 0 0 1em 0;
+                }
+
+                .curatorChart { width: 100%; overflow-x: auto; }
+                .curatorChart svg { display: block; max-width: 100%; height: auto; }
+                .curatorChartTick { fill: var(--usage-muted); font-size: 11px; }
+                .curatorChartGrid { stroke: var(--usage-grid); stroke-width: 1; }
+                .curatorChartAxis { stroke: var(--usage-axis); stroke-width: 1; }
+                .curatorChartLabel { font-size: 11px; font-weight: 600; }
+                /* The hit target is the whole column band, not the painted bar — a
+                   sub-cent segment is two pixels tall and nobody can point at it.
+                   Two things this needs and neither is optional: an SVG fill of
+                   `transparent` is *not painted*, so it receives no pointer events
+                   under the default visiblePainted, and the bars are drawn over the
+                   band, so they would swallow the hover before it ever arrived. */
+                .curatorChartHit { fill: transparent; pointer-events: all; cursor: default; }
+                .curatorChartCol { pointer-events: none; }
+                .curatorChartHit:hover + .curatorChartCol,
+                .curatorChartHit:focus + .curatorChartCol { opacity: 0.78; }
+                .curatorChartHit:focus { outline: 1px solid rgba(255,255,255,0.5); }
+
+                /* Legend is always present for two or more series — identity is never
+                   carried by colour alone. */
+                .curatorLegend {
+                    display: flex; flex-wrap: wrap; gap: 0.4em 1.2em;
+                    margin-top: 0.9em; font-size: 0.86em;
+                }
+                .curatorLegendItem { display: inline-flex; align-items: center; gap: 0.45em; }
+                .curatorLegendSwatch {
+                    width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto;
+                }
+
+                .curatorUsageTable { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+                .curatorUsageTable th {
+                    text-align: left; font-weight: 600; font-size: 0.8em;
+                    text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55;
+                    padding: 0 0.7em 0.5em 0; white-space: nowrap;
+                }
+                .curatorUsageTable td {
+                    padding: 0.45em 0.7em 0.45em 0;
+                    border-top: 1px solid rgba(255,255,255,0.07);
+                    vertical-align: top;
+                }
+                .curatorUsageTable td.curatorNum,
+                .curatorUsageTable th.curatorNum {
+                    text-align: right; font-variant-numeric: tabular-nums;
+                    padding-right: 0; white-space: nowrap;
+                }
+                .curatorUsageTable .curatorRowKey { display: inline-flex; align-items: center; gap: 0.5em; }
+
+                /* Horizontal magnitude bars behind the table rows. Sequential single
+                   hue where the row already names its own subject. */
+                .curatorMeter {
+                    height: 6px; border-radius: 3px; margin-top: 0.35em;
+                    background: rgba(255,255,255,0.07); overflow: hidden;
+                }
+                .curatorMeter span { display: block; height: 100%; border-radius: 3px; }
+
+                .curatorUsageWarn {
+                    padding: 0.75em 0.9em; border-radius: 8px; margin-bottom: 1.2em;
+                    border: 1px solid rgba(250,178,25,0.45);
+                    background: rgba(250,178,25,0.10);
+                    font-size: 0.9em;
+                }
+                .curatorUsageWarn strong { color: #fab219; }
+
+                .curatorTip {
+                    position: absolute; z-index: 4; pointer-events: none;
+                    padding: 0.5em 0.65em; border-radius: 7px;
+                    background: rgba(20,20,20,0.97);
+                    border: 1px solid rgba(255,255,255,0.16);
+                    font-size: 0.82em; line-height: 1.5; white-space: nowrap;
+                    box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+                }
+                .curatorTipHead { font-weight: 600; margin-bottom: 0.3em; }
+                .curatorTipRow { display: flex; align-items: center; gap: 0.5em; }
+                /* A short stroke, not a filled box: at tooltip density a box is
+                   data-weight ink doing a label's job. */
+                .curatorTipKey { width: 10px; height: 2px; border-radius: 1px; flex: 0 0 auto; }
+                .curatorTipValue { font-weight: 600; font-variant-numeric: tabular-nums; }
+                .curatorTipName { opacity: 0.7; }
+
+                @media (max-width: 600px) {
+                    .curatorKpi.curatorKpiLead .curatorKpiValue { font-size: 1.9em; }
+                }
 </style>
 
             <div class="verticalSection">
@@ -330,6 +469,8 @@
                         data-target="schedule"><span>Schedule</span></button>
                 <button is="emby-button" type="button" class="raised curatorTabButton"
                         data-target="categories"><span>Runs</span></button>
+                <button is="emby-button" type="button" class="raised curatorTabButton"
+                        data-target="usage"><span>Usage</span></button>
             </div>
 
             <form id="CuratorConfigForm">
@@ -767,6 +908,20 @@
                     <div class="verticalSection">
                         <h3 class="sectionTitle">Rows</h3>
                         <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">How categories appear on the home screen.</p>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="SectionDelivery">Row source</label>
+                            <select is="emby-select" id="SectionDelivery" name="SectionDelivery" class="emby-select-withcolor emby-select">
+                                <option value="Integrated">Curator (recommended)</option>
+                                <option value="CollectionSections">Collection Sections</option>
+                            </select>
+                            <div class="fieldDescription">
+                                Who answers for what a row contains. Curator resolves your own copy of each
+                                playlist and shows it in playlist order, so per-viewer ordering reaches the home
+                                screen. Collection Sections matches playlists by name from a cache built at server
+                                startup, which can render a row short, stale and reordered. Home Screen Sections
+                                is needed either way. Switch back only if the rows misbehave.
+                            </div>
+                        </div>
                         <div class="selectContainer">
                             <label class="selectLabel" for="OutputType">Output type</label>
                             <select is="emby-select" id="OutputType" name="OutputType" class="emby-select-withcolor emby-select">
@@ -1215,6 +1370,38 @@
                     </div>
 
                     <div id="CuratorCategories"><p class="fieldDescription">Loading&hellip;</p></div>
+                </div>
+            </div>
+
+            <div class="curatorTabPanel hide curatorUsage" data-panel="usage">
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">What Curator has spent</h3>
+                    <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                        Every model call Curator makes, priced at the rates on each model profile and
+                        added up. Built from the run logs on disk, so it covers as far back as those go —
+                        the last fifty are kept. Estimated, not billed: compare it against your provider's
+                        own dashboard before trusting it to the cent.
+                    </p>
+
+                    <div class="curatorBulkBar" style="margin-bottom:1.2em;">
+                        <div class="selectContainer" style="margin:0; min-width: 12em;">
+                            <label class="selectLabel" for="CuratorUsageRange">Show</label>
+                            <select is="emby-select" id="CuratorUsageRange"
+                                    class="emby-select-withcolor emby-select">
+                                <option value="7">Last 7 days</option>
+                                <option value="30" selected>Last 30 days</option>
+                                <option value="90">Last 90 days</option>
+                                <option value="365">Last year</option>
+                            </select>
+                        </div>
+                        <button is="emby-button" type="button" id="CuratorUsageRefresh" class="raised">
+                            <span>Refresh</span>
+                        </button>
+                    </div>
+
+                    <div id="CuratorUsageBody">
+                        <p class="fieldDescription" id="CuratorUsageState">Loading&hellip;</p>
+                    </div>
                 </div>
             </div>
 
@@ -2156,6 +2343,644 @@
                 });
             }
 
+            // ---- usage ----
+            //
+            // Everything money-shaped lands here: the category run, the viewer
+            // passes, the summary pass (which is also where tags are bought) and
+            // the recommendation re-rank. The numbers come from the run logs, so
+            // this tab can only ever be as complete as the recording is — which is
+            // why every paid pass writes one.
+
+            var SVG_NS = 'http://www.w3.org/2000/svg';
+            var usageTip = null;
+
+            function svgEl(name, attrs) {
+                var el = document.createElementNS(SVG_NS, name);
+                for (var key in attrs) {
+                    if (Object.prototype.hasOwnProperty.call(attrs, key)) {
+                        el.setAttribute(key, String(attrs[key]));
+                    }
+                }
+                return el;
+            }
+
+            function el(tag, className, text) {
+                var node = document.createElement(tag);
+                if (className) {
+                    node.className = className;
+                }
+                if (text !== undefined && text !== null) {
+                    // Model and phase names come out of a run log and ultimately out
+                    // of settings, so they are never concatenated into markup.
+                    node.textContent = String(text);
+                }
+                return node;
+            }
+
+            /**
+             * The categorical slots, read back off the stylesheet so the colours are
+             * declared in exactly one place. Assigned in fixed order and never
+             * cycled — a ninth model folds into "Other" rather than inventing a hue
+             * that nobody with colour-vision deficiency could tell from slot 3.
+             */
+            function usageColours(panel) {
+                var styles = getComputedStyle(panel);
+                var slots = [];
+                for (var i = 1; i <= 8; i++) {
+                    slots.push(styles.getPropertyValue('--series-' + i).trim() || '#3987e5');
+                }
+                return {
+                    slots: slots,
+                    other: styles.getPropertyValue('--usage-other').trim() || '#6f6e69',
+                    surface: styles.getPropertyValue('--usage-surface').trim() || '#101010'
+                };
+            }
+
+            /**
+             * Colour follows the model, not its rank. The map is built from the
+             * report's full model list in name order rather than in cost order, so
+             * changing the date range — which reorders the bars — cannot repaint the
+             * survivors underneath the reader.
+             */
+            function usageColourMap(report, palette) {
+                var names = (report.Models || []).map(function (m) { return m.Model; }).slice();
+                names.sort();
+
+                var map = {};
+                for (var i = 0; i < names.length; i++) {
+                    map[names[i]] = i < palette.slots.length ? palette.slots[i] : palette.other;
+                }
+                return map;
+            }
+
+            /**
+             * Buckets the daily series so the chart never draws more columns than it
+             * has room for. A year at one column per day is 365 hairlines; at one per
+             * month it is readable and still says which months cost what.
+             */
+            function usageBuckets(daily) {
+                var size = 1;
+                var label = 'day';
+                if (daily.length > 180) {
+                    size = 30;
+                    label = 'month';
+                } else if (daily.length > 60) {
+                    size = 7;
+                    label = 'week';
+                }
+
+                var buckets = [];
+                for (var i = 0; i < daily.length; i += size) {
+                    var slice = daily.slice(i, i + size);
+                    var byModel = {};
+                    var total = 0;
+                    var calls = 0;
+
+                    for (var j = 0; j < slice.length; j++) {
+                        total += slice[j].CostUsd || 0;
+                        calls += slice[j].Calls || 0;
+                        var models = slice[j].ByModel || {};
+                        for (var name in models) {
+                            if (Object.prototype.hasOwnProperty.call(models, name)) {
+                                byModel[name] = (byModel[name] || 0) + models[name];
+                            }
+                        }
+                    }
+
+                    buckets.push({
+                        from: slice[0].Date,
+                        to: slice[slice.length - 1].Date,
+                        cost: total,
+                        calls: calls,
+                        byModel: byModel
+                    });
+                }
+
+                return { buckets: buckets, grain: label };
+            }
+
+            function usageShortDate(iso) {
+                var parsed = new Date(iso + 'T00:00:00Z');
+                if (isNaN(parsed.getTime())) {
+                    return iso;
+                }
+                return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+            }
+
+            /** Rounds an axis maximum up to something a reader can hold in their head. */
+            function usageNiceMax(value) {
+                if (value <= 0) {
+                    return 1;
+                }
+                var magnitude = Math.pow(10, Math.floor(Math.log(value) / Math.LN10));
+                // Finely stepped on purpose. A coarse ladder puts a $1.04 peak on a
+                // $2 axis and throws away half the plot height, which reads as a
+                // quiet month rather than a rounding choice.
+                var steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+                for (var i = 0; i < steps.length; i++) {
+                    if (value <= steps[i] * magnitude) {
+                        return steps[i] * magnitude;
+                    }
+                }
+                return 10 * magnitude;
+            }
+
+            function usageAxisLabel(value) {
+                if (value >= 1) {
+                    return '$' + (value % 1 === 0 ? value.toFixed(0) : value.toFixed(2));
+                }
+                return '$' + value.toFixed(2);
+            }
+
+            function hideUsageTip() {
+                if (usageTip && usageTip.parentNode) {
+                    usageTip.parentNode.removeChild(usageTip);
+                }
+                usageTip = null;
+            }
+
+            /**
+             * One tooltip listing every model at that column — the reader aims at a
+             * date, never at a 2px segment. Values lead and names follow: the reader
+             * already knows which column they are on and wants the number.
+             */
+            function showUsageTip(host, event, bucket, grain, colours) {
+                hideUsageTip();
+
+                var tip = el('div', 'curatorTip');
+                var when = grain === 'day'
+                    ? usageShortDate(bucket.from)
+                    : usageShortDate(bucket.from) + ' – ' + usageShortDate(bucket.to);
+                tip.appendChild(el('div', 'curatorTipHead', when));
+
+                var names = Object.keys(bucket.byModel).sort(function (a, b) {
+                    return bucket.byModel[b] - bucket.byModel[a];
+                });
+
+                if (!names.length) {
+                    tip.appendChild(el('div', 'curatorTipName', 'Nothing spent'));
+                } else {
+                    for (var i = 0; i < names.length; i++) {
+                        var row = el('div', 'curatorTipRow');
+                        var key = el('span', 'curatorTipKey');
+                        key.style.background = colours[names[i]] || '#6f6e69';
+                        row.appendChild(key);
+                        row.appendChild(el('span', 'curatorTipValue', formatUsd(bucket.byModel[names[i]])));
+                        row.appendChild(el('span', 'curatorTipName', names[i]));
+                        tip.appendChild(row);
+                    }
+
+                    if (names.length > 1) {
+                        var total = el('div', 'curatorTipRow');
+                        total.style.marginTop = '0.35em';
+                        total.appendChild(el('span', 'curatorTipValue', formatUsd(bucket.cost)));
+                        total.appendChild(el('span', 'curatorTipName', 'total'));
+                        tip.appendChild(total);
+                    }
+                }
+
+                tip.appendChild(el('div', 'curatorTipName',
+                    bucket.calls + (bucket.calls === 1 ? ' call' : ' calls')));
+
+                host.appendChild(tip);
+                usageTip = tip;
+
+                var bounds = host.getBoundingClientRect();
+                var left = event.clientX - bounds.left + 14;
+                var top = event.clientY - bounds.top + 14;
+                if (left + tip.offsetWidth > bounds.width) {
+                    left = Math.max(0, event.clientX - bounds.left - tip.offsetWidth - 14);
+                }
+                tip.style.left = left + 'px';
+                tip.style.top = top + 'px';
+            }
+
+            /**
+             * The cost history: one stacked column per bucket, stacked by model.
+             *
+             * Stacked columns rather than lines because the series is deliberately
+             * full of zeroes — a category run is weekly — and a line drawn through
+             * six quiet days claims spending that did not happen.
+             */
+            function renderUsageChart(report, colours, palette) {
+                var wrap = el('div', 'curatorChart');
+                wrap.style.position = 'relative';
+
+                var grouped = usageBuckets(report.Daily || []);
+                var buckets = grouped.buckets;
+                if (!buckets.length) {
+                    wrap.appendChild(el('p', 'fieldDescription', 'No history yet.'));
+                    return wrap;
+                }
+
+                var peak = 0;
+                for (var i = 0; i < buckets.length; i++) {
+                    peak = Math.max(peak, buckets[i].cost);
+                }
+
+                var width = 760;
+                var height = 240;
+                var padLeft = 52;
+                var padRight = 12;
+                var padTop = 16;
+                var padBottom = 28;
+                var plotWidth = width - padLeft - padRight;
+                var plotHeight = height - padTop - padBottom;
+                var max = usageNiceMax(peak);
+
+                var svg = svgEl('svg', {
+                    viewBox: '0 0 ' + width + ' ' + height,
+                    role: 'img',
+                    'aria-label': 'Cost per ' + grouped.grain + ', stacked by model'
+                });
+                svg.style.width = '100%';
+                svg.style.minWidth = '320px';
+
+                // Gridlines first, so every mark sits on top of them.
+                var ticks = [0, 0.5, 1];
+                for (var t = 0; t < ticks.length; t++) {
+                    var y = padTop + plotHeight - (ticks[t] * plotHeight);
+                    svg.appendChild(svgEl('line', {
+                        x1: padLeft, x2: width - padRight, y1: y, y2: y,
+                        'class': ticks[t] === 0 ? 'curatorChartAxis' : 'curatorChartGrid'
+                    }));
+
+                    var tick = svgEl('text', {
+                        x: padLeft - 8, y: y + 4, 'text-anchor': 'end', 'class': 'curatorChartTick'
+                    });
+                    tick.textContent = usageAxisLabel(max * ticks[t]);
+                    svg.appendChild(tick);
+                }
+
+                var band = plotWidth / buckets.length;
+                var barWidth = Math.max(2, Math.min(24, band - 6));
+                var gap = barWidth >= 8 ? 2 : 0;
+                var peakIndex = -1;
+                for (var p = 0; p < buckets.length; p++) {
+                    if (buckets[p].cost === peak && peak > 0) {
+                        peakIndex = p;
+                        break;
+                    }
+                }
+
+                for (var b = 0; b < buckets.length; b++) {
+                    var bucket = buckets[b];
+                    var bandX = padLeft + (b * band);
+                    var barX = bandX + ((band - barWidth) / 2);
+
+                    // The hit target is the whole band, not the painted bar — a $0.004
+                    // segment is two pixels tall and nobody can point at it.
+                    var hit = svgEl('rect', {
+                        x: bandX, y: padTop, width: band, height: plotHeight,
+                        'class': 'curatorChartHit', tabindex: '0',
+                        'aria-label': usageShortDate(bucket.from) + ': ' + formatUsd(bucket.cost)
+                    });
+                    svg.appendChild(hit);
+
+                    var group = svgEl('g', { 'class': 'curatorChartCol' });
+                    var names = Object.keys(bucket.byModel).sort();
+                    var cursor = padTop + plotHeight;
+
+                    for (var m = 0; m < names.length; m++) {
+                        var value = bucket.byModel[names[m]];
+                        if (value <= 0) {
+                            continue;
+                        }
+
+                        var segment = Math.max(1, (value / max) * plotHeight);
+                        cursor -= segment;
+
+                        // A 2px gap in the surface colour separates touching segments.
+                        // The gap does the separating, never a stroke — a stroke would
+                        // add ink that is not data.
+                        var drawn = m < names.length - 1 ? Math.max(1, segment - gap) : segment;
+                        group.appendChild(svgEl('rect', {
+                            x: barX,
+                            y: cursor + (segment - drawn),
+                            width: barWidth,
+                            height: drawn,
+                            fill: colours[names[m]] || palette.other,
+                            rx: 2
+                        }));
+                    }
+
+                    svg.appendChild(group);
+
+                    // Label the extreme only. A number on every column is chaos and
+                    // goes unread; the axis and the tooltip carry the rest.
+                    if (b === peakIndex && barWidth >= 8) {
+                        var cap = svgEl('text', {
+                            x: barX + (barWidth / 2),
+                            y: Math.max(padTop + 9, cursor - 5),
+                            'text-anchor': 'middle',
+                            'class': 'curatorChartLabel',
+                            fill: 'currentColor'
+                        });
+                        cap.textContent = formatUsd(bucket.cost);
+                        svg.appendChild(cap);
+                    }
+
+                    (function (target, data) {
+                        target.addEventListener('pointermove', function (event) {
+                            showUsageTip(wrap, event, data, grouped.grain, colours);
+                        });
+                        target.addEventListener('pointerleave', hideUsageTip);
+                        target.addEventListener('focus', function () {
+                            var box = target.getBoundingClientRect();
+                            showUsageTip(wrap, { clientX: box.left + (box.width / 2), clientY: box.top }, data, grouped.grain, colours);
+                        });
+                        target.addEventListener('blur', hideUsageTip);
+                    }(hit, bucket));
+                }
+
+                // First and last only: dates every column wide is a wall of text.
+                var first = svgEl('text', {
+                    x: padLeft, y: height - 8, 'text-anchor': 'start', 'class': 'curatorChartTick'
+                });
+                first.textContent = usageShortDate(buckets[0].from);
+                svg.appendChild(first);
+
+                var last = svgEl('text', {
+                    x: width - padRight, y: height - 8, 'text-anchor': 'end', 'class': 'curatorChartTick'
+                });
+                last.textContent = usageShortDate(buckets[buckets.length - 1].to);
+                svg.appendChild(last);
+
+                wrap.appendChild(svg);
+                return wrap;
+            }
+
+            /** The legend, which is what actually carries identity. */
+            function renderUsageLegend(report, colours, palette) {
+                var legend = el('div', 'curatorLegend');
+                var models = report.Models || [];
+
+                for (var i = 0; i < models.length; i++) {
+                    var item = el('span', 'curatorLegendItem');
+                    var swatch = el('span', 'curatorLegendSwatch');
+                    swatch.style.background = colours[models[i].Model] || palette.other;
+                    item.appendChild(swatch);
+                    item.appendChild(el('span', null, models[i].Model));
+                    legend.appendChild(item);
+                }
+
+                return legend;
+            }
+
+            function usageCard(title, note) {
+                var card = el('div', 'curatorUsageCard');
+                card.appendChild(el('h4', null, title));
+                if (note) {
+                    card.appendChild(el('p', 'curatorUsageNote', note));
+                }
+                return card;
+            }
+
+            function usageKpi(label, value, sub, lead) {
+                var tile = el('div', 'curatorKpi' + (lead ? ' curatorKpiLead' : ''));
+                tile.appendChild(el('div', 'curatorKpiLabel', label));
+                tile.appendChild(el('div', 'curatorKpiValue', value));
+                if (sub) {
+                    tile.appendChild(el('div', 'curatorKpiSub', sub));
+                }
+                return tile;
+            }
+
+            function usageCell(text, numeric) {
+                var cell = el('td', numeric ? 'curatorNum' : null, text);
+                return cell;
+            }
+
+            /** A table is the identity channel of last resort, so every chart has one. */
+            function usageTable(headings) {
+                var table = el('table', 'curatorUsageTable');
+                var head = el('tr');
+                for (var i = 0; i < headings.length; i++) {
+                    var th = el('th', headings[i].numeric ? 'curatorNum' : null, headings[i].label);
+                    head.appendChild(th);
+                }
+                table.appendChild(el('thead')).appendChild(head);
+                table.appendChild(el('tbody'));
+                return table;
+            }
+
+            function renderUsage(report) {
+                var panel = page.querySelector('[data-panel="usage"]');
+                var body = page.querySelector('#CuratorUsageBody');
+                var palette = usageColours(panel);
+                var colours = usageColourMap(report, palette);
+
+                body.innerHTML = '';
+                hideUsageTip();
+
+                var overall = report.Overall;
+                if (!overall || !overall.Calls) {
+                    body.appendChild(el('p', 'fieldDescription',
+                        'Nothing recorded yet. Costs appear here after the first run, summary pass or '
+                        + 'recommendation re-rank that calls a model.'));
+                    return;
+                }
+
+                // Unpriced calls are the one thing that can make every number below
+                // read low, so it is said first and said plainly.
+                if (overall.UnpricedCalls) {
+                    var warn = el('div', 'curatorUsageWarn');
+                    var strong = el('strong', null, overall.UnpricedCalls + ' of ' + overall.Calls
+                        + ' calls could not be priced.');
+                    warn.appendChild(strong);
+                    warn.appendChild(document.createTextNode(
+                        ' They still cost money — the totals below are lower than the real bill by whatever '
+                        + 'those calls came to. A call is unpriced when its model profile had no rates set at '
+                        + 'the time, or when the call never came back. Set the prices on the Model tab.'));
+                    body.appendChild(warn);
+                }
+
+                // ---- headline ----
+                var kpis = el('div', 'curatorKpiRow');
+                kpis.appendChild(usageKpi(
+                    'Total spend',
+                    formatUsd(overall.CostUsd),
+                    report.FirstCallAt
+                        ? 'since ' + new Date(report.FirstCallAt).toLocaleDateString()
+                        : null,
+                    true));
+                kpis.appendChild(usageKpi(
+                    'Model calls',
+                    String(overall.Calls),
+                    'across ' + report.RunsCovered + (report.RunsCovered === 1 ? ' run log' : ' run logs')));
+                kpis.appendChild(usageKpi(
+                    'Tokens in / out',
+                    formatTokens(overall.TotalInputTokens) + ' / ' + formatTokens(overall.OutputTokens),
+                    overall.CacheHitRate !== null && overall.CacheHitRate !== undefined
+                        ? Math.round(overall.CacheHitRate * 100) + '% of input served from cache'
+                        : null));
+                kpis.appendChild(usageKpi(
+                    'Spent on nothing',
+                    formatUsd(overall.WastedCostUsd),
+                    overall.WastedCalls
+                        ? overall.WastedCalls + ' call(s) errored or would not parse'
+                        : 'every call returned something usable'));
+                body.appendChild(kpis);
+
+                // ---- cost history per model ----
+                var history = usageCard(
+                    'Cost over time, by model',
+                    'Each column is what was spent that period, stacked by the model that spent it. '
+                        + 'Gaps are real: the category run is weekly by default.');
+                history.appendChild(renderUsageChart(report, colours, palette));
+                if ((report.Models || []).length > 1) {
+                    history.appendChild(renderUsageLegend(report, colours, palette));
+                }
+                body.appendChild(history);
+
+                // ---- per model ----
+                var models = report.Models || [];
+                var modelCard = usageCard(
+                    'By model',
+                    'Priced at the rates on each model profile. Two passes on two profiles show up as two rows.');
+                var modelTable = usageTable([
+                    { label: 'Model' },
+                    { label: 'Provider' },
+                    { label: 'Calls', numeric: true },
+                    { label: 'Input', numeric: true },
+                    { label: 'Output', numeric: true },
+                    { label: 'Cost', numeric: true }
+                ]);
+                var modelBody = modelTable.querySelector('tbody');
+                var costliest = models.length ? models[0].Totals.CostUsd : 0;
+
+                for (var i = 0; i < models.length; i++) {
+                    var model = models[i];
+                    var row = el('tr');
+
+                    var nameCell = el('td');
+                    var key = el('span', 'curatorRowKey');
+                    var swatch = el('span', 'curatorLegendSwatch');
+                    swatch.style.background = colours[model.Model] || palette.other;
+                    key.appendChild(swatch);
+                    key.appendChild(el('span', null, model.Model));
+                    nameCell.appendChild(key);
+
+                    var meter = el('div', 'curatorMeter');
+                    var fill = el('span');
+                    fill.style.width = (costliest > 0
+                        ? Math.max(2, (model.Totals.CostUsd / costliest) * 100)
+                        : 0) + '%';
+                    fill.style.background = colours[model.Model] || palette.other;
+                    meter.appendChild(fill);
+                    nameCell.appendChild(meter);
+                    row.appendChild(nameCell);
+
+                    row.appendChild(usageCell(model.Provider));
+                    row.appendChild(usageCell(String(model.Totals.Calls), true));
+                    row.appendChild(usageCell(formatTokens(model.Totals.TotalInputTokens), true));
+                    row.appendChild(usageCell(formatTokens(model.Totals.OutputTokens), true));
+                    row.appendChild(usageCell(formatUsd(model.Totals.CostUsd), true));
+                    modelBody.appendChild(row);
+                }
+
+                modelCard.appendChild(modelTable);
+                body.appendChild(modelCard);
+
+                // ---- per pass ----
+                var phases = report.Phases || [];
+                var phaseCard = usageCard(
+                    'By pass',
+                    'What each kind of work costs. Only these spend money — everything else Curator does '
+                        + 'is arithmetic over answers already bought.');
+                var phaseTable = usageTable([
+                    { label: 'Pass' },
+                    { label: 'Calls', numeric: true },
+                    { label: 'Tokens', numeric: true },
+                    { label: 'Cost', numeric: true }
+                ]);
+                var phaseBody = phaseTable.querySelector('tbody');
+                var dearest = phases.length ? phases[0].Totals.CostUsd : 0;
+
+                for (var q = 0; q < phases.length; q++) {
+                    var phase = phases[q];
+                    var phaseRow = el('tr');
+
+                    var labelCell = el('td');
+                    labelCell.appendChild(el('div', null, phase.Label));
+                    if (phase.Description) {
+                        labelCell.appendChild(el('div', 'curatorKpiSub', phase.Description));
+                    } else {
+                        labelCell.appendChild(el('div', 'curatorKpiSub',
+                            'Curator does not recognise this pass. It is spending money under a name this '
+                                + 'version does not know about.'));
+                    }
+
+                    var phaseMeter = el('div', 'curatorMeter');
+                    var phaseFill = el('span');
+                    phaseFill.style.width = (dearest > 0
+                        ? Math.max(2, (phase.Totals.CostUsd / dearest) * 100)
+                        : 0) + '%';
+                    phaseFill.style.background = palette.slots[0];
+                    phaseMeter.appendChild(phaseFill);
+                    labelCell.appendChild(phaseMeter);
+                    phaseRow.appendChild(labelCell);
+
+                    phaseRow.appendChild(usageCell(String(phase.Totals.Calls), true));
+                    phaseRow.appendChild(usageCell(
+                        formatTokens(phase.Totals.TotalInputTokens + phase.Totals.OutputTokens), true));
+                    phaseRow.appendChild(usageCell(formatUsd(phase.Totals.CostUsd), true));
+                    phaseBody.appendChild(phaseRow);
+                }
+
+                phaseCard.appendChild(phaseTable);
+                body.appendChild(phaseCard);
+
+                // ---- per run ----
+                var runs = report.Runs || [];
+                if (runs.length) {
+                    var runCard = usageCard('By run', 'The most recent run logs, newest first.');
+                    var runTable = usageTable([
+                        { label: 'Started' },
+                        { label: 'Trigger' },
+                        { label: 'Models' },
+                        { label: 'Calls', numeric: true },
+                        { label: 'Cost', numeric: true }
+                    ]);
+                    var runBody = runTable.querySelector('tbody');
+
+                    for (var r = 0; r < Math.min(runs.length, 25); r++) {
+                        var run = runs[r];
+                        var runRow = el('tr');
+                        runRow.appendChild(usageCell(new Date(run.StartedAt).toLocaleString()));
+                        runRow.appendChild(usageCell(
+                            run.Status === 'completed' ? run.Trigger : run.Trigger + ' — ' + run.Status));
+                        runRow.appendChild(usageCell((run.Models || []).join(', ') || '—'));
+                        runRow.appendChild(usageCell(String(run.Totals.Calls), true));
+                        runRow.appendChild(usageCell(
+                            run.Totals.Calls ? formatUsd(run.Totals.CostUsd) : '—', true));
+                        runBody.appendChild(runRow);
+                    }
+
+                    runCard.appendChild(runTable);
+                    body.appendChild(runCard);
+                }
+            }
+
+            function loadUsage() {
+                var state = page.querySelector('#CuratorUsageState');
+                var days = parseInt(page.querySelector('#CuratorUsageRange').value, 10) || 30;
+
+                page.querySelector('#CuratorUsageBody').innerHTML =
+                    '<p class="fieldDescription" id="CuratorUsageState">Loading&hellip;</p>';
+
+                ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Usage', { days: days, limit: 50 }),
+                    dataType: 'json'
+                }).then(function (report) {
+                    renderUsage(report);
+                }, function () {
+                    page.querySelector('#CuratorUsageBody').innerHTML =
+                        '<p class="fieldDescription">Could not load usage &mdash; check the server log.</p>';
+                });
+            }
+
             // ---- tabs ----
 
             function showTab(name) {
@@ -2169,15 +2994,26 @@
                     buttons[j].classList.toggle('curatorTabActive', buttons[j].getAttribute('data-target') === name);
                 }
 
-                // Save applies to the settings form only. Runs and Schedule are not
-                // part of it — Schedule writes through Jellyfin's task manager rather
-                // than plugin config, so the form's Save would do nothing for it.
+                // Save applies to the settings form only. Runs, Schedule and Usage
+                // are not part of it — Schedule writes through Jellyfin's task
+                // manager rather than plugin config, and Usage only reads, so the
+                // form's Save would do nothing for any of them.
                 page.querySelector('#CuratorSaveRow')
-                    .classList.toggle('hide', name === 'categories' || name === 'schedule');
+                    .classList.toggle('hide',
+                        name === 'categories' || name === 'schedule' || name === 'usage');
 
                 if (name === 'schedule') {
                     loadSchedules();
                     loadHealth();
+                }
+
+                // Reads every run log on disk, so it is loaded on arrival and never
+                // polled — a tab nobody is looking at must not be re-reading fifty
+                // files with every prompt in them.
+                if (name === 'usage') {
+                    loadUsage();
+                } else {
+                    hideUsageTip();
                 }
 
                 // The Summaries tab shows live state, so refresh on arrival rather
@@ -3183,6 +4019,7 @@
                     page.querySelector('#SurfacedCollections').value = config.SurfacedCollections || '';
                     page.querySelector('#SurfaceAllCollections').checked = config.SurfaceAllCollections;
                     setEnumSelect(page.querySelector('#OutputType'), config.OutputType);
+                    setEnumSelect(page.querySelector('#SectionDelivery'), config.SectionDelivery);
                     page.querySelector('#PersonalizedPlaylists').checked = config.PersonalizedPlaylists;
                     page.querySelector('#CollapseDuplicateVersions').checked = config.CollapseDuplicateVersions;
                     page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
@@ -3258,6 +4095,7 @@
                     config.DiscoveryModelProfileId = page.querySelector('#DiscoveryModelProfileId').value;
                     config.PersonalModelProfileId = page.querySelector('#PersonalModelProfileId').value;
                     config.OutputType = page.querySelector('#OutputType').value;
+                    config.SectionDelivery = page.querySelector('#SectionDelivery').value;
                     config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
                     config.CollapseDuplicateVersions = page.querySelector('#CollapseDuplicateVersions').checked;
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;
@@ -3288,11 +4126,17 @@
                     type: 'POST',
                     url: ApiClient.getUrl('Curator/HomeScreen/Sync'),
                     dataType: 'json'
-                }).then(function (ok) {
-                    state.innerHTML = ok
-                        ? 'Home screen rows re-synced.'
-                        : 'Nothing was synced — check the server log. Both Collection Sections and '
-                          + 'Home Screen Sections must be installed.';
+                }).then(function (result) {
+                    if (!result || !result.published) {
+                        state.innerHTML = 'Nothing was synced — check the server log. Home Screen Sections '
+                            + 'must be installed, and Collection Sections too if it is set as the row source.';
+                    } else if (result.degraded) {
+                        state.innerHTML = 'Home screen rows re-synced, but through Collection Sections — '
+                            + 'Curator could not register them itself. Check the server log, and try again '
+                            + 'if the server has only just started.';
+                    } else {
+                        state.innerHTML = 'Home screen rows re-synced.';
+                    }
                     button.disabled = false;
                 }, function () {
                     state.innerHTML = 'Could not re-sync — check the server log.';
@@ -3384,6 +4228,9 @@
                 page.querySelector('#CuratorSaveSchedules').addEventListener('click', saveSchedules);
                 page.querySelector('#CuratorRunMaintenance').addEventListener('click', runMaintenance);
                 page.querySelector('#CuratorRunHealthCheck').addEventListener('click', runHealthCheck);
+
+                page.querySelector('#CuratorUsageRefresh').addEventListener('click', loadUsage);
+                page.querySelector('#CuratorUsageRange').addEventListener('change', loadUsage);
 
                 // The summary is the setting's only readable form, so it has to track
                 // the boxes as they are typed in rather than on save.

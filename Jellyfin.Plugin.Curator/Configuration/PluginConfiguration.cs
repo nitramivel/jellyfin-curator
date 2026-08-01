@@ -38,6 +38,31 @@ namespace Jellyfin.Plugin.Curator.Configuration
     }
 
     /// <summary>
+    /// How Curator's categories reach the home screen.
+    /// </summary>
+    /// <remarks>
+    /// Option order is load-bearing — the config page's <c>setEnumSelect</c> falls
+    /// back to matching by index when a stored config carries the numeric value, so
+    /// these may be relabelled but never reordered.
+    /// </remarks>
+    public enum SectionDelivery
+    {
+        /// <summary>
+        /// Curator registers its own sections with Home Screen Sections and answers
+        /// for their contents itself. Falls back to
+        /// <see cref="CollectionSections"/> for a sync that cannot register.
+        /// </summary>
+        Integrated = 0,
+
+        /// <summary>
+        /// Sections are written into the Collection Sections plugin's configuration
+        /// and it answers for their contents. The original path, kept as an escape
+        /// hatch.
+        /// </summary>
+        CollectionSections = 1,
+    }
+
+    /// <summary>
     /// Whether a particular pass lets the model think before answering.
     /// </summary>
     /// <remarks>
@@ -746,6 +771,26 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// are enabled for target users automatically.
         /// </summary>
         public bool AutoEnableSections { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets how Curator's categories reach the home screen.
+        /// <para>
+        /// <see cref="SectionDelivery.Integrated"/> is the default and answers for
+        /// its own rows: it resolves each viewer's playlist by the stored GUID and
+        /// returns that playlist's items in playlist order, so per-viewer ordering
+        /// reaches the screen and no row depends on a name comparison.
+        /// <see cref="SectionDelivery.CollectionSections"/> restores the original
+        /// path for an install where the integrated one misbehaves. Integrated
+        /// falls back to it on its own when registration fails, so this setting is
+        /// for the failures a machine cannot see — rows that render but render
+        /// wrongly.
+        /// </para>
+        /// <para>
+        /// Home Screen Sections is required either way: only the plugin that
+        /// resolves a row's contents changes.
+        /// </para>
+        /// </summary>
+        public SectionDelivery SectionDelivery { get; set; } = SectionDelivery.Integrated;
 
         /// <summary>
         /// Gets or sets a value indicating whether batches are submitted through the

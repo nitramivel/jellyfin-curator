@@ -105,6 +105,10 @@ namespace Jellyfin.Plugin.Curator.Tests
         [Fact]
         public void MergeSections_RemovedCategory_DropsOnlyOurSection()
         {
+            // An empty desired list is also how the integrated path hands over:
+            // both plugins register under the same section IDs into one dictionary,
+            // so Curator's entries have to leave Collection Sections' config or the
+            // two race for the row. Sections the owner made there must survive that.
             var config = JsonNode.Parse(
                 """{"Sections":[{"UniqueId":"user-made-1","DisplayText":"Mine","CollectionName":"Mine","SectionType":"Collection"}]}""")!;
             SectionConfigMerger.MergeSections(config, [Section("Going Away")], asPlaylists: true);

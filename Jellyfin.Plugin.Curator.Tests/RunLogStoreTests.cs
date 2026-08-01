@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Jellyfin.Plugin.Curator.Core.Usage;
 using Jellyfin.Plugin.Curator.Services.Llm;
 using Jellyfin.Plugin.Curator.Services.Runs;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -22,6 +23,131 @@ namespace Jellyfin.Plugin.Curator.Tests
             ["model"] = "claude-sonnet-5",
             ["batchSize"] = 150,
         };
+
+        // ---- the usage breakdown ----
+
+        [Fact]
+        public void Usage_SplitsSpendByModelAndByPassAcrossRuns()
+        {
+            var store = Store();
+
+            var categories = store.Begin("scheduled", Settings);
+            categories.SetProvider("Grok", "grok-4.5", inputCostPerMillion: 2m, outputCostPerMillion: 6m);
+            var request = new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096);
+            categories.LlmCall(
+                "discovery", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 1_000_000, 0, false), "ok", null);
+            categories.LlmCall(
+                "personal", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 1_000_000, 0, false), "ok", null,
+                new RunLogModel("Anthropic", "claude-opus-5", new RunLogPricing(5m, 2.5m, 25m, true)));
+            categories.Complete();
+
+            var summaries = store.Begin("summaries", Settings, trackAsCurrent: false);
+            summaries.SetProvider("Grok", "grok-4.5", inputCostPerMillion: 2m, outputCostPerMillion: 6m);
+            summaries.LlmCall(
+                "summaries", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 500_000, 0, false), "ok", null);
+            summaries.Complete();
+
+            var usage = store.Usage();
+
+            // Two models, and the expensive one leads.
+            Assert.Equal(["claude-opus-5", "grok-4.5"], usage.Models.Select(m => m.Model).ToArray());
+            Assert.Equal(5m, usage.Models[0].Totals.CostUsd);
+            Assert.Equal(3m, usage.Models[1].Totals.CostUsd);
+            Assert.Equal(8m, usage.Overall.CostUsd);
+
+            // The summaries pass — which is also where tags are bought — is its own
+            // line, and it came from a different run log entirely.
+            var phases = usage.Phases.ToDictionary(p => p.Phase, p => p.Totals.CostUsd);
+            Assert.Equal(2m, phases["discovery"]);
+            Assert.Equal(5m, phases["personal"]);
+            Assert.Equal(1m, phases["summaries"]);
+            Assert.Equal(2, usage.RunsCovered);
+        }
+
+        [Fact]
+        public void Usage_AttributesOlderCallsWithNoRecordedModelToTheRunsOwn()
+        {
+            // Schema 1 files carry no model per call, and there are real ones on
+            // disk. They must still be attributed rather than shown as unknown.
+            Directory.CreateDirectory(_root);
+            File.WriteAllText(
+                Path.Combine(_root, "run_20260101T000000000Z_deadbeef.json"),
+                """
+                {
+                  "SchemaVersion": 1,
+                  "RunId": "11111111-1111-1111-1111-111111111111",
+                  "Trigger": "scheduled",
+                  "Status": "completed",
+                  "StartedAt": "2026-01-01T00:00:00Z",
+                  "Provider": "Grok",
+                  "Model": "grok-4.3",
+                  "Totals": {},
+                  "Steps": [],
+                  "LlmCalls": [
+                    {
+                      "Seq": 1,
+                      "At": "2026-01-01T00:00:10Z",
+                      "Phase": "discovery",
+                      "Batch": 0,
+                      "Attempt": 1,
+                      "DurationMs": 100,
+                      "Request": { "SystemPromptRef": "", "CacheablePrefixRef": "", "VariableSuffix": "", "MaxOutputTokens": 100, "Shape": "Categories" },
+                      "Response": {
+                        "Text": "{}",
+                        "InputTokens": 1000,
+                        "OutputTokens": 100,
+                        "CacheReadTokens": 0,
+                        "CacheWriteTokens": 0,
+                        "Truncated": false,
+                        "Cost": { "InputUsd": 0.5, "CachedUsd": 0, "OutputUsd": 0.25, "TotalUsd": 0.75 }
+                      },
+                      "Outcome": "ok"
+                    }
+                  ],
+                  "PromptPool": {}
+                }
+                """);
+
+            var usage = Store().Usage();
+
+            var model = Assert.Single(usage.Models);
+            Assert.Equal("grok-4.3", model.Model);
+            Assert.Equal("Grok", model.Provider);
+            Assert.Equal(0.75m, usage.Overall.CostUsd);
+        }
+
+        [Fact]
+        public void Usage_CountsACallThatNeverCameBackAsUnpricedRatherThanFree()
+        {
+            var store = Store();
+            var log = store.Begin("manual", Settings);
+            log.SetProvider("Grok", "grok-4.5", inputCostPerMillion: 2m, outputCostPerMillion: 6m);
+            log.LlmCall(
+                "discovery", 0, 1, null, TimeSpan.Zero,
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096),
+                null, "error", "the socket died");
+            log.Fail("the socket died");
+
+            var usage = store.Usage();
+
+            Assert.Equal(1, usage.Overall.Calls);
+            Assert.Equal(1, usage.Overall.UnpricedCalls);
+            Assert.Equal(1, usage.Overall.WastedCalls);
+            Assert.Equal(0m, usage.Overall.CostUsd);
+        }
+
+        [Fact]
+        public void Usage_OverNothingIsEmptyRatherThanAThrow()
+        {
+            var usage = Store().Usage(days: 14);
+
+            Assert.Equal(0m, usage.Overall.CostUsd);
+            Assert.Equal(14, usage.Daily.Count);
+            Assert.Empty(usage.Runs);
+        }
 
         // ---- live snapshot, which is what moves the progress bar ----
 
@@ -424,7 +550,7 @@ namespace Jellyfin.Plugin.Curator.Tests
             log.LlmCall(
                 "personal", 0, 1, null, TimeSpan.Zero, request,
                 new LlmResult("{}", 1_000_000, 100_000, false), "ok", null,
-                new RunLogPricing(0.3m, 0.15m, 2.5m, true));
+                new RunLogModel("Grok", "grok-4.5", new RunLogPricing(0.3m, 0.15m, 2.5m, true)));
 
             using var document = ReadOnlyFile();
             var cost = Assert.Single(document.RootElement.GetProperty("LlmCalls").EnumerateArray())
@@ -432,6 +558,35 @@ namespace Jellyfin.Plugin.Curator.Tests
 
             Assert.Equal(0.3m, cost.GetProperty("InputUsd").GetDecimal());
             Assert.Equal(0.25m, cost.GetProperty("OutputUsd").GetDecimal());
+        }
+
+        [Fact]
+        public void EachCallRecordsTheModelItWentTo_FallingBackToTheRuns()
+        {
+            // Without this the usage breakdown cannot say what each model cost on a
+            // mixed run: the document carries one headline model, and it is
+            // discovery's. A call that names no model belongs to that one, and is
+            // written down resolved rather than left for every reader to work out.
+            var log = Store().Begin("manual", Settings);
+            log.SetProvider("Anthropic", "claude-opus-5", inputCostPerMillion: 5m, outputCostPerMillion: 25m);
+            var request = new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096);
+
+            log.LlmCall(
+                "discovery", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 1000, 100, false), "ok", null);
+
+            log.LlmCall(
+                "personal", 0, 1, null, TimeSpan.Zero, request,
+                new LlmResult("{}", 1000, 100, false), "ok", null,
+                new RunLogModel("Grok", "grok-4.5", new RunLogPricing(0.3m, 0.15m, 2.5m, true)));
+
+            using var document = ReadOnlyFile();
+            var calls = document.RootElement.GetProperty("LlmCalls").EnumerateArray().ToList();
+
+            Assert.Equal("claude-opus-5", calls[0].GetProperty("Model").GetString());
+            Assert.Equal("Anthropic", calls[0].GetProperty("Provider").GetString());
+            Assert.Equal("grok-4.5", calls[1].GetProperty("Model").GetString());
+            Assert.Equal("Grok", calls[1].GetProperty("Provider").GetString());
         }
 
         [Fact]
@@ -453,7 +608,7 @@ namespace Jellyfin.Plugin.Curator.Tests
             log.LlmCall(
                 "personal", 0, 1, null, TimeSpan.Zero, request,
                 new LlmResult("{}", 1_000_000, 100_000, false), "ok", null,
-                new RunLogPricing(0.3m, 0.15m, 2.5m, true));
+                new RunLogModel("Grok", "grok-4.5", new RunLogPricing(0.3m, 0.15m, 2.5m, true)));
 
             using var document = ReadOnlyFile();
             var total = document.RootElement.GetProperty("Totals").GetProperty("Cost");
@@ -483,7 +638,7 @@ namespace Jellyfin.Plugin.Curator.Tests
             log.LlmCall(
                 "personal", 0, 1, null, TimeSpan.Zero, request,
                 new LlmResult("{}", 0, 0, false, 0, 1_000_000), "ok", null,
-                new RunLogPricing(3m, 0m, 15m, true));
+                new RunLogModel("Grok", "grok-4.5", new RunLogPricing(3m, 0m, 15m, true)));
 
             using var document = ReadOnlyFile();
             var cost = Assert.Single(document.RootElement.GetProperty("LlmCalls").EnumerateArray())
@@ -507,7 +662,7 @@ namespace Jellyfin.Plugin.Curator.Tests
             log.LlmCall(
                 "personal", 0, 1, null, TimeSpan.Zero, request,
                 new LlmResult("{}", 9_000_000, 900_000, false), "ok", null,
-                new RunLogPricing(0m, 0m, 0m, false));
+                new RunLogModel("Grok", "grok-4.5", new RunLogPricing(0m, 0m, 0m, false)));
 
             using var document = ReadOnlyFile();
             var calls = document.RootElement.GetProperty("LlmCalls").EnumerateArray().ToList();

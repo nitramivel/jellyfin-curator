@@ -37,6 +37,11 @@ namespace Jellyfin.Plugin.Curator.Core.Health
     /// <param name="ProfilesMissingKey">Profiles whose provider needs an API key and has none.</param>
     /// <param name="CollectionSectionsLoaded">Whether the Collection Sections plugin is loaded.</param>
     /// <param name="HomeScreenSectionsLoaded">Whether the Home Screen Sections plugin is loaded.</param>
+    /// <param name="CollectionSectionsRequired">
+    /// Whether rows go through Collection Sections at all. False once Curator
+    /// serves its own rows, which makes that plugin optional — reporting it as
+    /// missing then would be the check crying wolf, which rule 19 forbids.
+    /// </param>
     /// <param name="GhostItems">Library rows sitting outside every configured library folder.</param>
     /// <param name="LibraryItems">Real items the last scan found.</param>
     /// <param name="UseCondensedSummaries">Whether runs are sending condensed summaries.</param>
@@ -69,7 +74,8 @@ namespace Jellyfin.Plugin.Curator.Core.Health
         int StoredSummaries = 0,
         int SummariesWithTags = 0,
         int LastSummaryPassDistilled = 0,
-        int LastSummaryPassFailed = 0);
+        int LastSummaryPassFailed = 0,
+        bool CollectionSectionsRequired = true);
 
     /// <summary>
     /// Looks for the ways Curator goes quietly wrong.
@@ -196,14 +202,19 @@ namespace Jellyfin.Plugin.Curator.Core.Health
 
         private static void CheckIntegrations(HealthFacts facts, List<HealthFinding> findings)
         {
-            if (!facts.CollectionSectionsLoaded)
+            // Only complain about Collection Sections when rows actually go
+            // through it. Curator serving its own rows makes it an escape hatch
+            // rather than a prerequisite, and a Problem raised over an uninstalled
+            // plugin nothing depends on is exactly the noise that gets the whole
+            // panel ignored.
+            if (facts.CollectionSectionsRequired && !facts.CollectionSectionsLoaded)
             {
                 findings.Add(new HealthFinding(
                     "integration.collectionsections",
                     HealthSeverity.Problem,
                     "The Collection Sections plugin is not loaded",
-                    "Playlists are still built, but nothing publishes them as home screen rows. Install or "
-                    + "re-enable it, then press Re-sync home screen rows."));
+                    "Playlists are still built, but nothing publishes them as home screen rows. Either install or "
+                    + "re-enable it, or set the home screen row source to Curator, then press Re-sync home screen rows."));
             }
 
             if (!facts.HomeScreenSectionsLoaded)
@@ -212,8 +223,8 @@ namespace Jellyfin.Plugin.Curator.Core.Health
                     "integration.homescreensections",
                     HealthSeverity.Problem,
                     "The Home Screen Sections plugin is not loaded",
-                    "Rows cannot be ordered or enabled per user without it. Install or re-enable it, then press "
-                    + "Re-sync home screen rows."));
+                    "Rows cannot appear, be ordered, or be enabled per user without it — it is required whichever "
+                    + "row source is set. Install or re-enable it, then press Re-sync home screen rows."));
             }
         }
 
