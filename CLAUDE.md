@@ -610,6 +610,15 @@ Playlists are still built. Never throw out of home screen integration.
   save row: Runs, and Schedule — the latter writes through Jellyfin's
   `ITaskManager`, not plugin config, so the form's Save would do nothing for it. Put a new setting where its *subject* is, not where it is
   technically enforced.
+- **The Schedule tab's running badge and the Runs tab's progress bar read one
+  object.** `refreshStatus` stores each `Curator/Status` payload in `lastStatus`
+  and both renderers draw from it; the badge never polls for itself. A second
+  request would be a second source of truth, and the two panels would disagree
+  for a couple of seconds every time a run started or stopped. `renderSchedules`
+  rebuilds the rows from scratch, so it has to call `applyScheduleRunState()`
+  afterwards or the badge is wiped on every save. Only Generate Categories can
+  claim it — it is the one task whose progress Curator reports itself; the rest
+  are Jellyfin's to report under Dashboard → Scheduled Tasks.
 - **The Categories tab shows resolved numbers, never the stored sentinel.** `0`
   means *inherit* on `MaxStored*Categories` and on the per-pool size ceilings, but
   *no limit* on the per-run counts — two meanings of the same digit in adjacent

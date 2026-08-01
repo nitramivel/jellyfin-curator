@@ -170,6 +170,20 @@
                    cannot tell the hues apart. */
                 /* The two category pools, side by side so they read as the same
                    four questions asked twice rather than ten unrelated settings. */
+                /* The running badge on a Schedule tab row. Same pulse as the Runs
+                   tab bar, because it is the same run. */
+                .curatorScheduleRunning {
+                    display: inline-flex; align-items: center; gap: 0.5em;
+                    margin-left: 0.6em; padding: 0.1em 0.6em;
+                    border-radius: 999px; font-size: 0.8em; font-weight: 600;
+                    background: rgba(91, 157, 217, 0.16); color: #7fb6e6;
+                    vertical-align: middle;
+                }
+                .curatorScheduleRunning .curatorScheduleDot {
+                    width: 0.5em; height: 0.5em; border-radius: 50%;
+                    background: currentColor; animation: curatorPulse 1.4s ease-in-out infinite;
+                }
+
                 .curatorPools {
                     display: flex; flex-wrap: wrap; gap: 1em; margin: 0 0 1.2em;
                 }
@@ -1693,6 +1707,15 @@
             // than leaving the owner to remember which is which.
             var COSTLY_TASKS = { CuratorGenerateCategories: true };
 
+            // The one task whose progress Curator reports itself, through
+            // Curator/Status. Everything else is reported by Jellyfin under
+            // Dashboard -> Scheduled Tasks.
+            var RUN_TASK_KEY = 'CuratorGenerateCategories';
+
+            // The most recent Curator/Status payload, shared by the Runs tab
+            // progress bar and the Schedule tab badge so they cannot disagree.
+            var lastStatus = null;
+
             function minutesToTime(minutes) {
                 var h = Math.floor(minutes / 60);
                 var m = minutes % 60;
@@ -1723,6 +1746,10 @@
                 var html = '<div class="curatorSchedule" data-index="' + index + '">'
                     + '<div class="curatorScheduleName">' + escapeHtml(task.Name)
                     + (COSTLY_TASKS[task.Key] ? ' <span class="curatorCostly">· costs money</span>' : '')
+                    // Filled in from the same status poll the Runs tab progress bar
+                    // reads, so the two can never disagree about whether a run is
+                    // happening. Empty and invisible when nothing is running.
+                    + '<span class="curatorScheduleState" data-key="' + escapeHtml(task.Key) + '"></span>'
                     + '</div>'
                     + '<div class="curatorScheduleDesc">' + escapeHtml(task.Description) + '</div>'
                     + '<div class="curatorScheduleControls">'
@@ -1773,6 +1800,43 @@
                 }
 
                 container.innerHTML = schedules.map(scheduleRow).join('');
+                applyScheduleRunState();
+            }
+
+            /**
+             * Marks the task a run belongs to as running, from the same object the
+             * Runs tab progress bar draws.
+             *
+             * Deliberately reads the shared lastStatus rather than polling again:
+             * a second request would be a second source of truth, and the panels would
+             * disagree for a couple of seconds every time a run started or stopped.
+             * Re-applied after renderSchedules(), which rebuilds the rows and would
+             * otherwise wipe the badge.
+             */
+            function applyScheduleRunState() {
+                var slots = page.querySelectorAll('.curatorScheduleState');
+                var running = lastStatus && lastStatus.IsRunning;
+                var run = running ? lastStatus.CurrentRun : null;
+
+                for (var i = 0; i < slots.length; i++) {
+                    var slot = slots[i];
+
+                    // Only the category run reports through this status endpoint, so
+                    // only its row can claim it. The other tasks are Jellyfin's to
+                    // report on, in Dashboard -> Scheduled Tasks.
+                    if (!running || slot.getAttribute('data-key') !== RUN_TASK_KEY) {
+                        slot.innerHTML = '';
+                        continue;
+                    }
+
+                    var pct = run ? Math.round(Math.max(0, Math.min(100, run.Progress || 0))) : 0;
+                    var label = run ? (PHASE_LABELS[run.LastStep] || 'Working\u2026') : 'Running\u2026';
+
+                    slot.innerHTML = '<span class="curatorScheduleRunning">'
+                        + '<span class="curatorScheduleDot"></span>'
+                        + escapeHtml(label + ' · ' + pct + '%')
+                        + '</span>';
+                }
             }
 
             /** Shows only the inputs the chosen mode actually uses. */
@@ -2997,6 +3061,7 @@
                     url: ApiClient.getUrl('Curator/Status'),
                     dataType: 'json'
                 }).then(function (status) {
+                    lastStatus = status;
                     var stateText = page.querySelector('#CuratorRunState');
                     var runButton = page.querySelector('#CuratorRunButton');
                     if (status.IsRunning) {
@@ -3004,6 +3069,7 @@
                         runButton.disabled = true;
                         wasRunning = true;
                         renderProgress(status.CurrentRun);
+                        applyScheduleRunState();
                         // Faster while running: the panel is read from memory, so
                         // the poll costs a dictionary lookup, not a file read.
                         setTimeout(refreshStatus, 2000);
@@ -3011,6 +3077,7 @@
                         stateText.innerHTML = 'Idle.';
                         runButton.disabled = false;
                         renderProgress(null);
+                        applyScheduleRunState();
 
                         // The run we were watching has just ended. Its file is
                         // written by now, so pull the history and open the new run
