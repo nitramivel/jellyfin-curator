@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Jellyfin.Plugin.Curator.Core.Scheduling;
 using MediaBrowser.Model.Tasks;
 using Xunit;
@@ -178,6 +179,133 @@ namespace Jellyfin.Plugin.Curator.Tests
             var spec = new ScheduleSpec(ScheduleMode.Weekly, DayOfWeek: (DayOfWeek)99).Normalized();
 
             Assert.Equal(DayOfWeek.Sunday, spec.DayOfWeek);
+        }
+
+        /// <summary>
+        /// A startup trigger is not a cadence, so it reads as Manual — that much is
+        /// honest. What follows must not be the save then deleting it.
+        /// </summary>
+        [Fact]
+        public void FromTriggers_ReadsAStartupOnlyTaskAsManual()
+        {
+            var triggers = new[] { new TaskTriggerInfo { Type = TaskTriggerInfoType.StartupTrigger } };
+
+            Assert.Equal(ScheduleMode.Manual, ScheduleTranslator.FromTriggers(triggers).Mode);
+            Assert.True(ScheduleTranslator.HasStartupTrigger(triggers));
+        }
+
+        [Fact]
+        public void HasStartupTrigger_IsFalseWithoutOne()
+        {
+            Assert.False(ScheduleTranslator.HasStartupTrigger(null));
+            Assert.False(ScheduleTranslator.HasStartupTrigger([]));
+            Assert.False(ScheduleTranslator.HasStartupTrigger(
+            [
+                new TaskTriggerInfo
+                {
+                    Type = TaskTriggerInfoType.IntervalTrigger,
+                    IntervalTicks = TimeSpan.FromHours(6).Ticks,
+                },
+            ]));
+        }
+
+        /// <summary>
+        /// The regression this exists for. Publish Home Screen Rows carries a startup
+        /// trigger and nothing else; the page read it as Manual and the next save
+        /// wrote that back as an empty trigger list, so after the following restart
+        /// every Curator row on the home screen was absent. Saving Manual over a
+        /// startup-only task must leave the task still running at startup.
+        /// </summary>
+        [Fact]
+        public void ToTriggers_KeepsAStartupTriggerAcrossAManualSave()
+        {
+            var existing = new[] { new TaskTriggerInfo { Type = TaskTriggerInfoType.StartupTrigger } };
+
+            var saved = ScheduleTranslator.ToTriggers(new ScheduleSpec(ScheduleMode.Manual), existing);
+
+            Assert.Single(saved);
+            Assert.Equal(TaskTriggerInfoType.StartupTrigger, saved[0].Type);
+            Assert.True(ScheduleTranslator.HasStartupTrigger(saved));
+        }
+
+        [Fact]
+        public void ToTriggers_KeepsAStartupTriggerAlongsideANewCadence()
+        {
+            var existing = new[] { new TaskTriggerInfo { Type = TaskTriggerInfoType.StartupTrigger } };
+
+            var saved = ScheduleTranslator.ToTriggers(
+                new ScheduleSpec(ScheduleMode.Interval, IntervalHours: 6),
+                existing);
+
+            Assert.Equal(2, saved.Count);
+            Assert.True(ScheduleTranslator.HasStartupTrigger(saved));
+
+            var interval = Assert.Single(saved, t => t.Type == TaskTriggerInfoType.IntervalTrigger);
+            Assert.Equal(TimeSpan.FromHours(6).Ticks, interval.IntervalTicks);
+        }
+
+        [Fact]
+        public void ToTriggers_DoesNotInventAStartupTrigger()
+        {
+            var saved = ScheduleTranslator.ToTriggers(
+                new ScheduleSpec(ScheduleMode.Daily, TimeOfDayMinutes: 180),
+                [new TaskTriggerInfo { Type = TaskTriggerInfoType.DailyTrigger }]);
+
+            Assert.False(ScheduleTranslator.HasStartupTrigger(saved));
+            Assert.Equal(TaskTriggerInfoType.DailyTrigger, Assert.Single(saved).Type);
+        }
+
+        /// <summary>
+        /// The whole point, stated as a loop: a startup-only task must survive being
+        /// read and written any number of times. It did not survive once.
+        /// </summary>
+        [Fact]
+        public void StartupOnlyTask_SurvivesRepeatedRoundTrips()
+        {
+            IReadOnlyList<TaskTriggerInfo> triggers =
+                [new TaskTriggerInfo { Type = TaskTriggerInfoType.StartupTrigger }];
+
+            for (var i = 0; i < 5; i++)
+            {
+                var spec = ScheduleTranslator.FromTriggers(triggers);
+                Assert.Equal(ScheduleMode.Manual, spec.Mode);
+
+                triggers = ScheduleTranslator.ToTriggers(spec, triggers);
+                Assert.True(ScheduleTranslator.HasStartupTrigger(triggers));
+            }
+
+            Assert.Single(triggers);
+        }
+
+        /// <summary>
+        /// A cadence set alongside a startup trigger must round-trip unchanged too —
+        /// the preserved trigger must not accumulate a duplicate on every save.
+        /// </summary>
+        [Fact]
+        public void CadenceWithStartup_RoundTripsWithoutAccumulating()
+        {
+            IReadOnlyList<TaskTriggerInfo> triggers =
+            [
+                new TaskTriggerInfo { Type = TaskTriggerInfoType.StartupTrigger },
+                new TaskTriggerInfo
+                {
+                    Type = TaskTriggerInfoType.IntervalTrigger,
+                    IntervalTicks = TimeSpan.FromHours(12).Ticks,
+                },
+            ];
+
+            for (var i = 0; i < 5; i++)
+            {
+                var spec = ScheduleTranslator.FromTriggers(triggers);
+                Assert.Equal(ScheduleMode.Interval, spec.Mode);
+                Assert.Equal(12, spec.IntervalHours, 3);
+
+                triggers = ScheduleTranslator.ToTriggers(spec, triggers);
+            }
+
+            Assert.Equal(2, triggers.Count);
+            Assert.Single(triggers, t => t.Type == TaskTriggerInfoType.StartupTrigger);
+            Assert.Single(triggers, t => t.Type == TaskTriggerInfoType.IntervalTrigger);
         }
     }
 }

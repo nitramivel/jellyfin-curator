@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.6.1.0",
+        "changelog": "Fix the Schedule tab deleting Publish Home Screen Rows' startup trigger, which left every Curator row absent after a restart. Fix white-on-white controls on that tab, warn that interval cadences restart their countdown at every server start, and name the model on recommendation runs.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.6.1.0/curator_0.6.1.0.zip",
+        "checksum": "aea7022667b3a055b1abea23fde4fe59",
+        "timestamp": "2026-08-03T06:34:11Z"
+      },
+      {
         "version": "0.6.0.0",
         "changelog": "Curator serves its own home screen rows instead of routing them through Collection Sections, so a row shows every member in playlist order and per-viewer ordering finally reaches the screen. New Usage tab: what every model call has cost, by model, by pass and by day. Two passes that were spending money without recording it now do.",
         "targetAbi": "10.11.11.0",

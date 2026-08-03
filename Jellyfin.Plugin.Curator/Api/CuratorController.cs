@@ -112,6 +112,12 @@ namespace Jellyfin.Plugin.Curator.Api
     /// <param name="State">Jellyfin's task state, e.g. Idle or Running.</param>
     /// <param name="LastRun">When it last finished, if ever.</param>
     /// <param name="LastStatus">How that run ended, if ever.</param>
+    /// <param name="RunsAtStartup">
+    /// Whether the task also runs at every server start. Read-only: the page has no
+    /// control for it and never sends it back, and the save preserves it. It is
+    /// reported so a startup-only task stops reading as a flat "Manual", which is
+    /// what made deleting its trigger look harmless.
+    /// </param>
     public sealed record CuratorTaskSchedule(
         string Key,
         string Name,
@@ -122,7 +128,8 @@ namespace Jellyfin.Plugin.Curator.Api
         int DayOfWeek,
         string State,
         DateTime? LastRun,
-        string? LastStatus);
+        string? LastStatus,
+        bool RunsAtStartup);
 
     /// <summary>A cadence change for one task.</summary>
     /// <param name="Key">The task key.</param>
@@ -484,7 +491,8 @@ namespace Jellyfin.Plugin.Curator.Api
                     (int)spec.DayOfWeek,
                     worker.State.ToString(),
                     worker.LastExecutionResult?.EndTimeUtc,
-                    worker.LastExecutionResult?.Status.ToString());
+                    worker.LastExecutionResult?.Status.ToString(),
+                    ScheduleTranslator.HasStartupTrigger(worker.Triggers));
             }).ToList();
         }
 
@@ -528,7 +536,9 @@ namespace Jellyfin.Plugin.Curator.Api
                     update.TimeOfDayMinutes,
                     (DayOfWeek)Math.Clamp(update.DayOfWeek, 0, 6));
 
-                worker.Triggers = [.. ScheduleTranslator.ToTriggers(spec)];
+                // The overload that keeps a startup trigger. The page cannot ask for
+                // one, so a save must not be able to delete one — see the translator.
+                worker.Triggers = [.. ScheduleTranslator.ToTriggers(spec, worker.Triggers)];
 
                 _logger.LogInformation(
                     "Curator: '{Task}' is now set to {Mode}",

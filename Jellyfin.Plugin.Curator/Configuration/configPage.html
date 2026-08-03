@@ -150,19 +150,38 @@
                 .curatorScheduleControls {
                     display: flex; flex-wrap: wrap; gap: 0.6em 0.9em; align-items: center;
                 }
+                /* These must be OPAQUE, and must say color-scheme. A translucent
+                   background composites over the user agent's own white field base
+                   rather than over the dark page, so `rgba(255,255,255,0.08)` plus
+                   `color: inherit` — near-white text, from the dark theme — rendered
+                   every control on this tab as white on white, legible only under the
+                   hover highlight. The dropdown popup and the time picker are painted
+                   by the browser and take no notice of the rules above at all, which
+                   is what `color-scheme` is for; the explicit `option` colours cover
+                   the browsers that still paint the list from the page's own palette.
+                   #101010 is Jellyfin's base, the same value the Usage tab's palette
+                   was validated against. */
                 .curatorScheduleControls select,
                 .curatorScheduleControls input {
-                    background: rgba(255, 255, 255, 0.08);
-                    color: inherit;
+                    background-color: #202020;
+                    color: #fff;
+                    color-scheme: dark;
                     border: 1px solid rgba(255, 255, 255, 0.18);
                     border-radius: 4px;
                     padding: 0.45em 0.6em;
                     font-size: 0.95em;
                     font-family: inherit;
                 }
+                .curatorScheduleControls select option {
+                    background-color: #101010;
+                    color: #fff;
+                }
                 .curatorScheduleControls input[type="number"] { width: 6em; }
                 .curatorScheduleControls label { opacity: 0.7; font-size: 0.9em; }
                 .curatorScheduleMeta { font-size: 0.85em; opacity: 0.55; margin-top: 0.7em; }
+                .curatorScheduleDrift {
+                    margin-top: 0.6em; font-size: 0.85em; color: #d9a441; opacity: 0.85;
+                }
                 .curatorCostly { color: #d9a441; }
 
                 /* Health findings. Colours carry meaning here, so each also gets a
@@ -1966,7 +1985,32 @@
 
                 html += '</div>';
 
+                // Jellyfin arms an interval from max(lastEnd, lastStart, now + 1min)
+                // + interval, so an overdue task does not catch up — it waits a whole
+                // fresh interval from whenever the timer was armed, and every server
+                // start arms it again. Installing or updating any plugin restarts the
+                // host, so a server touched more often than the interval runs the task
+                // never. Measured here: four Curator tasks moved to 12h and 48h
+                // intervals went three days without firing across restarts at 00:30
+                // and 06:17, while every daily-triggered task on the server fired on
+                // time. Daily and Weekly are absolute wall-clock times and are immune.
+                html += '<div class="curatorScheduleDrift fieldDescription'
+                    + (task.Mode === 'Interval' ? '' : ' hide') + '">'
+                    + 'Heads up: an interval restarts its countdown at every server start, '
+                    + 'and installing or updating any plugin restarts the server. If this one '
+                    + 'keeps not running, use Daily or Weekly instead — those fire at a set time.'
+                    + '</div>';
+
                 var meta = 'State: ' + escapeHtml(task.State);
+
+                // Say the startup trigger out loud. The dropdown cannot express it,
+                // so a task that only runs at startup reads as "Never" up there — and
+                // a cadence the page shows but does not mean is exactly how this one
+                // came to be deleted by a save that looked like a no-op.
+                if (task.RunsAtStartup) {
+                    meta += ' · Also runs at every server start';
+                }
+
                 if (task.LastRun) {
                     meta += ' · Last run ' + formatDate(task.LastRun)
                         + (task.LastStatus ? ' (' + escapeHtml(task.LastStatus) + ')' : '');
@@ -2038,6 +2082,7 @@
                 row.querySelector('.curatorScheduleTime')
                     .classList.toggle('hide', mode !== 'Daily' && mode !== 'Weekly');
                 row.querySelector('.curatorScheduleDay').classList.toggle('hide', mode !== 'Weekly');
+                row.querySelector('.curatorScheduleDrift').classList.toggle('hide', mode !== 'Interval');
             }
 
             function loadSchedules() {
