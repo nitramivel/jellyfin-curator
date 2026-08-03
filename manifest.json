@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.6.2.0",
+        "changelog": "Add a health check finding for a missing startup trigger on Publish Home Screen Rows \u2014 the failure that leaves every Curator row absent after a restart while the playlists behind them stay healthy.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.6.2.0/curator_0.6.2.0.zip",
+        "checksum": "e1e644c9956b567c17dae3820daaaed8",
+        "timestamp": "2026-08-03T07:28:17Z"
+      },
+      {
         "version": "0.6.1.0",
         "changelog": "Fix the Schedule tab deleting Publish Home Screen Rows' startup trigger, which left every Curator row absent after a restart. Fix white-on-white controls on that tab, warn that interval cadences restart their countdown at every server start, and name the model on recommendation runs.",
         "targetAbi": "10.11.0.0",
