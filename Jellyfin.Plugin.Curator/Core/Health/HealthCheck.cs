@@ -51,6 +51,11 @@ namespace Jellyfin.Plugin.Curator.Core.Health
     /// <param name="RecommendationPlaylistCount">How many of them actually have one.</param>
     /// <param name="CategoriesWithoutPlaylist">Stored definitions currently showing nobody anything.</param>
     /// <param name="TotalCategories">Stored definitions in all.</param>
+    /// <param name="PublishRowsRunsAtStartup">
+    /// Whether Publish Home Screen Rows still carries its startup trigger. Defaults
+    /// to true — healthy — so a caller that does not gather it never fires the
+    /// finding.
+    /// </param>
     public sealed record HealthFacts(
         DateTime UtcNow,
         DateTime? LastSuccessfulRun = null,
@@ -75,7 +80,8 @@ namespace Jellyfin.Plugin.Curator.Core.Health
         int SummariesWithTags = 0,
         int LastSummaryPassDistilled = 0,
         int LastSummaryPassFailed = 0,
-        bool CollectionSectionsRequired = true);
+        bool CollectionSectionsRequired = true,
+        bool PublishRowsRunsAtStartup = true);
 
     /// <summary>
     /// Looks for the ways Curator goes quietly wrong.
@@ -225,6 +231,29 @@ namespace Jellyfin.Plugin.Curator.Core.Health
                     "The Home Screen Sections plugin is not loaded",
                     "Rows cannot appear, be ordered, or be enabled per user without it — it is required whichever "
                     + "row source is set. Install or re-enable it, then press Re-sync home screen rows."));
+            }
+
+            // A section registered with Home Screen Sections lives in memory and is
+            // never written down (rule 22), so the startup trigger on Publish Home
+            // Screen Rows is the only thing that brings the rows back after a
+            // restart. Losing it is silent and total: playlists stay perfectly
+            // healthy, every row disappears, and nothing anywhere says why. That is
+            // this panel's entire remit.
+            //
+            // Only when Curator owns its rows. Under the Collection Sections path
+            // that plugin re-registers them from its own config on its own startup
+            // task, so the trigger is not load-bearing and saying otherwise would be
+            // the crying wolf rule 19 forbids.
+            if (!facts.CollectionSectionsRequired && !facts.PublishRowsRunsAtStartup)
+            {
+                findings.Add(new HealthFinding(
+                    "homescreen.nostartuptrigger",
+                    HealthSeverity.Problem,
+                    "Publish Home Screen Rows no longer runs at server start",
+                    "Curator's rows are registered in memory and do not survive a restart, so this task is what "
+                    + "brings them back — without it every Curator row will be absent after the next restart, "
+                    + "however healthy the playlists behind them are. Add an \"On application startup\" trigger to "
+                    + "it under Dashboard → Scheduled Tasks, then run it once to restore the rows now."));
             }
         }
 

@@ -445,6 +445,14 @@ every one of these was a real failure on a real server before it was a rule.
    `summaries.failing` (the last pass lost more than half its items). Both need a
    real sample before firing, because a handful of items whose scraped tags were all
    trivia genuinely produce nothing.
+   **`homescreen.nostartuptrigger` is the third**, and the purest example of what
+   this panel is for: Publish Home Screen Rows lost its startup trigger, and after
+   the next restart all 53 rows were absent while every playlist behind them stayed
+   healthy and no log line anywhere named the cause. It fires **only** when Curator
+   owns its rows — under the Collection Sections path that plugin re-registers them
+   from its own config, so the trigger is not load-bearing and saying otherwise
+   would be crying wolf. It also fails **healthy**: a task whose triggers cannot be
+   read is not evidence of a missing one.
 20. **A run may call two models, so nothing may assume there is one.**
    `DiscoveryModelProfileId` and `PersonalModelProfileId` name the profile each
    pass uses; blank means the default, so an install that has chosen nothing

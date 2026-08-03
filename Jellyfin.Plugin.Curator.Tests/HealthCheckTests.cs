@@ -192,6 +192,50 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal(HealthSeverity.Problem, Find(facts, "integration.homescreensections").Severity);
         }
 
+        /// <summary>
+        /// The failure this finding exists for. Curator's rows are registered in
+        /// memory, so the startup trigger on Publish Home Screen Rows is the only
+        /// thing that brings them back; the Schedule tab deleted it, and after the
+        /// next restart all 53 rows were absent while every playlist behind them
+        /// stayed healthy. Nothing anywhere said why.
+        /// </summary>
+        [Fact]
+        public void LosingTheStartupTriggerOnThePublishTaskIsAProblem()
+        {
+            var facts = Healthy() with
+            {
+                CollectionSectionsRequired = false,
+                PublishRowsRunsAtStartup = false,
+            };
+
+            var finding = Find(facts, "homescreen.nostartuptrigger");
+
+            Assert.Equal(HealthSeverity.Problem, finding.Severity);
+            Assert.Contains("startup", finding.Detail, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Scheduled Tasks", finding.Detail, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void APublishTaskThatStillRunsAtStartupSaysNothing()
+        {
+            Assert.False(Has(
+                Healthy() with { CollectionSectionsRequired = false, PublishRowsRunsAtStartup = true },
+                "homescreen.nostartuptrigger"));
+        }
+
+        /// <summary>
+        /// Under the Collection Sections path that plugin re-registers the rows from
+        /// its own config on its own startup task, so the trigger is not load-bearing
+        /// and complaining about it would be the crying wolf rule 19 forbids.
+        /// </summary>
+        [Fact]
+        public void TheStartupTriggerIsNotReportedWhenRowsGoThroughCollectionSections()
+        {
+            Assert.False(Has(
+                Healthy() with { CollectionSectionsRequired = true, PublishRowsRunsAtStartup = false },
+                "homescreen.nostartuptrigger"));
+        }
+
         // ---- library ----
 
         [Fact]

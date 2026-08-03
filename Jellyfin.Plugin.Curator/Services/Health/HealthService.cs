@@ -77,6 +77,9 @@ namespace Jellyfin.Plugin.Curator.Services.Health
         /// <summary>The scheduled task key whose cadence "runs have stopped" is judged against.</summary>
         private const string RunTaskKey = "CuratorGenerateCategories";
 
+        /// <summary>The task whose startup trigger is the only thing that re-registers the rows.</summary>
+        private const string PublishRowsTaskKey = "CuratorPublishHomeScreenRows";
+
         /// <summary>
         /// Runs the check.
         /// </summary>
@@ -133,7 +136,33 @@ namespace Jellyfin.Plugin.Curator.Services.Health
                 // from before a restart would send someone chasing a fixed problem.
                 LastSummaryPassDistilled: _distillService.LastResult?.Distilled ?? 0,
                 LastSummaryPassFailed: _distillService.LastResult?.Failed ?? 0,
-                CollectionSectionsRequired: config.SectionDelivery == SectionDelivery.CollectionSections);
+                CollectionSectionsRequired: config.SectionDelivery == SectionDelivery.CollectionSections,
+                PublishRowsRunsAtStartup: PublishRowsRunsAtStartup());
+        }
+
+        /// <summary>
+        /// Whether Publish Home Screen Rows still runs at server start.
+        /// </summary>
+        /// <remarks>
+        /// Fails <b>healthy</b>. A task that cannot be read is not evidence of a
+        /// missing trigger, and a Problem raised on a failed lookup is exactly the
+        /// false alarm rule 19 forbids.
+        /// </remarks>
+        private bool PublishRowsRunsAtStartup()
+        {
+            try
+            {
+                var worker = _taskManager.ScheduledTasks
+                    .FirstOrDefault(w => string.Equals(
+                        w.ScheduledTask.Key, PublishRowsTaskKey, StringComparison.Ordinal));
+
+                return worker is null || ScheduleTranslator.HasStartupTrigger(worker.Triggers);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Curator health: could not read the publish task's triggers");
+                return true;
+            }
         }
 
         /// <summary>
