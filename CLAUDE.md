@@ -286,6 +286,13 @@ every one of these was a real failure on a real server before it was a rule.
    records an `LlmCall` under phase `rerank` with its own profile's model and
    rates, including the attempt that threw, and `RefreshRecommendationsAsync`
    opens a log with trigger `recommendations`.
+   **A pass that opens a run log must also call `SetProvider`.** Per-call models are
+   what the Usage tab reads, so it was right all along — but the Runs tab reads the
+   *run's* headline model and renders a blank one as "unknown model", which is what
+   every recommendation run looked like beside the category and summary runs that
+   both set it. One profile drives every call of that pass, so its headline is exact
+   rather than a stand-in for a mixed run. Blank is not a neutral default here; it
+   is a run that cannot say what it spent money on.
    **Open that log only when the pass will actually buy something.** Selection is
    arithmetic (rule 15), so the usual shape of that task is free — and a free pass
    logging itself four times a day would evict the category runs from a directory
@@ -353,6 +360,29 @@ every one of these was a real failure on a real server before it was a rule.
    something other than what runs. `ScheduleTranslator` is the whole conversion and
    is round-trip tested — what the page saves must be what it reads back, or the
    settings drift every time they are opened.
+   **A startup trigger is the one thing a save must never replace.** It is not a
+   cadence, so no box on the page can express it and `FromTriggers` reports a
+   startup-only task as Manual — which is true of its *recurring* schedule and not
+   of the task. Saving that back deleted the trigger. Measured: on 2 Aug 2026 one
+   save wrote all six tasks, Publish Home Screen Rows went from `[StartupTrigger]`
+   to `[]`, and after the 00:30 restart the next day every Curator row on the home
+   screen was **absent** — rule 22's failure, reached through this page. Save
+   through `ToTriggers(spec, existing)`, which carries startup triggers across, and
+   report `HasStartupTrigger` on the DTO so the row says "Also runs at every server
+   start" instead of a bare "Never". The page never sends it back; it is preserved
+   server-side, because a control the editor does not offer is not the editor's to
+   delete.
+   **Interval triggers starve on a server that restarts.** Jellyfin arms one at
+   `max(lastEnd, lastStart, now + 1min) + interval`, so an overdue task does not
+   catch up — it waits a *fresh whole interval* from whenever the timer was armed,
+   and every server start arms it again. Installing or updating any plugin restarts
+   the host, so a server touched more often than the interval runs that task never.
+   Measured on the owner's server: four Curator tasks on 12h and 48h intervals went
+   three days without firing across restarts at 00:30 and 06:17, while every
+   daily-triggered task on the same server fired on time. Daily and Weekly are
+   absolute wall-clock times and are immune, which is why every shipped default is
+   one of those. The Schedule tab says so next to the interval box; do not remove
+   that note, and prefer Daily/Weekly when choosing a new task's default.
 17. **Two settings govern tags and they are not interchangeable.**
    `MaxTagsPerItem` takes the first N of the **raw** scraped list and defaults to 0;
    `ConsolidateTags` has the distillation pass keep however many genuinely describe
@@ -679,6 +709,17 @@ release or two, and only remove it once a few restarts have been survived.
   `innerHTML`, customized built-in elements upgrade unreliably — one row rendered
   styled-but-unwired and the rest bare. Dynamic rows use plain
   `<input type="checkbox" class="curatorCheck">`.
+- **A hand-styled form control needs an OPAQUE background and `color-scheme`.**
+  Dropping `is="emby-*"` means dropping Jellyfin's theming with it, and the
+  browser's own default for a `<select>` or an `<input>` is a *light* field. A
+  translucent background composites over that white base rather than over the dark
+  page, so the Schedule tab's `rgba(255,255,255,0.08)` plus `color: inherit` —
+  near-white text, from the dark theme — rendered every control on the tab white on
+  white, readable only under the hover highlight. Worse, the dropdown popup and the
+  time picker are painted by the browser and ignore those rules entirely; that is
+  what `color-scheme: dark` is for, with explicit `option` colours for the browsers
+  that still paint the list from the page's palette. Use `#101010`, Jellyfin's own
+  base — the same value the Usage tab's palette was validated against.
 - **Anything listing profiles must be rebuilt whenever the list changes.** There
   are now three such pickers — the Summaries tab's, and the Model tab's two
   per-pass ones — and `renderProfiles()` refreshes all of them via

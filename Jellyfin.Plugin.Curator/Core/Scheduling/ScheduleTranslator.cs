@@ -15,6 +15,21 @@ namespace Jellyfin.Plugin.Curator.Core.Scheduling
     /// page offers one. Reading has to pick sensibly from whatever is there, and
     /// writing has to be honest that it replaces the lot.
     /// </para>
+    ///
+    /// <para>
+    /// <b>A startup trigger is the one exception, and it is load-bearing.</b> It is
+    /// not a cadence — no box on the page can express it — so reading reports the
+    /// task's *recurring* schedule and a startup-only task correctly reads as
+    /// Manual. What must not follow is the save then deleting it. Publish Home
+    /// Screen Rows carries a startup trigger and nothing else, because the sections
+    /// it registers live in memory and are gone after a restart (rule 22); when the
+    /// page showed it as Manual and the next save wrote that back, the rows stopped
+    /// coming back on 3 Aug 2026 and every Curator row on the home screen was
+    /// absent until the task was run by hand. Hence <see cref="ToTriggers(ScheduleSpec,
+    /// IEnumerable{TaskTriggerInfo})"/>, which carries startup triggers across a
+    /// save, and <see cref="HasStartupTrigger"/>, so the page can say so out loud
+    /// rather than showing "Manual" and meaning something else.
+    /// </para>
     /// </summary>
     public static class ScheduleTranslator
     {
@@ -23,10 +38,11 @@ namespace Jellyfin.Plugin.Curator.Core.Scheduling
         /// </summary>
         /// <remarks>
         /// Where a task carries several triggers the first recognised one wins, in
-        /// interval-daily-weekly order. A startup trigger is ignored rather than
-        /// reported as "manual": it is a real trigger the owner may have set in
-        /// Jellyfin's own page, and saying "never" about it would be a lie the next
-        /// save then made true.
+        /// interval-daily-weekly order. A startup trigger contributes nothing here —
+        /// it is not a cadence, so a task carrying only one reads as Manual, which is
+        /// the truth about its *recurring* schedule and not the whole truth about the
+        /// task. Ask <see cref="HasStartupTrigger"/> for the rest of it, and save
+        /// through the overload that preserves it.
         /// </remarks>
         /// <param name="triggers">The task's triggers.</param>
         /// <returns>The cadence to show.</returns>
@@ -62,12 +78,51 @@ namespace Jellyfin.Plugin.Curator.Core.Scheduling
         }
 
         /// <summary>
-        /// Builds the trigger list for a cadence.
+        /// Whether a task runs at server start, on top of whatever cadence it has.
+        /// </summary>
+        /// <param name="triggers">The task's triggers.</param>
+        /// <returns>True when a startup trigger is present.</returns>
+        public static bool HasStartupTrigger(IEnumerable<TaskTriggerInfo>? triggers)
+            => triggers?.Any(t => t is not null && t.Type == TaskTriggerInfoType.StartupTrigger) == true;
+
+        /// <summary>
+        /// Builds the trigger list for a cadence, keeping any startup trigger the
+        /// task already carried.
+        /// </summary>
+        /// <remarks>
+        /// This is the overload the save path must use. The cadence still replaces
+        /// every recurring trigger — one editor, one cadence — but a startup trigger
+        /// is not a cadence and the page has no way to ask for one, so dropping it
+        /// would be the editor silently deleting a setting it never offered. That is
+        /// exactly how Publish Home Screen Rows lost its only trigger; see the type
+        /// remarks.
+        /// </remarks>
+        /// <param name="spec">The wanted cadence.</param>
+        /// <param name="existing">The triggers the task carries now.</param>
+        /// <returns>The triggers to store.</returns>
+        public static IReadOnlyList<TaskTriggerInfo> ToTriggers(
+            ScheduleSpec spec,
+            IEnumerable<TaskTriggerInfo>? existing)
+        {
+            var triggers = ToTriggers(spec).ToList();
+
+            if (HasStartupTrigger(existing))
+            {
+                triggers.Add(new TaskTriggerInfo { Type = TaskTriggerInfoType.StartupTrigger });
+            }
+
+            return triggers;
+        }
+
+        /// <summary>
+        /// Builds the trigger list for a cadence, and nothing else.
         /// </summary>
         /// <remarks>
         /// Returns the complete list the task should carry, not an addition to it —
         /// saving from the page replaces whatever was there. That is the honest
-        /// behaviour for a one-cadence editor, and the page says so.
+        /// behaviour for a one-cadence editor, and the page says so. Prefer the
+        /// overload taking the existing triggers anywhere a real task is being
+        /// written: this one drops a startup trigger on the floor.
         /// </remarks>
         /// <param name="spec">The wanted cadence.</param>
         /// <returns>The triggers to store; empty for manual-only.</returns>

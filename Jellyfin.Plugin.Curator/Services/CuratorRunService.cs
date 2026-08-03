@@ -1371,6 +1371,27 @@ namespace Jellyfin.Plugin.Curator.Services
                     trackAsCurrent: false)
                 : null;
 
+            // Name the model on the run itself, not only on each call. Every re-rank
+            // call already records its own model (rule 9), so the Usage tab was
+            // always right — but the Runs tab reads the run's headline model and
+            // shows "unknown model" when it is blank, which is what a recommendation
+            // run looked like next to the category and summary runs that both set it.
+            // One profile drives every call of this pass, so the headline is exact
+            // rather than a stand-in for a mixed run.
+            if (runLog is not null)
+            {
+                var headline = ModelProfiles.Resolve(
+                    ModelProfiles.Normalize(config),
+                    config.RecommendationModelProfileId);
+
+                runLog.SetProvider(
+                    headline.Provider.ToString(),
+                    headline.Model,
+                    headline.InputCostPerMillion,
+                    headline.OutputCostPerMillion,
+                    headline.CachedInputCostPerMillion);
+            }
+
             try
             {
                 var built = await BuildRecommendationsAsync(config, targetUsers, runLog, cancellationToken)
