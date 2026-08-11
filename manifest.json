@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.7.0.0",
+        "changelog": "Two new home screen rows: one for what the weather is doing outside, one for the part of the day it is. Both are worked out when the home screen asks for them, so they match the actual hour and sky rather than the last refresh, and neither costs a model call \u2014 the judgement about what suits a rainy evening rides along in the existing Condense Summaries call and is cached against the item. Weather comes from Open-Meteo, which needs no account and no API key; the location can be one place for the server or each viewer's own. Switch on 'Judge when an item suits watching' on the Summaries tab and 'Show the weather and time-of-day rows' on the Home screen tab; the health check tells you if you have done one without the other. Also: two library rows for one film are now collapsed on Jellyfin's own merged-version link and on the metadata-provider ID, not only on title and year \u2014 so 'Blade Runner' and 'Blade Runner: The Final Cut' stop appearing as two cards, while 'Freaky Friday' 2003 and 1995 stay two films. That is applied as rows are drawn as well, so existing categories stop showing the same poster twice immediately rather than at the next run.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.0.0/curator_0.7.0.0.zip",
+        "checksum": "709490fac9f73538b936fef5defba323",
+        "timestamp": "2026-08-11T04:51:04Z"
+      },
+      {
         "version": "0.6.2.0",
         "changelog": "Add a health check finding for a missing startup trigger on Publish Home Screen Rows \u2014 the failure that leaves every Curator row absent after a restart while the playlists behind them stay healthy.",
         "targetAbi": "10.11.0.0",
