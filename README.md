@@ -156,9 +156,31 @@ One long playlist per viewer, ordered most-recommended first, built by merging t
 | **Have a model choose the order** | Off by default, and **the only part of this playlist that costs money**. Membership is unaffected; a model reads the top of the shortlist and decides what this viewer should see first — leading with the strongest fit and varying the mood as the row goes rather than stacking six bleak films together, which a weighted sum cannot do. **One call per eligible viewer per refresh**, against a task that runs 6-hourly by default. If a call fails or the answer is unusable the weighted order is kept, so the worst case is a wasted call rather than a broken row |
 | **How many to order** | Only the top of the list is sent, 30 by default. A row is seen a few items at a time, so ordering the head buys nearly all the value for a fraction of the tokens |
 
+### Weather and time-of-day rows
+
+Two more home screen rows: one for what the weather is doing outside, one for the part of the day it is. *Picks for the Weather* on a cold wet Tuesday evening is not the same shelf as it is on a bright Sunday morning.
+
+These are **worked out when the home screen asks for them**, not rebuilt on a schedule — so they match the actual hour and the actual sky rather than whatever was true at the last refresh. That is also why they have no playlist behind them, and why they need **Row source: Curator**; Collection Sections can only show a row by naming a playlist.
+
+**Neither row costs a model call.** The judgement — *what should the weather be doing while someone watches this* — is bought once by the condensing pass, in the same call that writes the short description, and cached against the item. Drawing the row is set arithmetic over words already stored.
+
+The model answers from a **closed vocabulary**: `clear`, `cloudy`, `rain`, `storm`, `snow`, `fog`, `hot`, `cold`, and `morning` / `afternoon` / `evening` / `latenight`. Closed because a row asking "is it raining" can only match a word that means the same thing on every item — left open, one film comes back *drizzly*, the next *overcast*, and the row matches neither. It is also told to be sparing, and that **most items should get nothing**: a broad comedy suits any hour and any sky, and saying so is the correct answer.
+
+Weather comes from [Open-Meteo](https://open-meteo.com) — no account, no API key, nothing to expire. Give it a place name and it is geocoded once; conditions are re-read every half hour in the background, never while a home screen is being drawn.
+
+| Setting | Description |
+|---|---|
+| **Judge when an item suits watching** *(Summaries tab)* | Buys the judgement. Rides along in the condensing call, so it costs output tokens and no extra input, and switching it on costs one pass over the items not yet judged rather than a full redo |
+| **Show the weather and time-of-day rows** *(Home screen tab)* | Publishes the two rows. Separate from the setting above for the same reason *Send consolidated tags* is separate from building them — classify first, look at what came back, then put rows on everybody's home screen |
+| **Whose weather** | One place for the whole server, or each viewer's own. Per-viewer also moves the *time-of-day* row onto each viewer's own clock, since the timezone comes back with the forecast |
+| **Location** | A place name — `Pittsburgh`, or `Pittsburgh, Pennsylvania` if the plain name is ambiguous. Also the fallback for any viewer without one of their own |
+| **Row length** | 20 by default, and shorter than the recommendation playlist on purpose: these rows make a narrow claim, and a long one dilutes it with everything that merely qualifies |
+
+A row with fewer than three matching items is not drawn at all — a single card reads less like a thin row than a broken one. If the weather cannot be read the weather row is simply left out rather than quietly falling back to the clock, and the health check tells you if you have switched the rows on without switching on the judgement that fills them.
+
 ### Scheduled tasks
 
-Five tasks, one job each, all editable from the **Schedule** tab (which writes through Jellyfin's own task manager, so **Dashboard → Scheduled Tasks** shows the same values and either page can edit them):
+Six tasks, one job each, all editable from the **Schedule** tab (which writes through Jellyfin's own task manager, so **Dashboard → Scheduled Tasks** shows the same values and either page can edit them):
 
 | Task | Default | Costs money |
 |---|---|---|
@@ -167,6 +189,7 @@ Five tasks, one job each, all editable from the **Schedule** tab (which writes t
 | **Refresh Recommendations** | 6-hourly | Only if model-ranked ordering is on |
 | **Clean Up and Sync** | Daily | No |
 | **Health Check** | Daily | No |
+| **Publish Home Screen Rows** | Every server start | No |
 
 All of them skip or no-op while a run is in progress — a run rewrites the same playlists and definitions, and racing it loses work.
 
@@ -176,7 +199,7 @@ This plugin fails quietly by design: both home screen integrations degrade silen
 
 It runs daily, and there is a **Health check now** button on the Schedule tab beside *Clean up and sync now* — it reads only and calls no model, so it is free to press as often as you like. The line beneath the buttons says when it last ran and what it found.
 
-The health panel reports what it can actually diagnose — a prerequisite plugin gone, a run that has stopped happening, ghost items, model profiles without keys, categories holding no playlist, tag consolidation producing nothing, and a distillation pass that lost most of its items. It is deliberately shy: a panel that reports normal operation as a problem gets ignored, so a late run is not a stalled one and a manual-only schedule is never reported at all.
+The health panel reports what it can actually diagnose — a prerequisite plugin gone, a run that has stopped happening, ghost items, model profiles without keys, categories holding no playlist, tag consolidation producing nothing, a distillation pass that lost most of its items, the row-publishing task having lost its startup trigger, and the weather and time-of-day rows being switched on with nothing classified to fill them. It is deliberately shy: a panel that reports normal operation as a problem gets ignored, so a late run is not a stalled one and a manual-only schedule is never reported at all.
 
 ### Output
 
@@ -184,7 +207,8 @@ The health panel reports what it can actually diagnose — a prerequisite plugin
 |---|---|
 | **Output type** | Playlists (default) or collections |
 | **Personalized playlists** | Attach each target user's watch activity so their playlists reflect their taste. Playlists only; runs the model once per user, so cost scales with user count — see **min watched items to personalize** for the floor that keeps dormant accounts out of that multiplier |
-| **Send one row per title** | On by default. A director's cut and a theatrical cut are two items in Jellyfin and one film to a viewer — sent as two they arrive with identical titles, years, genres and overviews, so the model puts both in the same category and the row shows the same poster twice. Keeps the copy with the longest runtime and folds the other's watch history onto it. Matching is strict: kind, title **and** year must all agree, so *Freaky Friday* (2003) and *Freaky Friday* (1995) stay two different films |
+| **Send one row per title** | On by default. A director's cut and a theatrical cut are two items in Jellyfin and one film to a viewer — sent as two they arrive with identical titles, years, genres and overviews, so the model puts both in the same category and the row shows the same poster twice. Keeps the copy with the longest runtime and folds the other's watch history onto it. Two rows are one title when you have merged them in Jellyfin yourself, when they carry the same metadata-provider ID, or when kind, title **and** year all agree — nothing here is a similarity test, so *Freaky Friday* (2003) and *Freaky Friday* (1995) stay two different films. Applied to the rows as they are drawn too, so a category built before you turned this on stops showing two posters immediately rather than at the next run |
+| **Treat the same TMDb/IMDb ID as the same title** | On by default, and what catches the case title and year cannot: *Blade Runner* (1982) and *Blade Runner: The Final Cut* (2007) agree on neither field and are one film, and their TMDb IDs say so. Turn it off only for a library whose provider IDs are known to be wrong |
 | **Include episodes** | Allow the model to select individual episodes, not just whole series |
 | **Target users** | Which users get playlists generated for them (empty = all users) |
 | **Auto-enable sections** | Enable newly created sections on the home screen automatically |

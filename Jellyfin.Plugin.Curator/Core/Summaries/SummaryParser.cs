@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using Jellyfin.Plugin.Curator.Core.Context;
 using Jellyfin.Plugin.Curator.Core.Llm;
 using Jellyfin.Plugin.Curator.Core.Models;
 
@@ -17,10 +18,17 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
     /// tags were not requested and when the model correctly found none worth
     /// keeping — the caller distinguishes those by whether it asked.
     /// </param>
+    /// <param name="Context">
+    /// When the item suits watching, as the model judged it. Always
+    /// <see cref="ItemContextAffinity.None"/> when context was not requested — the
+    /// caller distinguishes "judged to suit nothing" from "never asked" by whether
+    /// it asked, exactly as it does for tags.
+    /// </param>
     public sealed record ParsedSummary(
         MediaItemRecord Item,
         string Text,
-        IReadOnlyList<string> Tags);
+        IReadOnlyList<string> Tags,
+        ItemContextAffinity Context);
 
     /// <summary>
     /// The outcome of parsing one distillation response.
@@ -60,11 +68,17 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         /// </param>
         /// <returns>Accepted summaries and discard counts.</returns>
         /// <exception cref="FormatException">The response has no parseable object of the required shape.</exception>
+        /// <param name="classifyContext">
+        /// Whether the response is expected to carry weather and daypart affinities.
+        /// False ignores them entirely, so a model that volunteers them for a pass
+        /// that never asked cannot write anything into the store.
+        /// </param>
         public static SummaryParseResult Parse(
             string responseText,
             IReadOnlyList<MediaItemRecord> batch,
             int maxLength,
-            int tagCeiling = 0)
+            int tagCeiling = 0,
+            bool classifyContext = false)
         {
             ArgumentNullException.ThrowIfNull(responseText);
             ArgumentNullException.ThrowIfNull(batch);
@@ -132,7 +146,11 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
                         trimmed++;
                     }
 
-                    accepted.Add(new ParsedSummary(batch[index], text, ReadTags(entry, tagCeiling)));
+                    accepted.Add(new ParsedSummary(
+                        batch[index],
+                        text,
+                        ReadTags(entry, tagCeiling),
+                        ReadContext(entry, classifyContext)));
                 }
 
                 return new SummaryParseResult(accepted, discarded, trimmed, batch.Count - accepted.Count);
@@ -176,6 +194,74 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
                 if (!string.IsNullOrWhiteSpace(value) && seen.Add(value))
                 {
                     kept.Add(value);
+                }
+            }
+
+            return kept;
+        }
+
+        /// <summary>
+        /// Reads the weather and daypart affinities off one entry.
+        /// </summary>
+        /// <remarks>
+        /// Every word is checked against the closed vocabulary and anything else is
+        /// dropped, with no attempt to map it onto a neighbour. That looks harsh
+        /// beside <see cref="ReadTags"/>, which keeps whatever it is given, and the
+        /// difference is what the two are for: a tag is prose the model reads back
+        /// later, so an odd one costs a little consistency, while these words are
+        /// matched by string equality against what the weather is actually doing.
+        /// "drizzly" is not a more precise "rain" — it is a judgement that can never
+        /// match anything, and guessing that it meant rain is how a closed vocabulary
+        /// quietly reopens.
+        /// <para>
+        /// Silently dropped rather than counted as a discard: the entry's summary is
+        /// still good, and losing it over a stray word would throw away the expensive
+        /// part of the answer to protect the cheap part.
+        /// </para>
+        /// </remarks>
+        private static ItemContextAffinity ReadContext(JsonElement entry, bool classifyContext)
+        {
+            if (!classifyContext)
+            {
+                return ItemContextAffinity.None;
+            }
+
+            var weather = ReadVocabulary(entry, "w", ContextVocabulary.IsWeather);
+            var dayparts = ReadVocabulary(entry, "d", ContextVocabulary.IsDaypart);
+
+            return weather.Count == 0 && dayparts.Count == 0
+                ? ItemContextAffinity.None
+                : new ItemContextAffinity(weather, dayparts);
+        }
+
+        /// <summary>
+        /// Reads one array of vocabulary words, keeping only those the vocabulary knows.
+        /// </summary>
+        private static IReadOnlyList<string> ReadVocabulary(
+            JsonElement entry,
+            string property,
+            Func<string?, bool> isKnown)
+        {
+            if (!entry.TryGetProperty(property, out var values)
+                || values.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var kept = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var value in values.EnumerateArray())
+            {
+                if (value.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var word = value.GetString()?.Trim().ToLowerInvariant();
+                if (isKnown(word) && seen.Add(word!))
+                {
+                    kept.Add(word!);
                 }
             }
 

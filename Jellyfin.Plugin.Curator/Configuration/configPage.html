@@ -726,9 +726,27 @@
                                 overviews, so it puts both in the same category and the row shows the same poster
                                 twice. This keeps the copy with the <strong>longest runtime</strong> — the fuller
                                 cut — and folds the other's watch history onto it, so nothing reads as unseen just
-                                because you watched the copy that was dropped. Matching is strict: kind, title
-                                <em>and</em> year must all agree, so <em>Freaky Friday</em> (2003) and
-                                <em>Freaky Friday</em> (1995) stay two different films.
+                                because you watched the copy that was dropped. Nothing here is a similarity test:
+                                two rows are one title when you have merged them in Jellyfin yourself, or when
+                                they carry the same metadata-provider ID, or when kind, title <em>and</em> year
+                                all agree — so <em>Freaky Friday</em> (2003) and <em>Freaky Friday</em> (1995)
+                                stay two different films. It also applies to the rows as they are drawn, so a
+                                category built before you turned this on stops showing two posters immediately
+                                rather than at the next run.
+                            </div>
+                        </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="MatchDuplicatesByProviderId"
+                                       name="MatchDuplicatesByProviderId" />
+                                <span>Treat the same TMDb/IMDb ID as the same title</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                This is what catches the case title and year cannot: <em>Blade Runner</em> (1982)
+                                and <em>Blade Runner: The Final Cut</em> (2007) agree on neither field and are one
+                                film, and their TMDb IDs say so. Leave it on unless you know your library's
+                                provider IDs are wrong — a scraper that has stamped two different films with one
+                                ID would merge them here, and no amount of strictness elsewhere would notice.
                             </div>
                         </div>
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -1081,6 +1099,86 @@
                                 <strong>Save first</strong> if you have just changed the settings above.
                             </div>
                         </div>
+
+                        <h3 class="sectionTitle">Weather and time of day</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            Two more rows: one for what the weather is doing outside, one for the part of the day
+                            it is. Both are worked out <em>when the home screen asks for them</em>, so they always
+                            match the actual hour and the actual sky rather than whatever was true at the last
+                            refresh. Neither costs a model call — the judgement about what suits a rainy evening
+                            was bought once by <strong>Judge when an item suits watching</strong> on the Summaries
+                            tab, which has to be on for either row to have anything to show.
+                        </p>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="ContextRows" name="ContextRows" />
+                                <span>Show the weather and time-of-day rows</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Requires <em>Row source: Curator</em> above. These rows have no playlist behind
+                                them — that is what lets them be current to the minute — and Collection Sections
+                                can only show a row by naming a playlist, so it cannot serve them. A row with
+                                fewer than three matching items is not drawn at all, on the grounds that a single
+                                card does not read as a thin row so much as a broken one.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="WeatherRowName">Weather row name</label>
+                            <input id="WeatherRowName" name="WeatherRowName" type="text" class="emby-input" />
+                            <div class="fieldDescription">
+                                Deliberately a general name rather than one that tracks the sky. A row's title is
+                                fixed when the row is registered — at server start and after a run — so a title
+                                reading "For a rainy night" would be a claim about the weather several hours ago.
+                                The contents are exact; the name should not promise more precision than it can keep.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="DaypartRowName">Time-of-day row name</label>
+                            <input id="DaypartRowName" name="DaypartRowName" type="text" class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="MaxContextRowItems">Row length</label>
+                            <input id="MaxContextRowItems" name="MaxContextRowItems" type="number" min="0" max="200"
+                                   class="emby-input" />
+                            <div class="fieldDescription">
+                                Shorter than the recommendation playlist on purpose. These rows make a narrow
+                                claim — <em>these suit a cold wet evening</em> — and a long one dilutes it with
+                                everything that merely qualifies. 0 means no limit.
+                            </div>
+                        </div>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="WeatherLocationMode">Whose weather</label>
+                            <select is="emby-select" id="WeatherLocationMode" name="WeatherLocationMode"
+                                    class="emby-select-withcolor emby-select">
+                                <option value="Single">One place for the server</option>
+                                <option value="PerUser">Each viewer's own place</option>
+                            </select>
+                            <div class="fieldDescription">
+                                One place is right for a household watching in one house. Per-viewer is for a
+                                library shared across households — and it also moves the <em>time-of-day</em> row
+                                onto each viewer's own clock, since the lookup returns the timezone with the
+                                forecast. Anyone without a place of their own falls back to the server's.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="WeatherLocation">Location</label>
+                            <input id="WeatherLocation" name="WeatherLocation" type="text" class="emby-input" />
+                            <div class="fieldDescription">
+                                A place name — <code>Pittsburgh</code>, or
+                                <code>Pittsburgh, Pennsylvania</code> if the plain name is ambiguous. Looked up
+                                through Open-Meteo, which needs no account and no API key; the coordinates are
+                                resolved once and the conditions re-read every half hour in the background, never
+                                while a home screen is being drawn. If the name matches nothing, the server log
+                                says so and the weather row is simply left out.
+                            </div>
+                        </div>
+                        <div id="CuratorUserLocations" class="hide" style="margin-top:1em;">
+                            <h4 class="sectionTitle" style="font-size:1.1em;">Each viewer's location</h4>
+                            <div class="fieldDescription" style="margin-bottom:0.8em;">
+                                Leave one blank to use the server's location above.
+                            </div>
+                            <div id="CuratorUserLocationRows"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -1243,6 +1341,33 @@
                                 look at what came back below, and only then start paying prompt tokens for them.
                                 This overrides <em>Tags per item</em> on the Library tab, which governs the raw
                                 scraped list.
+                            </div>
+                        </div>
+
+                        <h3 class="sectionTitle">When something suits watching</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            The same judgement the rewrite makes, asked about the room instead of the film: what
+                            should the weather outside be doing while someone watches this, and what part of the
+                            day does it belong to. It rides along in the call that condenses the description, so
+                            it costs almost nothing extra — and it is what fills the two rows on the
+                            <strong>Home screen</strong> tab.
+                        </p>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="ClassifyViewingContext"
+                                       name="ClassifyViewingContext" />
+                                <span>Judge when an item suits watching</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Answers come from a fixed vocabulary — <code>clear</code>, <code>cloudy</code>,
+                                <code>rain</code>, <code>storm</code>, <code>snow</code>, <code>fog</code>,
+                                <code>hot</code>, <code>cold</code> and
+                                <code>morning</code>/<code>afternoon</code>/<code>evening</code>/<code>latenight</code>
+                                — because a row asking "is it raining" can only match a word that means the same
+                                thing on every item. The model is told to be sparing and that <em>most items
+                                should get nothing</em>: a broad comedy suits any hour and any sky, and saying so
+                                is the correct answer. Judged in the same call as the description, so switching
+                                this on costs one pass over the items not yet judged, not a full redo.
                             </div>
                         </div>
 
@@ -1684,6 +1809,79 @@
                         return '<option value="' + user.Id + '"' + selected + '>' + escapeHtml(user.Name) + '</option>';
                     }).join('');
                 });
+            }
+
+            // ---- per-viewer weather locations ----
+
+            /**
+             * Builds one text box per user, filled from the saved list.
+             *
+             * Built from allUsers, which fillUsers() has just populated — every user
+             * gets a row rather than only those already carrying a location, because
+             * an empty box that says what it falls back to is a far clearer editor
+             * than an add-a-row button.
+             *
+             * The inputs are PLAIN, not is="emby-input". Customized built-in elements
+             * upgrade unreliably inside innerHTML, which is the same reason
+             * .curatorCheck exists: one row renders styled-and-wired and the rest come
+             * out bare. Every value is escaped — a user name is not ours to trust.
+             */
+            function renderUserLocations(saved) {
+                var container = page.querySelector('#CuratorUserLocationRows');
+                var byUser = {};
+
+                (saved || []).forEach(function (entry) {
+                    if (entry && entry.UserId) {
+                        byUser[String(entry.UserId).toLowerCase()] = entry.Location || '';
+                    }
+                });
+
+                container.innerHTML = (allUsers || []).map(function (user) {
+                    var value = byUser[String(user.Id).toLowerCase()] || '';
+                    return '<div class="inputContainer">'
+                        + '<label class="inputLabel inputLabelUnfocused" for="curatorLoc_' + escapeHtml(user.Id) + '">'
+                        + escapeHtml(user.Name) + '</label>'
+                        + '<input type="text" class="emby-input curatorUserLocation" '
+                        + 'id="curatorLoc_' + escapeHtml(user.Id) + '" '
+                        + 'data-user-id="' + escapeHtml(user.Id) + '" '
+                        + 'value="' + escapeHtml(value) + '" />'
+                        + '</div>';
+                }).join('');
+
+                applyLocationModeVisibility();
+            }
+
+            /**
+             * Reads the boxes back. A blank one is omitted entirely rather than saved
+             * as an empty string, so "no location" stays one state instead of two.
+             */
+            function collectUserLocations() {
+                var rows = page.querySelectorAll('.curatorUserLocation');
+                var result = [];
+
+                for (var i = 0; i < rows.length; i++) {
+                    var value = rows[i].value.trim();
+                    if (value) {
+                        result.push({ UserId: rows[i].getAttribute('data-user-id'), Location: value });
+                    }
+                }
+
+                return result;
+            }
+
+            /** The per-viewer boxes are only meaningful in per-viewer mode. */
+            function applyLocationModeVisibility() {
+                var mode = page.querySelector('#WeatherLocationMode');
+                var panel = page.querySelector('#CuratorUserLocations');
+                if (!mode || !panel) {
+                    return;
+                }
+
+                if (mode.value === 'PerUser') {
+                    panel.classList.remove('hide');
+                } else {
+                    panel.classList.add('hide');
+                }
             }
 
             // Enum-valued config lands here as the member name ("Anthropic") because the
@@ -4067,12 +4265,24 @@
                     setEnumSelect(page.querySelector('#SectionDelivery'), config.SectionDelivery);
                     page.querySelector('#PersonalizedPlaylists').checked = config.PersonalizedPlaylists;
                     page.querySelector('#CollapseDuplicateVersions').checked = config.CollapseDuplicateVersions;
+                    page.querySelector('#MatchDuplicatesByProviderId').checked = config.MatchDuplicatesByProviderId;
                     page.querySelector('#IncludeEpisodes').checked = config.IncludeEpisodes;
                     page.querySelector('#AutoEnableSections').checked = config.AutoEnableSections;
                     page.querySelector('#UseBatchApi').checked = config.UseBatchApi;
                     page.querySelector('#EnableThinking').checked = config.EnableThinking;
+                    page.querySelector('#ClassifyViewingContext').checked = config.ClassifyViewingContext;
+                    page.querySelector('#ContextRows').checked = config.ContextRows;
+                    page.querySelector('#WeatherRowName').value = config.WeatherRowName || '';
+                    page.querySelector('#DaypartRowName').value = config.DaypartRowName || '';
+                    page.querySelector('#MaxContextRowItems').value = config.MaxContextRowItems;
+                    page.querySelector('#WeatherLocation').value = config.WeatherLocation || '';
+                    setEnumSelect(page.querySelector('#WeatherLocationMode'), config.WeatherLocationMode);
 
-                    return fillUsers(config.TargetUsers || []);
+                    return fillUsers(config.TargetUsers || []).then(function () {
+                        // After fillUsers, which is what loads the user list these
+                        // rows are built from.
+                        renderUserLocations(config.UserWeatherLocations || []);
+                    });
                 }).then(function () {
                     Dashboard.hideLoadingMsg();
                     refreshStatus();
@@ -4143,10 +4353,19 @@
                     config.SectionDelivery = page.querySelector('#SectionDelivery').value;
                     config.PersonalizedPlaylists = page.querySelector('#PersonalizedPlaylists').checked;
                     config.CollapseDuplicateVersions = page.querySelector('#CollapseDuplicateVersions').checked;
+                    config.MatchDuplicatesByProviderId = page.querySelector('#MatchDuplicatesByProviderId').checked;
                     config.IncludeEpisodes = page.querySelector('#IncludeEpisodes').checked;
                     config.AutoEnableSections = page.querySelector('#AutoEnableSections').checked;
                     config.UseBatchApi = page.querySelector('#UseBatchApi').checked;
                     config.EnableThinking = page.querySelector('#EnableThinking').checked;
+                    config.ClassifyViewingContext = page.querySelector('#ClassifyViewingContext').checked;
+                    config.ContextRows = page.querySelector('#ContextRows').checked;
+                    config.WeatherRowName = page.querySelector('#WeatherRowName').value.trim();
+                    config.DaypartRowName = page.querySelector('#DaypartRowName').value.trim();
+                    config.MaxContextRowItems = parseInt(page.querySelector('#MaxContextRowItems').value, 10);
+                    config.WeatherLocation = page.querySelector('#WeatherLocation').value.trim();
+                    config.WeatherLocationMode = page.querySelector('#WeatherLocationMode').value;
+                    config.UserWeatherLocations = collectUserLocations();
 
                     config.TargetUsers = Array.prototype.filter.call(
                         page.querySelector('#TargetUsers').options,
@@ -4276,6 +4495,7 @@
 
                 page.querySelector('#CuratorUsageRefresh').addEventListener('click', loadUsage);
                 page.querySelector('#CuratorUsageRange').addEventListener('change', loadUsage);
+                page.querySelector('#WeatherLocationMode').addEventListener('change', applyLocationModeVisibility);
 
                 // The summary is the setting's only readable form, so it has to track
                 // the boxes as they are typed in rather than on save.

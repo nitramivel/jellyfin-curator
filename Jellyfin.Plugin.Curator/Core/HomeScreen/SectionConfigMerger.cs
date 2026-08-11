@@ -35,6 +35,23 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
             return SectionIdPrefix + categoryId.ToString("N");
         }
 
+        /// <summary>The section ID of the weather row.</summary>
+        /// <remarks>
+        /// Fixed rather than derived from a GUID, because there is exactly one of
+        /// these and it has no stored definition to take an ID from. It still carries
+        /// the Curator prefix, so every merge in this class treats it as ours — which
+        /// matters most for the one that <em>removes</em> entries: a context row left
+        /// behind in Collection Sections' configuration would race the registration.
+        /// <para>
+        /// The 32 hex characters a category ID produces cannot collide with these,
+        /// since neither is valid hex.
+        /// </para>
+        /// </remarks>
+        public const string WeatherSectionId = SectionIdPrefix + "context-weather";
+
+        /// <summary>The section ID of the time-of-day row.</summary>
+        public const string DaypartSectionId = SectionIdPrefix + "context-daypart";
+
         /// <summary>
         /// Merges the desired Curator sections into a Collection Sections
         /// configuration object: adds missing sections, updates renamed ones,

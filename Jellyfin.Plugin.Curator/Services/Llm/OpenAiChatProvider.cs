@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.Curator.Core.Context;
 
 namespace Jellyfin.Plugin.Curator.Services.Llm
 {
@@ -295,6 +296,8 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                             ResponseShape.PersonalCategories => "curator_personal_categories",
                             ResponseShape.Summaries => "curator_summaries",
                             ResponseShape.SummariesWithTags => "curator_summaries_tagged",
+                            ResponseShape.SummariesWithContext => "curator_summaries_context",
+                            ResponseShape.SummariesWithTagsAndContext => "curator_summaries_tagged_context",
                             ResponseShape.RecommendationOrder => "curator_recommendation_order",
                             _ => "curator_categories",
                         },
@@ -324,9 +327,11 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// </remarks>
         private static object BuildResponseSchema(ResponseShape shape)
         {
-            if (shape is ResponseShape.Summaries or ResponseShape.SummariesWithTags)
+            if (SummaryShapes.Describes(shape))
             {
-                return BuildSummarySchema(shape == ResponseShape.SummariesWithTags);
+                return BuildSummarySchema(
+                    SummaryShapes.IncludesTags(shape),
+                    SummaryShapes.IncludesContext(shape));
             }
 
             if (shape == ResponseShape.RecommendationOrder)
@@ -396,41 +401,58 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// it and the parser enforces it. The schema's job is only to guarantee the
         /// shape.
         /// </remarks>
-        private static object BuildSummarySchema(bool includeTags)
+        private static object BuildSummarySchema(bool includeTags, bool includeContext)
         {
             var i = new { type = "integer", description = "The item's integer index from the input list." };
             var text = new { type = "string", description = "The compressed description." };
 
-            // Strict mode requires every declared property, so "t" is added only when
-            // the prompt actually asks for it. Declaring it always would demand a tag
-            // list from a pass that was never told to produce one; omitting it when
-            // the prompt does ask leaves the model with no legal place to put the
-            // tags, and it writes them into "s" instead.
-            object summary = includeTags
-                ? new
+            // Strict mode requires every declared property, so a field is declared
+            // only when the prompt actually asks for it. Declaring one always would
+            // demand a tag list from a pass that was never told to produce one;
+            // omitting one the prompt does ask for leaves the model with no legal
+            // place to put the value, and it writes it into "s" instead.
+            var properties = new Dictionary<string, object> { ["i"] = i, ["s"] = text };
+            var required = new List<string> { "i", "s" };
+
+            if (includeTags)
+            {
+                properties["t"] = new
                 {
-                    type = "object",
-                    properties = new
-                    {
-                        i,
-                        s = text,
-                        t = new
-                        {
-                            type = "array",
-                            description = "Consolidated tags describing what watching it is like; may be empty.",
-                            items = new { type = "string" },
-                        },
-                    },
-                    required = new[] { "i", "s", "t" },
-                    additionalProperties = false,
-                }
-                : new
-                {
-                    type = "object",
-                    properties = new { i, s = text },
-                    required = new[] { "i", "s" },
-                    additionalProperties = false,
+                    type = "array",
+                    description = "Consolidated tags describing what watching it is like; may be empty.",
+                    items = new { type = "string" },
                 };
+                required.Add("t");
+            }
+
+            if (includeContext)
+            {
+                // The enum is the schema's half of the closed vocabulary. The prompt
+                // says the same thing in prose and the parser drops anything else, so
+                // a provider without structured outputs still cannot widen it.
+                properties["w"] = new
+                {
+                    type = "array",
+                    description = "Weather this suits; may be empty, and empty is the common answer.",
+                    items = new { type = "string", @enum = ContextVocabulary.Weather },
+                };
+                properties["d"] = new
+                {
+                    type = "array",
+                    description = "Parts of the day this suits; may be empty.",
+                    items = new { type = "string", @enum = ContextVocabulary.Dayparts },
+                };
+                required.Add("w");
+                required.Add("d");
+            }
+
+            var summary = new
+            {
+                type = "object",
+                properties,
+                required = required.ToArray(),
+                additionalProperties = false,
+            };
 
             return new
             {

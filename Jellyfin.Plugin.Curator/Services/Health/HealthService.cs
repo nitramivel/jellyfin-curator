@@ -137,7 +137,14 @@ namespace Jellyfin.Plugin.Curator.Services.Health
                 LastSummaryPassDistilled: _distillService.LastResult?.Distilled ?? 0,
                 LastSummaryPassFailed: _distillService.LastResult?.Failed ?? 0,
                 CollectionSectionsRequired: config.SectionDelivery == SectionDelivery.CollectionSections,
-                PublishRowsRunsAtStartup: PublishRowsRunsAtStartup());
+                PublishRowsRunsAtStartup: PublishRowsRunsAtStartup(),
+                ContextRowsEnabled: config.ContextRows,
+
+                // Counted on the hash rather than on the lists, because an item judged
+                // to suit nothing in particular has been judged. Counting non-empty
+                // lists would report a correctly-classified library as unclassified
+                // whenever the model was appropriately sparing.
+                ItemsWithContext: summaries.Values.Count(x => x.ContextSourceHash is not null));
         }
 
         /// <summary>

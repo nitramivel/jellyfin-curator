@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.Curator.Core.Context;
 
 namespace Jellyfin.Plugin.Curator.Services.Llm
 {
@@ -227,9 +228,11 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// </remarks>
         private static object BuildResponseSchema(ResponseShape shape)
         {
-            if (shape is ResponseShape.Summaries or ResponseShape.SummariesWithTags)
+            if (SummaryShapes.Describes(shape))
             {
-                return BuildSummarySchema(shape == ResponseShape.SummariesWithTags);
+                return BuildSummarySchema(
+                    SummaryShapes.IncludesTags(shape),
+                    SummaryShapes.IncludesContext(shape));
             }
 
             if (shape == ResponseShape.RecommendationOrder)
@@ -296,39 +299,62 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// hold the index in mind across the whole sentence, and that is where
         /// off-by-one answers come from.
         /// </remarks>
-        private static object BuildSummarySchema(bool includeTags)
+        private static object BuildSummarySchema(bool includeTags, bool includeContext)
         {
             var i = new { type = "INTEGER", description = "The item's integer index from the input list." };
             var text = new { type = "STRING", description = "The compressed description." };
 
-            // "t" is declared only when the prompt asks for it, for the reason given
-            // on ResponseShape.SummariesWithTags: a prompt asking for a field the
-            // schema does not allow leaves the model writing it into "s".
-            object summary = includeTags
-                ? new
+            // A field is declared only when the prompt asks for it, for the reason
+            // given on ResponseShape.SummariesWithTags: a prompt asking for a field
+            // the schema does not allow leaves the model writing it into "s".
+            var properties = new Dictionary<string, object> { ["i"] = i, ["s"] = text };
+            var order = new List<string> { "i", "s" };
+
+            if (includeTags)
+            {
+                properties["t"] = new
                 {
-                    type = "OBJECT",
-                    properties = new
-                    {
-                        i,
-                        s = text,
-                        t = new
-                        {
-                            type = "ARRAY",
-                            description = "Consolidated tags describing what watching it is like; may be empty.",
-                            items = new { type = "STRING" },
-                        },
-                    },
-                    required = new[] { "i", "s", "t" },
-                    propertyOrdering = new[] { "i", "s", "t" },
-                }
-                : new
-                {
-                    type = "OBJECT",
-                    properties = new { i, s = text },
-                    required = new[] { "i", "s" },
-                    propertyOrdering = new[] { "i", "s" },
+                    type = "ARRAY",
+                    description = "Consolidated tags describing what watching it is like; may be empty.",
+                    items = new { type = "STRING" },
                 };
+                order.Add("t");
+            }
+
+            if (includeContext)
+            {
+                // The enum is the schema's half of the closed vocabulary. Gemini
+                // spells it "enum" on a STRING the same way OpenAI does, but note
+                // everything around it differs — uppercase types, no
+                // additionalProperties, and the ordering below is load-bearing.
+                properties["w"] = new
+                {
+                    type = "ARRAY",
+                    description = "Weather this suits; may be empty, and empty is the common answer.",
+                    items = new { type = "STRING", @enum = ContextVocabulary.Weather },
+                };
+                properties["d"] = new
+                {
+                    type = "ARRAY",
+                    description = "Parts of the day this suits; may be empty.",
+                    items = new { type = "STRING", @enum = ContextVocabulary.Dayparts },
+                };
+                order.Add("w");
+                order.Add("d");
+            }
+
+            // The ordering is why the context fields come last: the prompt tells the
+            // model to write the rewrite first and judge from it, and generation
+            // order is the only thing that can actually enforce "first". A schema
+            // that emitted "w" before "s" would have it choosing the weather for a
+            // reading it has not committed to yet.
+            var summary = new
+            {
+                type = "OBJECT",
+                properties,
+                required = order.ToArray(),
+                propertyOrdering = order.ToArray(),
+            };
 
             return new
             {

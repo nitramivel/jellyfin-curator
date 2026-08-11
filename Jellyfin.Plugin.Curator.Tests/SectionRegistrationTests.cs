@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json.Nodes;
 using Jellyfin.Plugin.Curator.Core.HomeScreen;
 using Jellyfin.Plugin.Curator.Services.HomeScreen;
@@ -27,7 +28,7 @@ namespace Jellyfin.Plugin.Curator.Tests
             var section = new DesiredSection(SectionConfigMerger.SectionIdFor(CategoryId), name, members);
             var json = SectionRegistration.BuildPayload(
                 section,
-                CategoryId,
+                CategoryId.ToString("N"),
                 "Jellyfin.Plugin.Curator, Version=1.0.0.0",
                 "Jellyfin.Plugin.Curator.Services.HomeScreen.CuratorSectionResults");
 
@@ -109,12 +110,73 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
+        public void BuildPayload_CarriesANonCategoryRowKeyUntouched()
+        {
+            // The context rows have no category and no playlist, so additionalData
+            // names which of the two the row is instead of a GUID. It must go over
+            // the wire exactly as the handler expects to read it back.
+            var section = new DesiredSection(SectionConfigMerger.WeatherSectionId, "Picks for the Weather", 20);
+
+            var payload = JsonNode.Parse(SectionRegistration.BuildPayload(
+                section,
+                CuratorContextSectionResults.WeatherRowKey,
+                "Jellyfin.Plugin.Curator, Version=1.0.0.0",
+                typeof(CuratorContextSectionResults).FullName!))!.AsObject();
+
+            Assert.Equal(CuratorContextSectionResults.WeatherRowKey, (string?)payload["additionalData"]);
+            Assert.Equal(SectionConfigMerger.WeatherSectionId, (string?)payload["id"]);
+            Assert.Equal(
+                "Jellyfin.Plugin.Curator.Services.HomeScreen.CuratorContextSectionResults",
+                (string?)payload["resultsClass"]);
+        }
+
+        [Fact]
+        public void ContextSectionIdsCarryTheCuratorPrefixAndCannotCollideWithACategory()
+        {
+            // The prefix is what makes every merge in SectionConfigMerger treat these
+            // as ours — including the one that removes stale entries. A context row
+            // left behind in Collection Sections' config would race the registration.
+            Assert.StartsWith(
+                SectionConfigMerger.SectionIdPrefix, SectionConfigMerger.WeatherSectionId, StringComparison.Ordinal);
+            Assert.StartsWith(
+                SectionConfigMerger.SectionIdPrefix, SectionConfigMerger.DaypartSectionId, StringComparison.Ordinal);
+            Assert.NotEqual(SectionConfigMerger.WeatherSectionId, SectionConfigMerger.DaypartSectionId);
+
+            // A category ID is 32 hex characters; neither of these is valid hex.
+            Assert.NotEqual(SectionConfigMerger.WeatherSectionId, SectionConfigMerger.SectionIdFor(CategoryId));
+        }
+
+        [Fact]
+        public void TheContextHandlerDeclaresExactlyOnePublicGetResults()
+        {
+            // Home Screen Sections resolves it with Type.GetMethod(string), which
+            // THROWS on an overload. This is why the context rows are a second class
+            // rather than a second method on the existing one.
+            var methods = typeof(CuratorContextSectionResults)
+                .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(m => m.Name == SectionRegistration.ResultsMethodName)
+                .ToList();
+
+            Assert.Single(methods);
+            Assert.Single(methods[0].GetParameters());
+            Assert.Equal(typeof(CuratorSectionPayload), methods[0].GetParameters()[0].ParameterType);
+        }
+
+        [Fact]
+        public void TheTwoContextRowKeysAreDistinct()
+        {
+            Assert.NotEqual(
+                CuratorContextSectionResults.WeatherRowKey,
+                CuratorContextSectionResults.DaypartRowKey);
+        }
+
+        [Fact]
         public void BuildPayload_RejectsAnUnnamedResultsTarget()
         {
             var section = new DesiredSection(SectionConfigMerger.SectionIdFor(CategoryId), "Anything");
 
-            Assert.Throws<ArgumentException>(() => SectionRegistration.BuildPayload(section, CategoryId, string.Empty, "Type"));
-            Assert.Throws<ArgumentException>(() => SectionRegistration.BuildPayload(section, CategoryId, "Assembly", string.Empty));
+            Assert.Throws<ArgumentException>(() => SectionRegistration.BuildPayload(section, CategoryId.ToString("N"), string.Empty, "Type"));
+            Assert.Throws<ArgumentException>(() => SectionRegistration.BuildPayload(section, CategoryId.ToString("N"), "Assembly", string.Empty));
         }
     }
 }

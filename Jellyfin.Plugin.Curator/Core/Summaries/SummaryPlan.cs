@@ -47,6 +47,13 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             /// however well its hash matches.
             /// </summary>
             Corrupt = 4,
+
+            /// <summary>
+            /// The summary is current but the item has never been judged for when it
+            /// suits watching — the state every stored summary is in the first time
+            /// context classification is switched on.
+            /// </summary>
+            ContextMissing = 5,
         }
 
         /// <summary>One item that needs distilling, and why.</summary>
@@ -86,13 +93,20 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         /// redo: only the items actually missing tags are paid for.
         /// </para>
         /// </param>
+        /// <param name="classifyContext">
+        /// Whether the pass is also judging when an item suits watching. When true, an
+        /// item whose summary is current but which has never been judged — or was
+        /// judged from an overview since rewritten — is queued again, so switching the
+        /// feature on is incremental rather than a full redo.
+        /// </param>
         /// <returns>The plan.</returns>
         public static Plan Create(
             IReadOnlyList<MediaItemRecord> items,
             IReadOnlyDictionary<Guid, CondensedSummary> existing,
             int minSourceLength,
             bool force = false,
-            bool consolidateTags = false)
+            bool consolidateTags = false,
+            bool classifyContext = false)
         {
             ArgumentNullException.ThrowIfNull(items);
             ArgumentNullException.ThrowIfNull(existing);
@@ -157,6 +171,15 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
                     continue;
                 }
 
+                // Same bargain as tags: judged in the same call as the summary, so an
+                // item needing only this still costs a full entry in a batch, and a
+                // second pass over the same items would cost more.
+                if (classifyContext && NeedsContext(item, stored))
+                {
+                    work.Add(new SummaryTask(item, SummaryReason.ContextMissing));
+                    continue;
+                }
+
                 upToDate++;
             }
 
@@ -180,6 +203,29 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
 
             return stored.TagSourceHash is null
                 || !string.Equals(stored.TagSourceHash, HashTags(item.Tags), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Whether this item still needs judging for when it suits watching.
+        /// </summary>
+        /// <remarks>
+        /// Keyed on its own hash of the same overview the summary is keyed on. That
+        /// looks redundant and is not: an item stored before this feature existed has
+        /// a matching summary hash and no context at all, so without a second hash it
+        /// would read as current forever and switching the setting on would appear to
+        /// do nothing.
+        /// <para>
+        /// An item judged to suit nothing in particular stores empty lists <em>and</em>
+        /// the hash, so it is not re-bought every pass. That is the whole reason the
+        /// hash rather than the lists is the test — most of the library is expected to
+        /// come back empty, and treating empty as unanswered would re-buy most of the
+        /// library every time.
+        /// </para>
+        /// </remarks>
+        private static bool NeedsContext(MediaItemRecord item, CondensedSummary stored)
+        {
+            return stored.ContextSourceHash is null
+                || !string.Equals(stored.ContextSourceHash, HashOverview(item.Overview), StringComparison.Ordinal);
         }
 
         /// <summary>

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using Jellyfin.Plugin.Curator.Core.Context;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Summaries;
 using Xunit;
@@ -714,6 +715,218 @@ namespace Jellyfin.Plugin.Curator.Tests
             // What a truncated response looks like when thinking ate the output cap.
             Assert.Throws<FormatException>(
                 () => SummaryParser.Parse("""{"summaries":[{"i":0,"s":"unter""", Batch, 90));
+        }
+
+        // ---- when an item suits watching ----
+
+        [Fact]
+        public void Parse_ReadsBothContextLists()
+        {
+            var result = SummaryParser.Parse(
+                """{"summaries":[{"i":0,"s":"bleak","w":["rain","cold"],"d":["evening","latenight"]}]}""",
+                Batch,
+                90,
+                classifyContext: true);
+
+            var context = Assert.Single(result.Summaries).Context;
+            Assert.Equal(["rain", "cold"], context.Weather);
+            Assert.Equal(["evening", "latenight"], context.Dayparts);
+        }
+
+        [Fact]
+        public void Parse_DropsAWordOutsideTheVocabularyRatherThanMappingIt()
+        {
+            // "drizzly" is not a more precise "rain" — a row asking for rain matches
+            // it never, so guessing what it meant is how a closed vocabulary reopens.
+            var result = SummaryParser.Parse(
+                """{"summaries":[{"i":0,"s":"bleak","w":["drizzly","rain","overcast"],"d":["dusk"]}]}""",
+                Batch,
+                90,
+                classifyContext: true);
+
+            var context = Assert.Single(result.Summaries).Context;
+            Assert.Equal(["rain"], context.Weather);
+            Assert.Empty(context.Dayparts);
+        }
+
+        [Fact]
+        public void Parse_KeepsTheSummaryWhenEveryContextWordIsRejected()
+        {
+            // The summary is the expensive half of the answer. Losing it over a
+            // stray word would throw away the costly part to protect the cheap one.
+            var result = SummaryParser.Parse(
+                """{"summaries":[{"i":0,"s":"a real summary","w":["drizzly"],"d":["dusk"]}]}""",
+                Batch,
+                90,
+                classifyContext: true);
+
+            var summary = Assert.Single(result.Summaries);
+            Assert.Equal("a real summary", summary.Text);
+            Assert.Equal(0, result.DiscardedCount);
+        }
+
+        [Fact]
+        public void Parse_TreatsAnEmptyContextAnswerAsReal()
+        {
+            // Most of the library is expected to land here: a broad comedy suits any
+            // hour and any sky, and two empty lists is the correct answer for it.
+            var result = SummaryParser.Parse(
+                """{"summaries":[{"i":0,"s":"broad comedy","w":[],"d":[]}]}""",
+                Batch,
+                90,
+                classifyContext: true);
+
+            var context = Assert.Single(result.Summaries).Context;
+            Assert.Empty(context.Weather);
+            Assert.Empty(context.Dayparts);
+        }
+
+        [Fact]
+        public void Parse_IgnoresContextForAPassThatNeverAskedForIt()
+        {
+            // A model volunteering fields a pass did not request must not write
+            // anything into the store.
+            var result = SummaryParser.Parse(
+                """{"summaries":[{"i":0,"s":"bleak","w":["rain"],"d":["evening"]}]}""",
+                Batch,
+                90);
+
+            Assert.Empty(Assert.Single(result.Summaries).Context.Weather);
+        }
+
+        [Fact]
+        public void Parse_DeduplicatesContextWordsCaseInsensitively()
+        {
+            var result = SummaryParser.Parse(
+                """{"summaries":[{"i":0,"s":"bleak","w":["Rain","rain","RAIN"],"d":[]}]}""",
+                Batch,
+                90,
+                classifyContext: true);
+
+            Assert.Equal(["rain"], Assert.Single(result.Summaries).Context.Weather);
+        }
+
+        [Fact]
+        public void Plan_QueuesAnItemWhoseSummaryIsCurrentButWasNeverJudgedForContext()
+        {
+            // The state every stored summary is in the first time the setting is
+            // switched on. Without this, it would appear to do nothing.
+            var item = Item("The Wrestler", LongOverview);
+            var stored = Stored(item, LongOverview);
+
+            var plan = SummaryPlan.Create([item], new Dictionary<Guid, CondensedSummary> { [item.Id] = stored }, 140, classifyContext: true);
+
+            Assert.Equal(SummaryPlan.SummaryReason.ContextMissing, Assert.Single(plan.Work).Reason);
+        }
+
+        [Fact]
+        public void Plan_LeavesAJudgedItemAloneEvenWhenItSuitsNothing()
+        {
+            // An empty answer is a judgement that was paid for. Re-queueing it would
+            // re-buy most of the library on every pass, since most of it lands empty.
+            var item = Item("The Wrestler", LongOverview);
+            var stored = Stored(item, LongOverview) with
+            {
+                ContextSourceHash = SummaryPlan.HashOverview(LongOverview),
+            };
+
+            var plan = SummaryPlan.Create([item], new Dictionary<Guid, CondensedSummary> { [item.Id] = stored }, 140, classifyContext: true);
+
+            Assert.Empty(plan.Work);
+            Assert.Equal(1, plan.UpToDate);
+        }
+
+        [Fact]
+        public void Plan_ReJudgesAnItemWhoseOverviewWasRewrittenUnderneathIt()
+        {
+            var item = Item("The Wrestler", LongOverview);
+            var stored = Stored(item, LongOverview) with
+            {
+                ContextSourceHash = SummaryPlan.HashOverview("something else entirely"),
+            };
+
+            var plan = SummaryPlan.Create([item], new Dictionary<Guid, CondensedSummary> { [item.Id] = stored }, 140, classifyContext: true);
+
+            // Stale wins: the summary itself is fine, so this is the context hash
+            // catching a rewrite the summary hash agreed with.
+            Assert.Equal(SummaryPlan.SummaryReason.ContextMissing, Assert.Single(plan.Work).Reason);
+        }
+
+        [Fact]
+        public void Plan_IgnoresContextEntirelyWhenTheSettingIsOff()
+        {
+            var item = Item("The Wrestler", LongOverview);
+
+            var plan = SummaryPlan.Create([item], new Dictionary<Guid, CondensedSummary> { [item.Id] = Stored(item, LongOverview) }, 140);
+
+            Assert.Empty(plan.Work);
+        }
+
+        // ---- the prompt half of the contract ----
+
+        [Fact]
+        public void Prompt_AsksForTheContextFieldsOnlyWhenClassifying()
+        {
+            var without = SummaryPromptBuilder.BuildSystemPrompt(90);
+            var with = SummaryPromptBuilder.BuildSystemPrompt(90, classifyContext: true);
+
+            Assert.DoesNotContain("\"w\"", without, StringComparison.Ordinal);
+            Assert.Contains("\"w\"", with, StringComparison.Ordinal);
+            Assert.Contains("\"d\"", with, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_ListsTheWholeVocabularyAndNothingElse()
+        {
+            var prompt = SummaryPromptBuilder.BuildSystemPrompt(90, classifyContext: true);
+
+            foreach (var word in ContextVocabulary.Weather)
+            {
+                Assert.Contains(word, prompt, StringComparison.Ordinal);
+            }
+
+            foreach (var word in ContextVocabulary.Dayparts)
+            {
+                Assert.Contains(word, prompt, StringComparison.Ordinal);
+            }
+        }
+
+        [Theory]
+        [InlineData(false, false, """{"summaries":[{"i":0,"s":"..."},{"i":1,"s":"..."}]}""")]
+        [InlineData(true, false, "\"t\":[")]
+        [InlineData(false, true, "\"w\":[")]
+        [InlineData(true, true, "\"t\":[")]
+        public void Prompt_ExampleObjectMatchesTheFieldsBeingAskedFor(
+            bool tags,
+            bool context,
+            string expected)
+        {
+            // The example is the prompt's half of the schema contract. When the two
+            // disagree the model writes the missing field into the previous string.
+            var prompt = SummaryPromptBuilder.BuildSystemPrompt(
+                90, tagCeiling: tags ? 6 : 0, allowInventedTags: false, classifyContext: context);
+
+            Assert.Contains(expected, prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_NeverAsksForTagsOrContextItDidNotEnable()
+        {
+            var plain = SummaryPromptBuilder.BuildSystemPrompt(90);
+
+            Assert.DoesNotContain("\"t\":[", plain, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"w\":[", plain, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"d\":[", plain, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_TellsTheModelThatEmptyIsTheCommonAnswer()
+        {
+            // The failure this resists: a vocabulary applied to every item stops
+            // selecting anything.
+            var prompt = SummaryPromptBuilder.BuildSystemPrompt(90, classifyContext: true);
+
+            Assert.Contains("empty lists", prompt, StringComparison.Ordinal);
         }
     }
 }

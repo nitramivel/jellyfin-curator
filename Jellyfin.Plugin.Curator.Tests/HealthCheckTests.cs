@@ -236,6 +236,41 @@ namespace Jellyfin.Plugin.Curator.Tests
                 "homescreen.nostartuptrigger"));
         }
 
+        /// <summary>
+        /// The purest shape of what this panel is for. Publishing the context rows
+        /// and buying their contents are deliberately separate settings, so turning
+        /// on only the first leaves two rows that never appear — with everything
+        /// working, nothing throwing, and no log line naming a cause.
+        /// </summary>
+        [Fact]
+        public void ContextRowsWithNothingClassifiedIsAProblemWorthNaming()
+        {
+            var facts = Healthy() with { ContextRowsEnabled = true, ItemsWithContext = 0 };
+
+            var finding = Find(facts, "context.unclassified");
+
+            Assert.Equal(HealthSeverity.Warning, finding.Severity);
+            Assert.Contains("Summaries tab", finding.Detail, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AClassifiedLibrarySaysNothing()
+        {
+            Assert.False(Has(
+                Healthy() with { ContextRowsEnabled = true, ItemsWithContext = 212 },
+                "context.unclassified"));
+        }
+
+        [Fact]
+        public void NothingIsSaidAboutContextWhenTheRowsAreOff()
+        {
+            // An unclassified library is the normal state for the great majority of
+            // installs, which have never asked for these rows.
+            Assert.False(Has(
+                Healthy() with { ContextRowsEnabled = false, ItemsWithContext = 0 },
+                "context.unclassified"));
+        }
+
         // ---- library ----
 
         [Fact]

@@ -46,7 +46,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
         }
 
         /// <inheritdoc />
-        public int? RegisterSections(IReadOnlyList<(DesiredSection Section, Guid CategoryId)> sections)
+        public int? RegisterSections(IReadOnlyList<SectionRegistrationRequest> sections)
         {
             ArgumentNullException.ThrowIfNull(sections);
 
@@ -58,18 +58,22 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
 
             var (register, payloadFactory) = entryPoint.Value;
 
-            var assemblyName = typeof(CuratorSectionResults).Assembly.FullName;
-            var className = typeof(CuratorSectionResults).FullName;
-            if (assemblyName is null || className is null)
-            {
-                _logger.LogWarning("Curator: could not name the results handler assembly; home screen rows cannot be registered");
-                return null;
-            }
-
             var registered = 0;
-            foreach (var (section, categoryId) in sections)
+            foreach (var request in sections)
             {
-                var json = SectionRegistration.BuildPayload(section, categoryId, assemblyName, className);
+                var section = request.Section;
+                var assemblyName = request.ResultsType.Assembly.FullName;
+                var className = request.ResultsType.FullName;
+                if (assemblyName is null || className is null)
+                {
+                    _logger.LogWarning(
+                        "Curator: could not name the results handler for '{Name}'; that row cannot be registered",
+                        section.Name);
+                    continue;
+                }
+
+                var json = SectionRegistration.BuildPayload(
+                    section, request.AdditionalData, assemblyName, className);
 
                 try
                 {

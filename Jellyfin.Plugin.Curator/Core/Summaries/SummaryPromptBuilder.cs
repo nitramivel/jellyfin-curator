@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using Jellyfin.Plugin.Curator.Core.Context;
 using Jellyfin.Plugin.Curator.Core.Models;
 
 namespace Jellyfin.Plugin.Curator.Core.Summaries
@@ -44,25 +45,63 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         /// last resort when nothing in it names what the rewrite just said.
         /// </param>
         /// <returns>The system prompt.</returns>
-        public static string BuildSystemPrompt(int maxLength, int tagCeiling = 0, bool allowInventedTags = false)
+        /// <param name="classifyContext">
+        /// Whether the model is also asked when an item suits watching — the weather
+        /// outside and the part of the day. Judged last, after the rewrite and after
+        /// the tags, for the reason the tag section already gives.
+        /// </param>
+        public static string BuildSystemPrompt(
+            int maxLength,
+            int tagCeiling = 0,
+            bool allowInventedTags = false,
+            bool classifyContext = false)
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(maxLength, 20);
 
             var body = tagCeiling > 0
                 ? SystemPromptTemplate.Replace(TagSectionToken, TagSection, StringComparison.Ordinal)
-                    .Replace(OutputToken, TagOutput, StringComparison.Ordinal)
                     .Replace(
                         VocabularyToken,
                         allowInventedTags ? InventedVocabulary : FixedVocabulary,
                         StringComparison.Ordinal)
                 : SystemPromptTemplate.Replace(TagSectionToken, string.Empty, StringComparison.Ordinal)
-                    .Replace(OutputToken, PlainOutput, StringComparison.Ordinal)
                     .Replace(VocabularyToken, string.Empty, StringComparison.Ordinal);
+
+            body = body
+                .Replace(
+                    ContextSectionToken,
+                    classifyContext ? ContextSection : string.Empty,
+                    StringComparison.Ordinal)
+                .Replace(OutputToken, OutputFor(tagCeiling > 0, classifyContext), StringComparison.Ordinal);
 
             return body
                 .Replace(MaxLengthToken, maxLength.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
-                .Replace(TagCeilingToken, tagCeiling.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
+                .Replace(TagCeilingToken, tagCeiling.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
+                .Replace(WeatherWordsToken, Join(ContextVocabulary.Weather), StringComparison.Ordinal)
+                .Replace(DaypartWordsToken, Join(ContextVocabulary.Dayparts), StringComparison.Ordinal);
         }
+
+        /// <summary>
+        /// The example object, which must name exactly the fields the schema declares.
+        /// </summary>
+        /// <remarks>
+        /// Four combinations rather than one object with optional fields, because
+        /// strict structured output requires every declared property: a prompt that
+        /// asks for a field the schema forbids leaves the model with no legal place to
+        /// put it, and it writes the value into the previous string instead. That is
+        /// not a hypothetical — it corrupted 17 of 232 stored summaries the one time
+        /// the two drifted apart. Change one of these and change
+        /// <c>BuildSummarySchema</c> in <b>both</b> structured-output providers.
+        /// </remarks>
+        private static string OutputFor(bool includeTags, bool includeContext) => (includeTags, includeContext) switch
+        {
+            (false, false) => PlainOutput,
+            (true, false) => TagOutput,
+            (false, true) => ContextOutput,
+            (true, true) => TagAndContextOutput,
+        };
+
+        private static string Join(IReadOnlyList<string> words) => string.Join(", ", words);
 
         /// <summary>The placeholder the tag instructions are spliced into.</summary>
         private const string TagSectionToken = "{TAG_SECTION}";
@@ -133,6 +172,54 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             {VOCABULARY}
             """;
 
+        /// <summary>The placeholder the context instructions are spliced into.</summary>
+        private const string ContextSectionToken = "{CONTEXT_SECTION}";
+
+        /// <summary>The placeholder the weather vocabulary is spliced into.</summary>
+        private const string WeatherWordsToken = "{WEATHER_WORDS}";
+
+        /// <summary>The placeholder the daypart vocabulary is spliced into.</summary>
+        private const string DaypartWordsToken = "{DAYPART_WORDS}";
+
+        /// <summary>
+        /// The context half of the task, added only when context is being classified.
+        /// </summary>
+        /// <remarks>
+        /// Two things this has to resist, and they pull in opposite directions. A
+        /// model asked "what weather suits this" will happily answer for everything,
+        /// and a vocabulary applied to every item stops selecting anything — so the
+        /// empty answer is named as the correct one and the bar is set at "the
+        /// weather is part of why you would reach for it". And a model given free
+        /// rein invents neighbouring words — drizzly, overcast, grey — which is
+        /// exactly the failure <c>AllowInventedTags</c> exists to describe, except
+        /// that here nothing downstream can absorb it: a row asking for "rain" simply
+        /// never matches "drizzly", so a coined word is a silently discarded
+        /// judgement rather than an inconsistent one.
+        /// </remarks>
+        private const string ContextSection =
+            """
+
+            Each item also gets two lists saying WHEN it suits watching. Do this LAST, after the rewrite,
+            and let the rewrite decide — it is the same judgement about what watching the thing is like,
+            asked about the room it is being watched in.
+
+            "w" is the weather. Choose only from: {WEATHER_WORDS}
+            "d" is the part of the day. Choose only from: {DAYPART_WORDS}
+
+            Use ONLY those words, exactly as spelled. A word outside the list is thrown away, so "drizzly"
+            or "overcast" is not a more precise answer than "rain" or "cloudy" — it is no answer.
+
+            Be sparing. The bar is that the condition is part of WHY someone would reach for it, not that
+            it would be tolerable then. A bleak, slow film genuinely belongs to a grey wet evening; a
+            broad comedy suits any hour and any sky, and the correct answer for it is two empty lists.
+            Most items should get few words or none. An item that claims every kind of weather has
+            told the row nothing, and a vocabulary applied to everything stops selecting anything.
+
+            Judge the FEEL, not the setting. A film set in the snow is not automatically a snowy-day
+            film, and a summer-holiday film shot in the sun may be exactly what a cold January night
+            wants. Ask what the weather outside the window should be doing while someone watches it.
+            """;
+
         private const string PlainOutput =
             """
             {"summaries":[{"i":0,"s":"..."},{"i":1,"s":"..."}]}
@@ -141,6 +228,16 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         private const string TagOutput =
             """
             {"summaries":[{"i":0,"s":"...","t":["...","..."]},{"i":1,"s":"...","t":[]}]}
+            """;
+
+        private const string ContextOutput =
+            """
+            {"summaries":[{"i":0,"s":"...","w":["rain"],"d":["evening","latenight"]},{"i":1,"s":"...","w":[],"d":[]}]}
+            """;
+
+        private const string TagAndContextOutput =
+            """
+            {"summaries":[{"i":0,"s":"...","t":["..."],"w":["rain"],"d":["evening"]},{"i":1,"s":"...","t":[],"w":[],"d":[]}]}
             """;
 
         private const string SystemPromptTemplate =
@@ -171,7 +268,7 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             - Keep concrete texture over abstraction — "sun-bleached and cruel" beats "atmospheric".
             - No spoilers for endings, and no character names unless the name IS the point.
             - Plain prose. No markdown, no quotes around the summary, no trailing full stop needed.
-            {TAG_SECTION}
+            {TAG_SECTION}{CONTEXT_SECTION}
             Respond with a single JSON object and nothing else — no prose, no code fences:
             {OUTPUT}
             """;

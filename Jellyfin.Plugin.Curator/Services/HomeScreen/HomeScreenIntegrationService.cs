@@ -107,22 +107,32 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             // Only categories that actually have a playlist somewhere can render a row.
             var claimed = categories
                 .Where(category => category.UserPlaylists.Exists(link => link.PlaylistId is not null))
-                .Select(category => (
-                    Section: new DesiredSection(
+                .Select(category => new SectionRegistrationRequest(
+                    new DesiredSection(
                         SectionConfigMerger.SectionIdFor(category.Id),
                         category.Name,
                         category.Members.Count),
-                    CategoryId: category.Id))
+                    category.Id.ToString("N"),
+                    typeof(CuratorSectionResults)))
                 .ToList();
 
+            // The two context rows, which have no playlist behind them and no
+            // category either. They join the registration list and the section
+            // settings write, but never the Collection Sections path below — that
+            // plugin resolves a row by playlist name, and these have no playlist to
+            // name. See CuratorContextSectionResults for why they cannot have one.
+            var contextRows = ContextRows(config);
+            var registrations = claimed.Concat(contextRows).ToList();
+
             var desired = claimed.ConvertAll(entry => entry.Section);
+            var desiredWithContext = registrations.ConvertAll(entry => entry.Section);
 
             try
             {
                 using var client = await CreateClientAsync().ConfigureAwait(false);
 
                 var integrated = config.SectionDelivery == SectionDelivery.Integrated
-                    && _registrar.RegisterSections(claimed) is not null;
+                    && _registrar.RegisterSections(registrations) is not null;
 
                 if (integrated)
                 {
@@ -162,11 +172,17 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 // it overrides what a registration claims. Done after the
                 // registration above, because a section has to exist before its
                 // settings mean anything.
-                await WriteSectionSettingsAsync(client, desired, cancellationToken).ConfigureAwait(false);
+                //
+                // The context rows are included only when they were actually
+                // registered: under the Collection Sections path they do not exist,
+                // and writing settings for a section nothing registered leaves an
+                // entry pointing at nothing.
+                var settingsFor = integrated ? desiredWithContext : desired;
+                await WriteSectionSettingsAsync(client, settingsFor, cancellationToken).ConfigureAwait(false);
 
-                if (config.AutoEnableSections && desired.Count > 0)
+                if (config.AutoEnableSections && settingsFor.Count > 0)
                 {
-                    await EnableSectionsForUsersAsync(client, desired, targetUserIds, cancellationToken).ConfigureAwait(false);
+                    await EnableSectionsForUsersAsync(client, settingsFor, targetUserIds, cancellationToken).ConfigureAwait(false);
                 }
                 else if (!config.AutoEnableSections)
                 {
@@ -191,6 +207,57 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 return SectionSyncResult.Failed;
             }
         }
+
+        /// <summary>
+        /// The weather and time-of-day rows, when they are switched on.
+        /// </summary>
+        /// <remarks>
+        /// Their names are whatever the owner typed and do not track the sky, because
+        /// a row's display text is fixed at registration and registration happens at
+        /// startup and on sync. A title reading "For a rainy night" would therefore be
+        /// a claim about the weather several hours ago — worse than a general one,
+        /// since the row's <em>contents</em> are exact and the name should not promise
+        /// precision it cannot keep.
+        /// <para>
+        /// The member count decides card shape through <c>PortraitThreshold</c>, and
+        /// the configured row length is the honest answer for it — these rows have no
+        /// stored membership to count.
+        /// </para>
+        /// </remarks>
+        private static List<SectionRegistrationRequest> ContextRows(PluginConfiguration config)
+        {
+            if (!config.ContextRows)
+            {
+                return [];
+            }
+
+            var size = Math.Max(0, config.MaxContextRowItems);
+
+            return
+            [
+                new SectionRegistrationRequest(
+                    new DesiredSection(
+                        SectionConfigMerger.WeatherSectionId,
+                        Named(config.WeatherRowName, "Picks for the Weather"),
+                        size),
+                    CuratorContextSectionResults.WeatherRowKey,
+                    typeof(CuratorContextSectionResults)),
+                new SectionRegistrationRequest(
+                    new DesiredSection(
+                        SectionConfigMerger.DaypartSectionId,
+                        Named(config.DaypartRowName, "Picks for the Hour"),
+                        size),
+                    CuratorContextSectionResults.DaypartRowKey,
+                    typeof(CuratorContextSectionResults)),
+            ];
+        }
+
+        /// <summary>
+        /// A row name that is never blank — an empty display text renders as an
+        /// unlabelled row rather than as a hidden one.
+        /// </summary>
+        private static string Named(string? configured, string fallback)
+            => string.IsNullOrWhiteSpace(configured) ? fallback : configured.Trim();
 
         /// <summary>
         /// Sets the row order and card shape for Curator's sections in Home Screen

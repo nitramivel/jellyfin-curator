@@ -64,6 +64,9 @@ Jellyfin.Plugin.Curator/
 │   │                         #   into one ranked list; per-user playlist identity)
 │   ├── Scheduling/           # ScheduleSpec + ScheduleTranslator (the page's one
 │   │                         #   cadence <-> Jellyfin's trigger list)
+│   ├── Context/              # ViewingContext (the closed weather/daypart
+│   │                         #   vocabulary, WeatherReading), WeatherCodes (WMO
+│   │                         #   code + temperature -> words), ContextRanker
 │   ├── Health/               # HealthCheck (facts in, findings out — pure)
 │   ├── Usage/                # UsageRollup + models — every billable call reduced
 │   │                         #   to cost by model, by pass and by day
@@ -79,6 +82,9 @@ Jellyfin.Plugin.Curator/
 │   ├── MaintenanceTask.cs          # IScheduledTask, daily; reconcile + prune
 │   ├── RefreshRecommendationsTask.cs # IScheduledTask, 6-hourly; per-viewer rows
 │   ├── HealthCheckTask.cs          # IScheduledTask, daily; read-only diagnosis
+│   ├── Context/              # IWeatherService + OpenMeteoWeatherService (no API
+│   │                         #   key; caches coordinates for the process and
+│   │                         #   conditions for 30 min, refreshed off the render path)
 │   ├── Library/              # LibraryScanner, UserActivityProvider
 │   ├── Llm/                  # ILlmProvider + Anthropic/Google/Grok/OpenAI/compatible,
 │   │                         #   TransientHttpRetry (shared 429/5xx backoff), factory,
@@ -94,6 +100,8 @@ Jellyfin.Plugin.Curator/
 │   └── HomeScreen/           # HomeScreenIntegrationService (picks the path),
 │                             #   HomeScreenSectionRegistrar (reflects into the other
 │                             #   plugin), CuratorSectionResults (answers for a row),
+│                             #   CuratorContextSectionResults (answers for the two
+│                             #   weather/time rows, computed at render time),
 │                             #   API key provider
 ├── Api/CuratorController.cs  # Admin: Status, Run, runs, delete category + playlists
 └── Configuration/            # PluginConfiguration + configPage.html
@@ -117,16 +125,38 @@ every one of these was a real failure on a real server before it was a rule.
    model to reference an item the user does not own. Do not "simplify" by sending
    real IDs.
 2. **Two library rows for one title are collapsed before the model sees them,
-   and the match is strict.** `DuplicateItems` keys on kind, trimmed lowercase
-   title **and** year — nothing softer. The failure mode is worse than the
-   problem: on the library this was built against, "Freaky Friday" exists as 2003
-   and 1995, and a title-only rule silently removes a film. Do not add fuzzy
-   matching or strip "director's cut" from titles; two rows a viewer calls the
-   same film already share a title, which is why they look duplicated. The longest
-   runtime wins, falling back to library order so the choice is stable rather than
-   alternating and churning the row. **Fold the activity** through the alias map —
-   history is recorded against whichever row was played, so collapsing without
-   folding makes a film the viewer has seen read as unseen.
+   and every test used is an exact equality.** `DuplicateItems` asks three
+   questions in order: Jellyfin's own alternate-version link (`Video.PrimaryVersionId`,
+   read into `MediaItemRecord.PrimaryVersionId`), then the item's metadata-provider
+   ID (`ExternalId`, `tmdb:78`), then kind + trimmed lowercase title + year.
+   Do not add fuzzy matching or strip "director's cut" from titles — the failure
+   mode is worse than the problem: "Freaky Friday" exists as 2003 and 1995, and a
+   title-only rule silently removes a film.
+   **Title and year alone were never enough, and the reason is that they answer
+   the wrong question.** Two cuts of a film are usually the case where the titles
+   *disagree* — "Blade Runner" (1982) beside "Blade Runner: The Final Cut" (2007)
+   is one film under two titles and two years. The provider ID catches exactly
+   that while keeping Freaky Friday apart, because those are two TMDb entries.
+   An alternate version keys on **whatever its primary keys on**, so a merged pair
+   joins up even when title, year and provider ID all disagree; `VersionRootOf`
+   walks that link, and a cycle settles on the lowest ID **in the cycle** rather
+   than in everything walked to reach it — otherwise two members of one cycle
+   answer differently and the group splits. The longest runtime wins, except that
+   a row Jellyfin considers an alternate always loses to one it does not: every
+   other client draws the primary and hides the alternate behind a version picker,
+   so keeping the alternate puts a card on the home screen that appears nowhere
+   else on the server. **Fold the activity** through the alias map — history is
+   recorded against whichever row was played, so collapsing without folding makes
+   a film the viewer has seen read as unseen.
+   **The collapse is also applied on the way to the screen**, in both results
+   classes, via `DuplicateItems.SurvivingIds`. The run-time collapse only fixes
+   categories built after it; a category stored last week holds both IDs and its
+   playlist keeps showing two posters until the next weekly run. The backstop is
+   the same pure function over the same keys deliberately — a second opinion about
+   what a duplicate is would be a second answer to disagree with.
+   Note `MediaItemRecord` now carries two fields the model must never see.
+   `PromptBuilder` writes its fields one at a time rather than reflecting over the
+   record, which is the only thing keeping rule 1 true of them.
 3. **Never resolve our own playlists by name.** Always by stored GUID, with
    recovery via the `CuratorCategory` provider-ID tether. Duplicate playlist names
    are legal in Jellyfin; SmartLists removed exactly this fallback for good reason.
@@ -445,6 +475,14 @@ every one of these was a real failure on a real server before it was a rule.
    `summaries.failing` (the last pass lost more than half its items). Both need a
    real sample before firing, because a handful of items whose scraped tags were all
    trivia genuinely produce nothing.
+   **`context.unclassified` is the fourth**, and the cleanest illustration of the
+   panel's subject: the setting that *publishes* the two context rows and the
+   setting that *buys* their contents are deliberately separate (rule 23), so
+   turning on only the first leaves two rows that never appear, with every service
+   healthy and no log line naming a cause. It counts items carrying a
+   `ContextSourceHash`, never items with non-empty affinity lists — most of a
+   correctly classified library is expected to come back empty, and counting the
+   lists would report a working install as broken.
    **`homescreen.nostartuptrigger` is the third**, and the purest example of what
    this panel is for: Publish Home Screen Rows lost its startup trigger, and after
    the next restart all 53 rows were absent while every playlist behind them stayed
@@ -480,7 +518,14 @@ every one of these was a real failure on a real server before it was a rule.
      report gets read wrongly.
 21. **Ask before adding dependencies** beyond the Jellyfin packages and an
    HTTP/JSON stack. Current runtime dependencies: none beyond Jellyfin. Test-only:
-   xUnit. **This is why the home screen integration is reflection and HTTP rather
+   xUnit. **Open-Meteo is a network dependency and not a package one** — plain
+   HTTP and JSON, no account, no API key, nothing to expire. That last part is why
+   it was chosen over the alternatives: a credential is something the owner has to
+   obtain before the feature works at all and replace when it lapses, and a weather
+   row silently going blank because a key expired is precisely the quiet failure
+   rule 19 exists to chase. It is also the only outbound call Curator makes that is
+   not to a model provider, so it degrades to "no weather row" and never to an
+   error. **This is why the home screen integration is reflection and HTTP rather
    than a project reference.** Neither plugin is on NuGet, so referencing one means
    vendoring somebody else's DLL — and worse, a plugin assembly whose reference
    cannot be resolved does not degrade, it fails to load. Curator would cease to
@@ -506,6 +551,57 @@ every one of these was a real failure on a real server before it was a rule.
      asked for its contents. That is handled by the section settings write and the
      per-user enabled list dropping it, so the row is never drawn; the handler
      returning empty for an unknown category is the backstop, not the mechanism.
+
+23. **The context rows are bought once and computed on every render, and the two
+   halves are separate settings for a reason.** `ClassifyViewingContext` rides on
+   the *existing* condensing call — the model writes the rewrite, then the tags,
+   then judges what weather and what part of the day the thing suits — so it costs
+   output tokens and no extra input. A pass of its own would re-send the whole item
+   list to ask one more question. `ContextRows` then publishes two home screen rows
+   that are computed **when the home screen asks**, in `CuratorContextSectionResults`,
+   from the cached affinities plus a cached weather reading. That is the only way a
+   row whose whole claim is "this suits right now" can be true; a playlist rebuilt
+   on a schedule would show the weather at the last refresh.
+   What it costs is the Collection Sections path — that plugin resolves a row by
+   playlist name and these have no playlist — so **the context rows exist only under
+   `Integrated`**, and `SyncSectionsAsync` keeps them out of the `desired` list that
+   feeds Collection Sections while including them in the section-settings write.
+   Four things that will break this if done casually:
+   - **The vocabulary is closed, and closed in three places at once.** The prompt
+     lists the words, both structured-output schemas constrain the arrays to them
+     with `enum`, and `SummaryParser` drops anything else without mapping it onto a
+     neighbour. "drizzly" is not a more precise "rain" — a row matches by string
+     equality, so a coined word is a judgement that was paid for and silently
+     discarded. Adding a word means touching `ContextVocabulary`, and the rest
+     follows from it.
+   - **Two switches means four response shapes**, and rule 17's schema trap applies
+     unchanged: strict mode requires every declared property, so a field the prompt
+     asks for and the schema omits gets written into the previous string.
+     `SummaryShapes` is the single place that maps switches to a shape; both
+     providers read it, and `LlmProviderTests` pins all four in both dialects.
+     Context fields come **last** in `propertyOrdering` so the rewrite is committed
+     to before the judgement is made from it.
+   - **`ContextSourceHash` is what makes switching it on incremental**, and it is a
+     second hash of the same overview the summary is keyed on. That looks redundant
+     and is not: without it every stored summary reads as current and the setting
+     appears to do nothing. An item judged to suit *nothing* stores empty lists
+     **and** the hash — most of the library is expected to land there by design, and
+     treating empty as unanswered would re-buy most of the library every pass.
+   - **Nothing on the render path may fetch, block, or throw.** Home Screen Sections
+     calls `GetResults` synchronously inside the one request that draws the whole
+     page. `IWeatherService.Current` answers from cache and starts a background
+     refresh; the ranking is set arithmetic over GUIDs already in memory, reading
+     no user data and issuing no library query until the surviving handful are
+     resolved. Watch history is deliberately not consulted — the recommendation row
+     answers "what next", this one answers "what suits now", and the honest answer
+     to that is often something they have loved before.
+   Two smaller consequences worth knowing. A row's **display text is fixed at
+   registration**, so the names are general (`Picks for the Weather`) and must not
+   be made to track the sky — registration happens at startup and on sync, so a
+   title reading "For a rainy night" would be a claim about the weather hours ago.
+   And the weather cache is in memory like the registrations are, so
+   `PublishHomeScreenRowsTask` primes it: otherwise the first person to open
+   Jellyfin after a restart is the one who does not get the feature.
 
 ## Verified integration facts
 
@@ -796,10 +892,21 @@ release or two, and only remove it once a few restarts have been survived.
   fill is *not painted* and so receives no pointer events without
   `pointer-events: all`, and the bars must be `pointer-events: none` or they
   swallow the hover meant for the band behind them.
+- **A dynamic list of per-user text boxes follows the `.curatorCheck` rule.**
+  `renderUserLocations` builds the weather-location boxes with `innerHTML` and
+  plain `<input type="text" class="emby-input">`, because customized built-in
+  elements upgrade unreliably in generated markup. Every user gets a box rather
+  than only those already carrying a value — an empty box that says what it falls
+  back to beats an add-a-row button — and a blank one is **omitted** on save
+  rather than stored as an empty string, so "no location" stays one state.
 - **Settings live on five tabs**: Model (profiles, request, spend), Library
   (what is sent and who for), Categories (the two pools' size and count), Home
-  screen (rows and the recommendation playlist), Summaries (the condensing pass
-  and its settings). **Three tabs are NOT part of the settings form** and hide the
+  screen (rows, the recommendation playlist, and the two context rows), Summaries
+  (the condensing pass, tag consolidation, and the context judgement that fills
+  those rows). Note the context feature deliberately straddles two tabs, which is
+  rule "put a new setting where its *subject* is" working as intended: what is
+  bought is a property of the condensing pass, and what is shown is a home screen
+  row. **Three tabs are NOT part of the settings form** and hide the
   save row: Runs, Schedule and Usage — Schedule writes through Jellyfin's
   `ITaskManager` rather than plugin config, and Usage only reads, so the form's
   Save would do nothing for either. Put a new setting where its *subject* is, not
@@ -862,7 +969,21 @@ round-trip — are confirmed working. What remains:
 4. **Whole-series playlist members** — series go in as `Series` LinkedChildren
    without episode expansion. Home rows render correctly; in-library playback of
    such a playlist may behave oddly.
-5. **Curator's own home screen rows.** The registration contract was read out of
+5. **The weather and time-of-day rows.** Everything decidable without a server is
+   pinned by tests — the vocabulary, the WMO mapping, the ranking, all four
+   response shapes in both schema dialects, and the fact that
+   `CuratorContextSectionResults` declares exactly one public `GetResults`. What
+   they cannot show is a row rendering, and there are three specific unknowns.
+   No live Open-Meteo call has been made from this machine, so the geocoding and
+   forecast response shapes are read from their documentation rather than
+   observed. No model has yet been asked to judge context, so how sparing the
+   prompt actually makes it is unmeasured — the failure to watch for is the
+   opposite of the one tags had: a model that says "rain" about everything makes
+   both rows meaningless, and the fix is the prompt, not the ranker. And the
+   `enum` keyword on an array's `items` is used in both provider dialects but has
+   only been exercised against xAI's and Gemini's documented schema support, not
+   against a live call.
+6. **Curator's own home screen rows.** The registration contract was read out of
    the 2.5.11.0 DLL and then exercised against it — the payload Curator builds
    deserializes into that plugin's `SectionRegisterPayload` with every field
    populated, and its `HomeScreenSectionPayload` deserializes into
