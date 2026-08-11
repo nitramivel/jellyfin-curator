@@ -303,7 +303,7 @@ namespace Jellyfin.Plugin.Curator.Services
             // rather than at the playlist, so the model never spends a slot on the
             // second copy and the prompt is that much smaller.
             var collapsed = config.CollapseDuplicateVersions
-                ? DuplicateItems.Collapse(scanned)
+                ? DuplicateItems.Collapse(scanned, config.MatchDuplicatesByProviderId)
                 : new DuplicateItems.CollapseResult(scanned, new Dictionary<Guid, Guid>());
             var records = collapsed.Items;
 

@@ -56,17 +56,21 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         /// </para>
         /// </remarks>
         /// <param name="section">The row to register.</param>
-        /// <param name="categoryId">The category whose playlist the row shows.</param>
+        /// <param name="additionalData">
+        /// What the row is about: a category GUID for a category row, or which of the
+        /// two context rows this is. Untrusted on the way back — see the remarks.
+        /// </param>
         /// <param name="resultsAssembly">Full name of the assembly holding the results class.</param>
         /// <param name="resultsClass">Full name of the results class.</param>
         /// <returns>The registration as a JSON object.</returns>
         public static string BuildPayload(
             DesiredSection section,
-            Guid categoryId,
+            string additionalData,
             string resultsAssembly,
             string resultsClass)
         {
             ArgumentNullException.ThrowIfNull(section);
+            ArgumentNullException.ThrowIfNull(additionalData);
             ArgumentException.ThrowIfNullOrEmpty(resultsAssembly);
             ArgumentException.ThrowIfNullOrEmpty(resultsClass);
 
@@ -80,7 +84,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
                 // that is how "Because You Watched" becomes three rows. A category
                 // is one row.
                 ["limit"] = 1,
-                ["additionalData"] = categoryId.ToString("N"),
+                ["additionalData"] = additionalData,
                 ["resultsAssembly"] = resultsAssembly,
                 ["resultsClass"] = resultsClass,
                 ["resultsMethod"] = ResultsMethodName,

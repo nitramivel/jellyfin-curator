@@ -56,6 +56,10 @@ namespace Jellyfin.Plugin.Curator.Core.Health
     /// to true — healthy — so a caller that does not gather it never fires the
     /// finding.
     /// </param>
+    /// <param name="ContextRowsEnabled">Whether the weather and time-of-day rows are switched on.</param>
+    /// <param name="ItemsWithContext">
+    /// Items the condensing pass has actually judged for when they suit watching.
+    /// </param>
     public sealed record HealthFacts(
         DateTime UtcNow,
         DateTime? LastSuccessfulRun = null,
@@ -81,7 +85,9 @@ namespace Jellyfin.Plugin.Curator.Core.Health
         int LastSummaryPassDistilled = 0,
         int LastSummaryPassFailed = 0,
         bool CollectionSectionsRequired = true,
-        bool PublishRowsRunsAtStartup = true);
+        bool PublishRowsRunsAtStartup = true,
+        bool ContextRowsEnabled = false,
+        int ItemsWithContext = 0);
 
     /// <summary>
     /// Looks for the ways Curator goes quietly wrong.
@@ -373,6 +379,22 @@ namespace Jellyfin.Plugin.Curator.Core.Health
                         $"{facts.TargetUserCount - facts.RecommendationPlaylistCount} of {facts.TargetUserCount} viewers have no recommendation playlist"),
                     "They are built at the end of a run and refreshed by the daily cleanup. If this persists, "
                     + "those viewers may have no categories yet."));
+            }
+
+            // Two rows switched on that nothing can fill. This is the purest shape of
+            // what this panel is for: everything involved is working, no log line
+            // names a cause, and the only symptom is two rows that never appear —
+            // because the setting that publishes them and the setting that buys their
+            // contents are deliberately separate, and only one has been turned on.
+            if (facts.ContextRowsEnabled && facts.ItemsWithContext == 0)
+            {
+                findings.Add(new HealthFinding(
+                    "context.unclassified",
+                    HealthSeverity.Warning,
+                    "The weather and time-of-day rows are on, but nothing has been judged for them yet",
+                    "Those rows are filled from a judgement the Condense Summaries pass makes. Switch on "
+                    + "\"Judge when an item suits watching\" on the Summaries tab and run Condense now; until "
+                    + "something is classified, both rows stay empty and are not drawn."));
             }
 
             // Only worth mentioning when it is most of the list. A few spent

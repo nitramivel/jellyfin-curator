@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.Curator.Configuration;
+using Jellyfin.Plugin.Curator.Services.Context;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
@@ -42,11 +44,16 @@ namespace Jellyfin.Plugin.Curator.Services
         private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(10);
 
         private readonly CuratorRunService _runService;
+        private readonly IWeatherService _weatherService;
         private readonly ILogger<PublishHomeScreenRowsTask> _logger;
 
-        public PublishHomeScreenRowsTask(CuratorRunService runService, ILogger<PublishHomeScreenRowsTask> logger)
+        public PublishHomeScreenRowsTask(
+            CuratorRunService runService,
+            IWeatherService weatherService,
+            ILogger<PublishHomeScreenRowsTask> logger)
         {
             _runService = runService;
+            _weatherService = weatherService;
             _logger = logger;
         }
 
@@ -67,6 +74,13 @@ namespace Jellyfin.Plugin.Curator.Services
         public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(progress);
+
+            // The weather cache is in memory too, so it is empty for exactly the same
+            // reason the registrations are. Primed here rather than left to the first
+            // home screen load: that load would draw no weather row and start a
+            // refresh behind it, so the first person to open Jellyfin after a restart
+            // would be the one who does not get the feature.
+            await PrimeWeatherAsync(cancellationToken).ConfigureAwait(false);
 
             if (_runService.IsRunning)
             {
@@ -114,6 +128,61 @@ namespace Jellyfin.Plugin.Curator.Services
                 + "Check that Home Screen Sections is installed and enabled, then run this task again.",
                 MaxAttempts);
             progress.Report(100);
+        }
+
+        /// <summary>
+        /// Fetches the weather for every configured location, so the first home
+        /// screen load after a restart already has one.
+        /// </summary>
+        /// <remarks>
+        /// Never fatal, and never allowed to delay the registrations below — those
+        /// are what stop the home screen being empty, and a weather API being slow or
+        /// unreachable must not cost them their retry budget.
+        /// </remarks>
+        private async Task PrimeWeatherAsync(CancellationToken cancellationToken)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config is null || !config.ContextRows)
+            {
+                return;
+            }
+
+            // Distinct, because the per-user list normally names one or two places
+            // for six viewers, and a free public API should not be asked the same
+            // question six times.
+            var places = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(config.WeatherLocation))
+            {
+                places.Add(config.WeatherLocation.Trim());
+            }
+
+            if (config.WeatherLocationMode == WeatherLocationMode.PerUser
+                && config.UserWeatherLocations is not null)
+            {
+                foreach (var entry in config.UserWeatherLocations)
+                {
+                    if (entry is not null && !string.IsNullOrWhiteSpace(entry.Location))
+                    {
+                        places.Add(entry.Location.Trim());
+                    }
+                }
+            }
+
+            foreach (var place in places)
+            {
+                try
+                {
+                    await _weatherService.RefreshAsync(place, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Curator: could not prime the weather for '{Place}'", place);
+                }
+            }
         }
 
         /// <inheritdoc />

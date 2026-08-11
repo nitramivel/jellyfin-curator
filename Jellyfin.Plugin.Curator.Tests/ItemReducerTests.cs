@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Jellyfin.Plugin.Curator.Core;
 using Jellyfin.Plugin.Curator.Core.Models;
 using MediaBrowser.Controller.Entities;
@@ -41,6 +42,67 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.NotNull(record.Overview);
             Assert.Null(record.SeriesName);
             Assert.Null(record.SeasonNumber);
+        }
+
+        [Fact]
+        public void Reduce_Movie_PrefersTmdbForTheExternalIdentity()
+        {
+            // A fixed provider order, so two rows either carry the same string or
+            // they do not — "whichever scraper ran last" is not an identity.
+            var movie = FullMovie();
+            movie.ProviderIds = new Dictionary<string, string>
+            {
+                ["Imdb"] = "tt0083658",
+                ["Tmdb"] = "78",
+            };
+
+            Assert.Equal("tmdb:78", ItemReducer.Reduce(movie)!.ExternalId);
+        }
+
+        [Fact]
+        public void Reduce_Movie_FallsDownTheProviderOrder()
+        {
+            var movie = FullMovie();
+            movie.ProviderIds = new Dictionary<string, string> { ["Imdb"] = "tt0083658" };
+
+            Assert.Equal("imdb:tt0083658", ItemReducer.Reduce(movie)!.ExternalId);
+        }
+
+        [Fact]
+        public void Reduce_Movie_WithNothingScraped_HasNoExternalId()
+        {
+            Assert.Null(ItemReducer.Reduce(FullMovie())!.ExternalId);
+        }
+
+        [Fact]
+        public void Reduce_Movie_ReadsTheAlternateVersionLink()
+        {
+            var primary = Guid.Parse("22222222-2222-2222-2222-222222222222");
+            var movie = FullMovie();
+            movie.SetPrimaryVersionId(primary.ToString("N"));
+
+            Assert.Equal(primary, ItemReducer.Reduce(movie)!.PrimaryVersionId);
+        }
+
+        [Fact]
+        public void Reduce_Movie_WithAnUnparseableVersionLink_TreatsItAsAbsent()
+        {
+            // Jellyfin stores this as a string. A value that will not parse is not
+            // evidence of anything, so it must not become Guid.Empty and match
+            // every other unparseable row.
+            var movie = FullMovie();
+            movie.SetPrimaryVersionId("not-a-guid");
+
+            Assert.Null(ItemReducer.Reduce(movie)!.PrimaryVersionId);
+        }
+
+        [Fact]
+        public void Reduce_Series_HasNoVersionLink()
+        {
+            // Only a Video carries one; a Series has no alternate versions.
+            var series = new Series { Id = Guid.NewGuid(), Name = "Fargo" };
+
+            Assert.Null(ItemReducer.Reduce(series)!.PrimaryVersionId);
         }
 
         [Fact]

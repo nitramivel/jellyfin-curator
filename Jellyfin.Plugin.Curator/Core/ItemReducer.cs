@@ -4,6 +4,7 @@ using Jellyfin.Plugin.Curator.Core.Models;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Model.Entities;
 
 namespace Jellyfin.Plugin.Curator.Core
 {
@@ -76,6 +77,8 @@ namespace Jellyfin.Plugin.Curator.Core
                 RuntimeMinutes = TicksToMinutes(item.RunTimeTicks),
                 CommunityRating = item.CommunityRating,
                 Overview = TruncateOverview(item.Overview, maxOverviewLength),
+                PrimaryVersionId = PrimaryVersionOf(item),
+                ExternalId = ExternalIdOf(item),
             };
 
             if (item is Episode episode)
@@ -124,6 +127,67 @@ namespace Jellyfin.Plugin.Curator.Core
             }
 
             return text[..cut].TrimEnd() + "…";
+        }
+
+        /// <summary>
+        /// The providers consulted for an item's external identity, in the order they
+        /// are trusted.
+        /// </summary>
+        /// <remarks>
+        /// A fixed order, and the first one present wins, so the answer is a single
+        /// string two rows either share or do not. Matching on "any provider ID in
+        /// common" would be more forgiving and is deliberately not done: it makes
+        /// duplicate detection depend on which scrapers happened to run, so the same
+        /// library collapses differently after a metadata refresh. TMDb leads because
+        /// it is what Jellyfin's own movie and series scrapers fill in first.
+        /// </remarks>
+        private static readonly MetadataProvider[] IdentityProviders =
+        [
+            MetadataProvider.Tmdb,
+            MetadataProvider.Imdb,
+            MetadataProvider.Tvdb,
+        ];
+
+        /// <summary>
+        /// The item this one is an alternate version of, or null.
+        /// </summary>
+        /// <remarks>
+        /// Only <see cref="Video"/> carries the link — a Series has no alternate
+        /// versions — and Jellyfin stores it as a string, so a value that will not
+        /// parse is treated as absent rather than trusted.
+        /// </remarks>
+        private static Guid? PrimaryVersionOf(BaseItem item)
+        {
+            if (item is not Video video || string.IsNullOrWhiteSpace(video.PrimaryVersionId))
+            {
+                return null;
+            }
+
+            return Guid.TryParse(video.PrimaryVersionId, out var primary) && primary != Guid.Empty
+                ? primary
+                : null;
+        }
+
+        /// <summary>
+        /// The item's identity at its metadata provider, as <c>tmdb:78</c>.
+        /// </summary>
+        private static string? ExternalIdOf(BaseItem item)
+        {
+            if (item.ProviderIds is null || item.ProviderIds.Count == 0)
+            {
+                return null;
+            }
+
+            foreach (var provider in IdentityProviders)
+            {
+                var value = item.GetProviderId(provider);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return provider.ToString().ToLowerInvariant() + ":" + value.Trim();
+                }
+            }
+
+            return null;
         }
 
         private static int? TicksToMinutes(long? ticks)

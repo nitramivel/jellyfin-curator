@@ -46,6 +46,76 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// {"order":[int]} — one viewer's shortlist put in a recommended order.
         /// </summary>
         RecommendationOrder = 4,
+
+        /// <summary>
+        /// {"summaries":[{"i":int,"s":string,"w":[string],"d":[string]}]} — the
+        /// condensing pass also judging when an item suits watching.
+        /// </summary>
+        SummariesWithContext = 5,
+
+        /// <summary>
+        /// {"summaries":[{"i":int,"s":string,"t":[string],"w":[string],"d":[string]}]}
+        /// — the condensing pass doing all three jobs in one call.
+        /// </summary>
+        /// <remarks>
+        /// Four shapes for two independent switches, and there is no way around it:
+        /// strict structured output requires every declared property, so a schema
+        /// cannot make a field optional. The alternative — one schema always
+        /// demanding every field — asks a pass whose prompt never mentioned tags to
+        /// produce them, which is the same mismatch in the other direction.
+        /// </remarks>
+        SummariesWithTagsAndContext = 6,
+    }
+
+    /// <summary>
+    /// The one place that knows which condensing shape carries which fields.
+    ///
+    /// <para>
+    /// Four shapes over two independent switches is exactly the arithmetic that gets
+    /// done wrong in one of the places it is written out. Both structured-output
+    /// providers and the pass that picks a shape all read it from here, so a fifth
+    /// combination is added once rather than three times.
+    /// </para>
+    /// </summary>
+    public static class SummaryShapes
+    {
+        /// <summary>
+        /// The shape for a condensing call with these two switches.
+        /// </summary>
+        /// <param name="includeTags">Whether tags are being consolidated.</param>
+        /// <param name="includeContext">Whether context is being classified.</param>
+        /// <returns>The shape to ask for.</returns>
+        public static ResponseShape For(bool includeTags, bool includeContext)
+            => (includeTags, includeContext) switch
+            {
+                (false, false) => ResponseShape.Summaries,
+                (true, false) => ResponseShape.SummariesWithTags,
+                (false, true) => ResponseShape.SummariesWithContext,
+                (true, true) => ResponseShape.SummariesWithTagsAndContext,
+            };
+
+        /// <summary>Whether a shape is one of the condensing pass's.</summary>
+        /// <param name="shape">The shape.</param>
+        /// <returns>Whether it describes a summaries response.</returns>
+        public static bool Describes(ResponseShape shape) => shape
+            is ResponseShape.Summaries
+            or ResponseShape.SummariesWithTags
+            or ResponseShape.SummariesWithContext
+            or ResponseShape.SummariesWithTagsAndContext;
+
+        /// <summary>Whether a shape declares the consolidated tag list.</summary>
+        /// <param name="shape">The shape.</param>
+        /// <returns>Whether "t" is part of it.</returns>
+        public static bool IncludesTags(ResponseShape shape) => shape
+            is ResponseShape.SummariesWithTags
+            or ResponseShape.SummariesWithTagsAndContext;
+
+        /// <summary>Whether a shape declares the context affinities.</summary>
+        /// <param name="shape">The shape.</param>
+        /// <returns>Whether "w" and "d" are part of it.</returns>
+        public static bool IncludesContext(ResponseShape shape) => shape
+            is ResponseShape.SummariesWithContext
+            or ResponseShape.SummariesWithTagsAndContext;
     }
 
     /// <summary>

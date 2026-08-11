@@ -38,6 +38,46 @@ namespace Jellyfin.Plugin.Curator.Configuration
     }
 
     /// <summary>
+    /// Whose weather the context row is drawn for.
+    /// </summary>
+    /// <remarks>
+    /// Option order is load-bearing for the same reason <see cref="SectionDelivery"/>
+    /// says: relabel freely, never reorder.
+    /// </remarks>
+    public enum WeatherLocationMode
+    {
+        /// <summary>
+        /// One place for the whole server. The normal case — a household watches in
+        /// one house, and it is raining on all of them.
+        /// </summary>
+        Single = 0,
+
+        /// <summary>
+        /// Each viewer's own place, falling back to the server's for anyone who has
+        /// not been given one. For a library shared across households.
+        /// </summary>
+        PerUser = 1,
+    }
+
+    /// <summary>
+    /// One viewer's weather location.
+    /// </summary>
+    /// <remarks>
+    /// A class with a parameterless constructor and settable properties because
+    /// XmlSerializer writes the plugin configuration: it cannot serialize a record,
+    /// an init-only property or a tuple, and it fails at runtime rather than at
+    /// compile time when handed one.
+    /// </remarks>
+    public class UserWeatherLocation
+    {
+        /// <summary>Gets or sets the viewer.</summary>
+        public Guid UserId { get; set; }
+
+        /// <summary>Gets or sets the place name, as typed — e.g. "Pittsburgh".</summary>
+        public string Location { get; set; } = string.Empty;
+    }
+
+    /// <summary>
     /// How Curator's categories reach the home screen.
     /// </summary>
     /// <remarks>
@@ -370,14 +410,30 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// genres and overviews, so the model puts both in the same category and the
         /// row shows the same poster twice.
         /// <para>
-        /// Matching is deliberately strict — kind, title and year must all agree.
-        /// On the library this was built against, "Freaky Friday" exists as 2003 and
-        /// 1995, and a title-only rule would merge two genuinely different films.
-        /// The longest runtime wins, so the fuller cut is the one kept, and watch
-        /// activity from the dropped row is folded onto it rather than lost.
+        /// Matching is exact and never fuzzy: Jellyfin's own alternate-version link
+        /// first, then the item's metadata-provider ID, then kind, title and year
+        /// together. On the library this was built against, "Freaky Friday" exists as
+        /// 2003 and 1995, and a title-only rule would merge two genuinely different
+        /// films. The longest runtime wins, so the fuller cut is the one kept, and
+        /// watch activity from the dropped row is folded onto it rather than lost.
         /// </para>
         /// </remarks>
         public bool CollapseDuplicateVersions { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets whether two rows carrying the same metadata-provider ID count
+        /// as one title. On by default, and only consulted when
+        /// <see cref="CollapseDuplicateVersions"/> is on.
+        /// </summary>
+        /// <remarks>
+        /// This is the setting that catches the case title and year cannot: "Blade
+        /// Runner" (1982) beside "Blade Runner: The Final Cut" (2007) agree on neither
+        /// field and are one film, and their TMDb IDs say so. It is exposed at all
+        /// because it inherits whatever the scrapers got wrong — a provider ID stamped
+        /// on the wrong film merges two titles here, and nothing downstream would
+        /// notice. Switch it off only for a library known to be in that state.
+        /// </remarks>
+        public bool MatchDuplicatesByProviderId { get; set; } = true;
 
         /// <summary>
         /// Gets or sets how many tags per item are sent to the model. 0 sends none.
@@ -627,6 +683,127 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// </summary>
         public string SummaryModelProfileId { get; set; } = string.Empty;
 
+        // Viewing context: what the weather is doing and what time it is.
+
+        /// <summary>
+        /// Gets or sets whether the condensing pass also judges when an item suits
+        /// watching — the weather outside and the part of the day. Off by default.
+        /// </summary>
+        /// <remarks>
+        /// This is the paid half of the context rows, and it is deliberately folded
+        /// into the pass that already reads every overview rather than given a pass of
+        /// its own. The judgement wanted here is the same one the rewrite makes, asked
+        /// about the room instead of the film, so it belongs in the same call — and a
+        /// second pass would re-send the whole item list to ask one more question,
+        /// paying the library's input tokens twice for a few words of output.
+        /// <para>
+        /// It follows that this does nothing on its own: it rides on
+        /// <see cref="UseCondensedSummaries"/>' pass, so the Condense Summaries task
+        /// has to be running for anything to be classified. Switching it on queues
+        /// only the items not yet judged, never the whole library — see
+        /// <c>SummaryPlan</c>'s context hash.
+        /// </para>
+        /// </remarks>
+        public bool ClassifyViewingContext { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets whether the two context rows are published to the home screen.
+        /// Off by default.
+        /// </summary>
+        /// <remarks>
+        /// Separate from <see cref="ClassifyViewingContext"/> for the reason
+        /// <see cref="SendConsolidatedTags"/> is separate from
+        /// <see cref="ConsolidateTags"/>: buying the judgement and acting on it are
+        /// different decisions, and the useful order is to classify, look at what came
+        /// back, and only then put rows on everybody's home screen.
+        /// <para>
+        /// These rows only exist under <see cref="SectionDelivery.Integrated"/>. They
+        /// are computed when the home screen asks for them, from the cached
+        /// affinities and the last weather reading, so they always match the actual
+        /// hour — and there is no playlist behind them to hand to Collection
+        /// Sections, which resolves a row by playlist name.
+        /// </para>
+        /// </remarks>
+        public bool ContextRows { get; set; } = false;
+
+        /// <summary>
+        /// Gets or sets the name of the weather row.
+        /// </summary>
+        /// <remarks>
+        /// A fixed name rather than one that tracks the sky, and the reason is a
+        /// constraint of the other plugin: a row's display text is fixed when the
+        /// section is registered, and registration happens at startup and on sync.
+        /// A title reading "For a rainy night" would therefore be a claim about the
+        /// weather several hours ago, which is worse than a general one — the row's
+        /// contents are exact, and its name should not promise more precision than
+        /// the name can keep.
+        /// </remarks>
+        public string WeatherRowName { get; set; } = "Picks for the Weather";
+
+        /// <summary>
+        /// Gets or sets the name of the time-of-day row. Fixed for the reason
+        /// <see cref="WeatherRowName"/> gives.
+        /// </summary>
+        public string DaypartRowName { get; set; } = "Picks for the Hour";
+
+        /// <summary>
+        /// Gets or sets how many items a context row may hold.
+        /// </summary>
+        /// <remarks>
+        /// Smaller than the recommendation playlist on purpose. A context row is a
+        /// narrow claim — these suit a cold wet evening — and a long one dilutes it
+        /// with everything that merely qualifies. Below
+        /// <c>ContextRanker.MinimumRowLength</c> matches the row is not drawn at all.
+        /// </remarks>
+        public int MaxContextRowItems { get; set; } = 20;
+
+        /// <summary>
+        /// Gets or sets whether the weather row uses one location for the server or
+        /// each viewer's own.
+        /// </summary>
+        public WeatherLocationMode WeatherLocationMode { get; set; } = WeatherLocationMode.Single;
+
+        /// <summary>
+        /// Gets or sets the server's weather location, as a place name to look up.
+        /// </summary>
+        /// <remarks>
+        /// A place name rather than coordinates, because it is what the owner can type
+        /// without going and finding anything. It is geocoded once and the result is
+        /// cached for the life of the process, so the lookup is not on any hot path.
+        /// Also the fallback for any viewer with no location of their own, whichever
+        /// mode is selected.
+        /// </remarks>
+        public string WeatherLocation { get; set; } = "Pittsburgh";
+
+        /// <summary>
+        /// Gets or sets each viewer's own weather location. Only consulted under
+        /// <see cref="WeatherLocationMode.PerUser"/>; a viewer absent from this list
+        /// falls back to <see cref="WeatherLocation"/>.
+        /// </summary>
+        public UserWeatherLocation[] UserWeatherLocations { get; set; } = Array.Empty<UserWeatherLocation>();
+
+        /// <summary>
+        /// The place name to use for one viewer.
+        /// </summary>
+        /// <param name="userId">The viewer.</param>
+        /// <returns>Their place name, or the server's when they have none.</returns>
+        public string LocationFor(Guid userId)
+        {
+            if (WeatherLocationMode == WeatherLocationMode.PerUser && UserWeatherLocations is not null)
+            {
+                foreach (var entry in UserWeatherLocations)
+                {
+                    if (entry is not null
+                        && entry.UserId == userId
+                        && !string.IsNullOrWhiteSpace(entry.Location))
+                    {
+                        return entry.Location.Trim();
+                    }
+                }
+            }
+
+            return WeatherLocation?.Trim() ?? string.Empty;
+        }
 
         /// <summary>
         /// Gets or sets the collection names whose membership is sent to the model,

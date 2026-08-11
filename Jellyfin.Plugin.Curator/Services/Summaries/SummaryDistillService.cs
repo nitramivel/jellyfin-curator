@@ -107,6 +107,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                 ["minSourceLength"] = config.SummaryMinSourceLength,
                 ["consolidateTags"] = config.ConsolidateTags,
                 ["maxConsolidatedTags"] = config.MaxConsolidatedTags,
+                ["classifyViewingContext"] = config.ClassifyViewingContext,
                 ["allowInventedTags"] = config.AllowInventedTags,
                 ["itemsToDistil"] = plan.Work.Count,
             };
@@ -216,8 +217,9 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
 
             var wantTags = config.ConsolidateTags;
             var tagCeiling = wantTags ? Math.Max(1, config.MaxConsolidatedTags) : 0;
+            var wantContext = config.ClassifyViewingContext;
             var plan = SummaryPlan.Create(
-                items, existing, config.SummaryMinSourceLength, force, wantTags);
+                items, existing, config.SummaryMinSourceLength, force, wantTags, wantContext);
             Report(progress, 2);
 
             _logger.LogInformation(
@@ -268,7 +270,8 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
 
             var batches = Batcher.Split([.. plan.Work.Select(w => w.Item)], config.SummaryBatchSize);
             var maxLength = Math.Max(20, config.CondensedSummaryMaxLength);
-            var system = SummaryPromptBuilder.BuildSystemPrompt(maxLength, tagCeiling, config.AllowInventedTags);
+            var system = SummaryPromptBuilder.BuildSystemPrompt(
+                maxLength, tagCeiling, config.AllowInventedTags, wantContext);
             var conversationId = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
 
             long inputTokens = 0;
@@ -310,7 +313,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                         // Must track wantTags, which is the same flag the prompt is
                         // built from. Schema and prompt disagreeing about "t" is not a
                         // cosmetic mismatch: it leaves the model no legal way to answer.
-                        wantTags ? ResponseShape.SummariesWithTags : ResponseShape.Summaries,
+                        SummaryShapes.For(wantTags, wantContext),
                         conversationId);
 
                     var startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -346,7 +349,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                     SummaryParseResult parsed;
                     try
                     {
-                        parsed = SummaryParser.Parse(result.Text, pending, maxLength, tagCeiling);
+                        parsed = SummaryParser.Parse(result.Text, pending, maxLength, tagCeiling, wantContext);
                     }
                     catch
                     {
@@ -377,6 +380,18 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                         // next planner they were done when they were not.
                         TagSourceHash = wantTags && s.Item.Tags.Count > 0
                             ? SummaryPlan.HashTags(s.Item.Tags)
+                            : null,
+
+                        Weather = s.Context.Weather,
+                        Dayparts = s.Context.Dayparts,
+
+                        // Stamped whenever context was asked for, including when the
+                        // answer came back empty — "this suits no weather in
+                        // particular" is a judgement that was paid for, and leaving
+                        // the hash null would re-buy it on every pass for most of the
+                        // library, which is where most of the answers land by design.
+                        ContextSourceHash = wantContext
+                            ? SummaryPlan.HashOverview(s.Item.Overview)
                             : null,
                     }).ToList();
 

@@ -19,8 +19,17 @@ namespace Jellyfin.Plugin.Curator.Core.Models
     }
 
     /// <summary>
-    /// The compact, LLM-facing reduction of a library item. This is everything the model
-    /// ever sees about an item — no file paths, no watch history, no user data.
+    /// The compact, LLM-facing reduction of a library item. This is almost everything
+    /// the model ever sees about an item — no file paths, no watch history, no user
+    /// data.
+    /// <para>
+    /// "Almost", because <see cref="PrimaryVersionId"/> and <see cref="ExternalId"/>
+    /// are join keys for <see cref="DuplicateItems"/> and are never serialized into a
+    /// prompt. <c>PromptBuilder</c> writes its fields one at a time rather than
+    /// reflecting over this type, which is what keeps that true — and hard rule 1
+    /// depends on it staying true, since an external ID is still an identifier the
+    /// model has no business seeing.
+    /// </para>
     /// </summary>
     public sealed record MediaItemRecord
     {
@@ -65,6 +74,35 @@ namespace Jellyfin.Plugin.Curator.Core.Models
         /// the metadata-shaped category the system prompt tells it to avoid.
         /// </remarks>
         public IReadOnlyList<string> Collections { get; init; } = [];
+
+        /// <summary>
+        /// Gets the item this one is an alternate version of, when Jellyfin's own
+        /// version merge has been used. Null on a row that is nobody's alternate.
+        /// </summary>
+        /// <remarks>
+        /// Read from <c>Video.PrimaryVersionId</c>, and it is the strongest duplicate
+        /// signal there is: the owner has already told Jellyfin these two files are one
+        /// film. Every other client hides the alternate behind a version picker on the
+        /// primary's page, so a Curator row showing both is showing something the rest
+        /// of the server treats as a single title.
+        /// </remarks>
+        public Guid? PrimaryVersionId { get; init; }
+
+        /// <summary>
+        /// Gets the item's identity at its metadata provider, as <c>tmdb:78</c> —
+        /// null when nothing has been scraped for it.
+        /// </summary>
+        /// <remarks>
+        /// One value rather than the whole provider dictionary, resolved in a fixed
+        /// provider order by <c>ItemReducer</c>, so two rows either carry the same
+        /// string or they do not. That is deliberately an exact equality test and not
+        /// a similarity one: hard rule 2 forbids softening the title match, and this
+        /// does not soften it — it asks a different and better question. "Blade
+        /// Runner" (1982) and "Blade Runner: The Final Cut" (2007) agree on neither
+        /// title nor year and are one film; "Freaky Friday" 2003 and 1995 agree on
+        /// the title and are two, and their TMDb IDs say so.
+        /// </remarks>
+        public string? ExternalId { get; init; }
 
         /// <summary>Gets the parent series name. Episodes only.</summary>
         public string? SeriesName { get; init; }

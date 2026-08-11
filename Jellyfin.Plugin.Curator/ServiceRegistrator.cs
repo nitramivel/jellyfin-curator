@@ -1,5 +1,6 @@
 using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
+using Jellyfin.Plugin.Curator.Services.Context;
 using Jellyfin.Plugin.Curator.Services.Health;
 using Jellyfin.Plugin.Curator.Services.HomeScreen;
 using Jellyfin.Plugin.Curator.Services.Library;
@@ -28,6 +29,11 @@ namespace Jellyfin.Plugin.Curator
             serviceCollection.AddSingleton<ICategoryStore, CategoryStore>();
             serviceCollection.AddSingleton<ICuratorPlaylistService, CuratorPlaylistService>();
             serviceCollection.AddSingleton<IApiKeyProvider, ServerApiKeyProvider>();
+
+            // A singleton because its whole value is the cache it holds: coordinates
+            // for the life of the process, conditions for half an hour. A transient
+            // one would geocode on every home screen load.
+            serviceCollection.AddSingleton<IWeatherService, OpenMeteoWeatherService>();
             serviceCollection.AddSingleton<ISectionRegistrar, HomeScreenSectionRegistrar>();
             serviceCollection.AddSingleton<IHomeScreenIntegrationService, HomeScreenIntegrationService>();
 

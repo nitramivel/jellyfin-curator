@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.Curator.Core.Context;
 using Jellyfin.Plugin.Curator.Services.Llm;
 using Xunit;
 
@@ -844,6 +845,119 @@ namespace Jellyfin.Plugin.Curator.Tests
                 .GetProperty("properties");
 
             Assert.Equal(["i", "s", "t"], props.EnumerateObject().Select(p => p.Name).ToList());
+        }
+
+        /// <summary>
+        /// Same regression, the context fields. Four shapes over two switches is the
+        /// arithmetic that gets done wrong in one of the places it is written, so
+        /// every combination is checked in both dialects rather than the two new ones.
+        /// </summary>
+        [Theory]
+        [InlineData(ResponseShape.Summaries, new[] { "i", "s" })]
+        [InlineData(ResponseShape.SummariesWithTags, new[] { "i", "s", "t" })]
+        [InlineData(ResponseShape.SummariesWithContext, new[] { "i", "s", "w", "d" })]
+        [InlineData(ResponseShape.SummariesWithTagsAndContext, new[] { "i", "s", "t", "w", "d" })]
+        public async Task Grok_EverySummaryShape_DeclaresExactlyItsOwnFields(
+            ResponseShape shape,
+            string[] expected)
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, shape),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var item = body.RootElement
+                .GetProperty("response_format").GetProperty("json_schema").GetProperty("schema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items");
+
+            // Declared, required and in that order — strict mode needs all three to
+            // agree, and the order is what makes the model write the rewrite first.
+            Assert.Equal(expected, item.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToList());
+            Assert.Equal(expected, item.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList());
+        }
+
+        [Theory]
+        [InlineData(ResponseShape.Summaries, new[] { "i", "s" })]
+        [InlineData(ResponseShape.SummariesWithTags, new[] { "i", "s", "t" })]
+        [InlineData(ResponseShape.SummariesWithContext, new[] { "i", "s", "w", "d" })]
+        [InlineData(ResponseShape.SummariesWithTagsAndContext, new[] { "i", "s", "t", "w", "d" })]
+        public async Task Google_EverySummaryShape_DeclaresExactlyItsOwnFields(
+            ResponseShape shape,
+            string[] expected)
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, shape),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var item = body.RootElement
+                .GetProperty("generationConfig").GetProperty("responseSchema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items");
+
+            Assert.Equal(expected, item.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList());
+            Assert.Equal(
+                expected,
+                item.GetProperty("propertyOrdering").EnumerateArray().Select(e => e.GetString()).ToList());
+        }
+
+        /// <summary>
+        /// The closed vocabulary has to reach the decoder, not only the prose. A
+        /// schema that let the model answer "drizzly" would produce a word the parser
+        /// then throws away — a judgement paid for and silently discarded.
+        /// </summary>
+        [Fact]
+        public async Task Grok_ContextSchema_ConstrainsBothListsToTheVocabulary()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.SummariesWithContext),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var props = body.RootElement
+                .GetProperty("response_format").GetProperty("json_schema").GetProperty("schema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items")
+                .GetProperty("properties");
+
+            Assert.Equal(
+                ContextVocabulary.Weather.ToList(),
+                props.GetProperty("w").GetProperty("items").GetProperty("enum")
+                    .EnumerateArray().Select(e => e.GetString()!).ToList());
+            Assert.Equal(
+                ContextVocabulary.Dayparts.ToList(),
+                props.GetProperty("d").GetProperty("items").GetProperty("enum")
+                    .EnumerateArray().Select(e => e.GetString()!).ToList());
+        }
+
+        [Fact]
+        public async Task Google_ContextSchema_ConstrainsBothListsToTheVocabulary()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "ITEMS", "SUFFIX", 4096, ResponseShape.SummariesWithTagsAndContext),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var props = body.RootElement
+                .GetProperty("generationConfig").GetProperty("responseSchema")
+                .GetProperty("properties").GetProperty("summaries").GetProperty("items")
+                .GetProperty("properties");
+
+            Assert.Equal(
+                ContextVocabulary.Weather.ToList(),
+                props.GetProperty("w").GetProperty("items").GetProperty("enum")
+                    .EnumerateArray().Select(e => e.GetString()!).ToList());
+            Assert.Equal("STRING", props.GetProperty("d").GetProperty("items").GetProperty("type").GetString());
         }
 
         [Fact]

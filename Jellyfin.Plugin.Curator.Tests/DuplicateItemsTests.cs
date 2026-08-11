@@ -30,12 +30,23 @@ namespace Jellyfin.Plugin.Curator.Tests
             RuntimeMinutes = runtime,
         };
 
-        private static MediaItemRecord Series(string name, int? year) => new()
+        private static MediaItemRecord Series(string name, int? year, string? externalId = null) => new()
         {
             Id = Guid.NewGuid(),
             Kind = MediaKind.Series,
             Name = name,
             Year = year,
+            ExternalId = externalId,
+        };
+
+        private static MediaItemRecord Scraped(string name, int? year, string externalId, int? runtime = null) => new()
+        {
+            Id = Guid.NewGuid(),
+            Kind = MediaKind.Movie,
+            Name = name,
+            Year = year,
+            RuntimeMinutes = runtime,
+            ExternalId = externalId,
         };
 
         [Fact]
@@ -140,6 +151,188 @@ namespace Jellyfin.Plugin.Curator.Tests
 
             Assert.Same(items, result.Items);
             Assert.Empty(result.Aliases);
+        }
+
+        // ---- the two exact identities, which title and year cannot reach ----
+
+        [Fact]
+        public void TwoCutsUnderDifferentTitlesAndYearsCollapseOnTheProviderId()
+        {
+            // The case the strict key was always going to miss, and the reason this
+            // exists: one film, two titles, two years, one TMDb ID.
+            var theatrical = Scraped("Blade Runner", 1982, "tmdb:78", runtime: 117);
+            var finalCut = Scraped("Blade Runner: The Final Cut", 2007, "tmdb:78", runtime: 117);
+
+            var result = DuplicateItems.Collapse([theatrical, finalCut]);
+
+            Assert.Single(result.Items);
+            Assert.Equal(theatrical.Id, result.Aliases[finalCut.Id]);
+        }
+
+        [Fact]
+        public void FreakyFridaySurvivesTheProviderIdRuleToo()
+        {
+            // The rule that must not regress. Two films, one title, two TMDb IDs —
+            // and now the IDs are what keeps them apart rather than the years.
+            var newer = Scraped("Freaky Friday", 2003, "tmdb:10330");
+            var older = Scraped("Freaky Friday", 1995, "tmdb:37725");
+
+            Assert.Equal(2, DuplicateItems.Collapse([newer, older]).Items.Count);
+        }
+
+        [Fact]
+        public void ProviderIdsFromDifferentProvidersNeverMatchEachOther()
+        {
+            // "tmdb:78" and "imdb:78" are not the same claim about the world.
+            var a = Scraped("Some Film", 2001, "tmdb:78");
+            var b = Scraped("Other Film", 1999, "imdb:78");
+
+            Assert.Equal(2, DuplicateItems.Collapse([a, b]).Items.Count);
+        }
+
+        [Fact]
+        public void AFilmAndASeriesSharingAProviderIdAreStillTwoThings()
+        {
+            var film = Scraped("Fargo", 1996, "tmdb:275");
+            var show = Series("Fargo", 2014, "tmdb:275");
+
+            Assert.Equal(2, DuplicateItems.Collapse([film, show]).Items.Count);
+        }
+
+        [Fact]
+        public void ProviderIdMatchingCanBeSwitchedOff()
+        {
+            var theatrical = Scraped("Blade Runner", 1982, "tmdb:78");
+            var finalCut = Scraped("Blade Runner: The Final Cut", 2007, "tmdb:78");
+
+            var result = DuplicateItems.Collapse([theatrical, finalCut], matchOnExternalIds: false);
+
+            Assert.Equal(2, result.Items.Count);
+        }
+
+        [Fact]
+        public void AnItemMergedInJellyfinFoldsOntoItsPrimaryHoweverItsFieldsRead()
+        {
+            // The owner has already told Jellyfin these are one film. Title, year and
+            // provider ID all disagree and none of that matters.
+            var primary = Movie("Nosferatu", 1922, runtime: 94);
+            var alternate = new MediaItemRecord
+            {
+                Id = Guid.NewGuid(),
+                Kind = MediaKind.Movie,
+                Name = "Nosferatu (restored)",
+                Year = 1994,
+                RuntimeMinutes = 96,
+                PrimaryVersionId = primary.Id,
+            };
+
+            var result = DuplicateItems.Collapse([primary, alternate]);
+
+            var kept = Assert.Single(result.Items);
+            Assert.Equal(primary.Id, kept.Id);
+            Assert.Equal(primary.Id, result.Aliases[alternate.Id]);
+        }
+
+        [Fact]
+        public void ThePrimaryWinsEvenWhenTheAlternateRunsLonger()
+        {
+            // The one place the longest-runtime rule gives way. Every other client
+            // draws the primary and hides the alternate behind a version picker on
+            // it, so keeping the alternate would put a card on the home screen that
+            // appears nowhere else in the server.
+            var primary = Movie("Brazil", 1985, runtime: 132);
+            var alternate = new MediaItemRecord
+            {
+                Id = Guid.NewGuid(),
+                Kind = MediaKind.Movie,
+                Name = "Brazil",
+                Year = 1985,
+                RuntimeMinutes = 143,
+                PrimaryVersionId = primary.Id,
+            };
+
+            Assert.Equal(primary.Id, Assert.Single(DuplicateItems.Collapse([alternate, primary]).Items).Id);
+        }
+
+        [Fact]
+        public void AnAlternateWhosePrimaryIsNotInTheScanKeepsItsOwnIdentity()
+        {
+            // The primary was filtered out — orphaned by a removed library folder,
+            // say. Keying the alternate on a row that is not here would lose it.
+            var alternate = new MediaItemRecord
+            {
+                Id = Guid.NewGuid(),
+                Kind = MediaKind.Movie,
+                Name = "Stalker",
+                Year = 1979,
+                PrimaryVersionId = Guid.NewGuid(),
+            };
+            var other = Movie("Solaris", 1972);
+
+            Assert.Equal(2, DuplicateItems.Collapse([alternate, other]).Items.Count);
+        }
+
+        [Fact]
+        public void AVersionLinkPointingAtItselfDoesNotHangTheScan()
+        {
+            // These links come out of a database Curator does not own.
+            var id = Guid.NewGuid();
+            var self = new MediaItemRecord
+            {
+                Id = id,
+                Kind = MediaKind.Movie,
+                Name = "Loop",
+                Year = 2000,
+                PrimaryVersionId = id,
+            };
+
+            Assert.Single(DuplicateItems.Collapse([self]).Items);
+        }
+
+        [Fact]
+        public void TwoItemsPointingAtEachOtherStillCollapseToOne()
+        {
+            var first = Guid.NewGuid();
+            var second = Guid.NewGuid();
+            var a = new MediaItemRecord
+            {
+                Id = first,
+                Kind = MediaKind.Movie,
+                Name = "A",
+                Year = 2000,
+                PrimaryVersionId = second,
+            };
+            var b = new MediaItemRecord
+            {
+                Id = second,
+                Kind = MediaKind.Movie,
+                Name = "B",
+                Year = 2001,
+                PrimaryVersionId = first,
+            };
+
+            var result = DuplicateItems.Collapse([a, b]);
+
+            Assert.Single(result.Items);
+            Assert.Single(result.Aliases);
+        }
+
+        [Fact]
+        public void SurvivingIdsAgreesWithTheCollapseItBacksUp()
+        {
+            // The row-side backstop must not be a second opinion about what a
+            // duplicate is — it is the same function over the same keys.
+            var theatrical = Scraped("Blade Runner", 1982, "tmdb:78");
+            var finalCut = Scraped("Blade Runner: The Final Cut", 2007, "tmdb:78");
+            var other = Movie("Solaris", 1972);
+            var items = new[] { theatrical, finalCut, other };
+
+            var surviving = DuplicateItems.SurvivingIds(items);
+
+            Assert.Equal(
+                DuplicateItems.Collapse(items).Items.Select(i => i.Id).ToHashSet(),
+                surviving);
+            Assert.DoesNotContain(finalCut.Id, surviving);
         }
 
         // ---- history must survive the collapse ----

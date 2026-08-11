@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using Jellyfin.Plugin.Curator.Core;
+using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Services.Categories;
 using Jellyfin.Plugin.Curator.Services.Playlists;
 using MediaBrowser.Controller.Dto;
@@ -148,6 +150,8 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 .Where(item => item is not null && item.IsVisible(user))
                 .ToList();
 
+            items = DropDuplicateVersions(items);
+
             if (items.Count == 0)
             {
                 return Empty();
@@ -155,6 +159,72 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
 
             var dtos = _dtoService.GetBaseItemDtos(items, BuildDtoOptions(), user);
             return new QueryResult<BaseItemDto>(dtos);
+        }
+
+        /// <summary>
+        /// Drops a second row for a title the playlist already holds, keeping playlist
+        /// order otherwise.
+        /// </summary>
+        /// <remarks>
+        /// A backstop, not the mechanism. Duplicates are collapsed before the model
+        /// ever sees the library, so a category built since that landed cannot contain
+        /// two cuts of one film — but a category stored before it can, and its
+        /// playlist keeps showing two posters until the next weekly run rewrites the
+        /// definition. Doing it here as well means the row is right on the next home
+        /// screen load rather than on the next run.
+        /// <para>
+        /// Cheap enough to sit on this path: a row is a few dozen items, and reducing
+        /// one is field copies. It reuses <see cref="DuplicateItems"/> rather than
+        /// asking the question a second way, so the row and the run cannot disagree
+        /// about what a duplicate is.
+        /// </para>
+        /// </remarks>
+        private static List<BaseItem> DropDuplicateVersions(List<BaseItem> items)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config is null || !config.CollapseDuplicateVersions || items.Count < 2)
+            {
+                return items;
+            }
+
+            // An item the reducer will not describe — anything that is not a movie,
+            // series or episode — has no key to be matched on and is always kept.
+            var records = new List<MediaItemRecord>(items.Count);
+            var judged = new HashSet<Guid>();
+            foreach (var item in items)
+            {
+                var record = ItemReducer.Reduce(item);
+                if (record is not null && judged.Add(record.Id))
+                {
+                    records.Add(record);
+                }
+            }
+
+            if (records.Count < 2)
+            {
+                return items;
+            }
+
+            var surviving = DuplicateItems.SurvivingIds(records, config.MatchDuplicatesByProviderId);
+            if (surviving.Count == records.Count)
+            {
+                return items;
+            }
+
+            var kept = new List<BaseItem>(surviving.Count);
+            var drawn = new HashSet<Guid>();
+            foreach (var item in items)
+            {
+                // Kept when it survived, and also when it was never a candidate —
+                // the reducer declined to describe it, so nothing here can judge it.
+                if ((surviving.Contains(item.Id) || !judged.Contains(item.Id))
+                    && drawn.Add(item.Id))
+                {
+                    kept.Add(item);
+                }
+            }
+
+            return kept;
         }
 
         /// <summary>

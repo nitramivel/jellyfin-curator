@@ -56,6 +56,41 @@ namespace Jellyfin.Plugin.Curator.Core.Models
         /// </summary>
         public string? TagSourceHash { get; init; }
 
+        /// <summary>
+        /// Gets the weather this item suits, in <c>ContextVocabulary</c>'s closed
+        /// vocabulary. Empty when the item suits no weather in particular, and also
+        /// when context classification has never been run for it —
+        /// <see cref="ContextSourceHash"/> is what tells those apart.
+        /// </summary>
+        public IReadOnlyList<string> Weather { get; init; } = [];
+
+        /// <summary>
+        /// Gets the parts of the day this item suits, in <c>ContextVocabulary</c>'s
+        /// closed vocabulary. Empty on the same two conditions as
+        /// <see cref="Weather"/>.
+        /// </summary>
+        public IReadOnlyList<string> Dayparts { get; init; } = [];
+
+        /// <summary>
+        /// Gets the hash of the overview these affinities were judged from, so a
+        /// rewritten overview re-opens the judgement the same way it re-opens the
+        /// summary. Null when context was never classified for this item.
+        /// </summary>
+        /// <remarks>
+        /// A separate hash from <see cref="SourceHash"/> even though both passes read
+        /// the same overview in the same call, and the reason is the same one
+        /// <see cref="TagSourceHash"/> exists: switching the feature on has to be
+        /// incremental. Without it, every item stored before context classification
+        /// existed looks current by its summary hash and would never be re-queued, so
+        /// the setting would appear to do nothing until the next metadata refresh.
+        /// <para>
+        /// An empty answer with a hash set is a real judgement — the model read the
+        /// item and decided it suits no particular weather — and must not be
+        /// re-bought on every pass.
+        /// </para>
+        /// </remarks>
+        public string? ContextSourceHash { get; init; }
+
         /// <summary>Gets the model that produced this text.</summary>
         public string? ModelId { get; init; }
 
