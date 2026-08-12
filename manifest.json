@@ -10,19 +10,11 @@
     "versions": [
       {
         "version": "0.8.2.0",
-        "changelog": "Configuration page: the settings tabs now stretch to the full page width like Schedule, Runs and Usage; the condensed summaries list gains Weather and When columns showing what each item was judged to suit, sorts A to Z rather than newest-first, and no longer has its first and last columns touching the frame; and Save sits at the top of each tab instead of below a page of settings.",
+        "changelog": "Configuration page only; no change to runs, condensing or rows. The settings tabs now stretch to the full page width like Schedule, Runs and Usage. The condensed summaries list is a scrollable list with a pinned header rather than running down the whole page, shows up to 300 entries, sorts A to Z instead of newest-first, gains Weather and When columns showing what each item was judged to suit, and no longer has its first and last columns touching the frame. Save sits at the top of each tab instead of below a page of settings.",
         "targetAbi": "10.11.0.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.2.0/curator_0.8.2.0.zip",
         "checksum": "5bb92b8ae1123f81ec1a2a117a7dc780",
         "timestamp": "2026-08-12T12:32:01Z"
-      },
-      {
-        "version": "0.8.1.0",
-        "changelog": "Condensed summaries are now a scrollable list with a pinned header instead of running down the whole page, showing up to 300 entries.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.1.0/curator_0.8.1.0.zip",
-        "checksum": "ccd52136913e411192f88fb62b570ce7",
-        "timestamp": "2026-08-12T11:58:47Z"
       },
       {
         "version": "0.8.0.0",
