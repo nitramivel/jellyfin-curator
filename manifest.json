@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.7.3.0",
+        "changelog": "Diagnostics only; no behaviour change. The weather Test button now logs what it found on the server as well as showing it on the page \u2014 previously the reason went only to the page, so if you were looking at a cached page the log it told you to check was empty. The plugin version is also shown beside the title on the configuration page: a page cached from an older release cannot render it, so a missing version badge tells you at a glance that you are looking at a stale page rather than a broken server. If the page misbehaves after an update, open it in a private window \u2014 Jellyfin serves it from a URL that never changes and sends no cache headers, so a normal reload may not replace it.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.3.0/curator_0.7.3.0.zip",
+        "checksum": "d25b86e014b5030b061f15a0cce98078",
+        "timestamp": "2026-08-12T09:58:06Z"
+      },
+      {
         "version": "0.7.2.0",
         "changelog": "Fixes the weather Test button reporting 'No reading. Check the server log' for lookups that had actually succeeded. Jellyfin sends controller responses in PascalCase and the new handlers were reading camelCase, so the field came back undefined and the page reported a working call as broken \u2014 with nothing in the log to find, because nothing had gone wrong. The same fault had been sitting unnoticed in the home screen row sync button, reporting every successful sync as 'Nothing was synced'. Every response field now goes through a reader that accepts both casings, and a test fails the build on any direct read. The Test button also now tells you WHY when a lookup genuinely fails: a place name nothing matches, no outbound internet, a proxy answering 403 and a rate limit are four different problems with four different fixes, and the weather service previously swallowed the reason on purpose because its normal callers are background refreshes that must fail silently. It now carries the reason out for the diagnostic while staying silent everywhere else.",
         "targetAbi": "10.11.0.0",

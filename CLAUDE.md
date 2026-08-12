@@ -885,7 +885,7 @@ release or two, and only remove it once a few restarts have been survived.
   field through the `field()` helper, which tries both; `ConfigPageContractTests`
   fails the build on a direct `result.someField` read and on a name no API record
   exposes.
-- **A diagnostic must carry its reason out, not log it.** Everything in
+- **A diagnostic must carry its reason out AND log it.** Everything in
   `Services/Context` swallows its failures by design — a background refresh that
   cannot reach the internet must be silent and harmless — so the Test button on top
   of it could only ever say "nothing came back". A wrong place name, no outbound
@@ -894,6 +894,12 @@ release or two, and only remove it once a few restarts have been survived.
   `RefreshAsync`: same work, but the reason survives the trip. The rule generalises
   — if a button exists to answer *what is wrong*, the layer under it needs a path
   that does not discard the answer.
+  **Carrying it out is not enough on its own**, which the first version of this got
+  wrong: the reason went onto the response and nowhere else, so when the *page* was
+  the broken part the only copy of the answer went somewhere unreadable and the log
+  the message told the owner to check was empty. The endpoint now logs the outcome
+  as well as returning it. A diagnostic leaves a trace on the server whatever the
+  client does with it.
 - **Anything listing profiles must be rebuilt whenever the list changes.** There
   are now four such pickers — the Summaries tab's, the Model tab's two per-pass
   ones, and the Home screen tab's title picker — and `renderProfiles()` refreshes
@@ -1002,11 +1008,27 @@ release or two, and only remove it once a few restarts have been survived.
 - **Option order in a `<select>` is load-bearing.** `setEnumSelect` falls back to
   matching by index when a stored config carries the numeric enum value, so
   provider options must stay in enum order. Change labels freely; never reorder.
-- **The page is cached by the browser.** It is an `<EmbeddedResource>` served at
-  a URL that does not change between versions, so after any deploy touching it
-  you must hard-reload (Ctrl+Shift+R) or you are looking at the old page. This
-  has wasted time in three separate sessions. Confirm the new page is really
-  installed by grepping the DLL: `grep -ac curatorTabPanel .../Jellyfin.Plugin.Curator.dll`.
+- **The page is cached by the browser**, and this is now the single most expensive
+  recurring trap in the project — four sessions and counting. It is an
+  `<EmbeddedResource>` served at a URL that never changes between versions, and
+  Jellyfin sends it with **no cache headers at all**, so a browser may hold an old
+  copy indefinitely. Worse, the dashboard fetches it by AJAX, so Ctrl+Shift+R on
+  the dashboard does not reliably re-fetch it — **a private window is the only
+  certain bypass**.
+  The failure mode is what makes it costly: an old page against a new server fails
+  in exactly the way that release fixed, while the owner reasonably believes they
+  are testing the fix, and every subsequent diagnosis chases a server-side ghost.
+  That happened with the weather Test button — the endpoint returned
+  `{"Ok":true,...}` on the live server while the page insisted there was no
+  reading.
+  **The version badge beside the page title is the tell.** `Curator/Version` is
+  fetched on load and rendered next to the heading; a page cached from before that
+  existed renders nothing there, so a *missing* version is the signal. Check that
+  first, before anything server-side.
+  To confirm what the server is really serving, ask it rather than the browser:
+  `curl -H 'Authorization: MediaBrowser Token="KEY", Client="c", Device="d", DeviceId="i", Version="1"' 'http://HOST:8096/web/ConfigurationPage?name=Curator'`
+  and grep that. Grepping the DLL (`grep -ac curatorTabPanel …dll`) proves what is
+  installed, not what the browser is showing.
 
 ## Verified on a live server, and what is still open
 
