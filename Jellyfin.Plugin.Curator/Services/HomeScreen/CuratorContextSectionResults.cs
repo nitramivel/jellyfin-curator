@@ -5,6 +5,7 @@ using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.Curator.Configuration;
 using Jellyfin.Plugin.Curator.Core;
 using Jellyfin.Plugin.Curator.Core.Context;
+using Jellyfin.Plugin.Curator.Core.HomeScreen;
 using Jellyfin.Plugin.Curator.Core.Models;
 using Jellyfin.Plugin.Curator.Core.Recommendations;
 using Jellyfin.Plugin.Curator.Services.Categories;
@@ -35,12 +36,23 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
     ///
     /// <para>
     /// Unlike every other Curator row there is <b>no playlist behind this one</b>.
-    /// It is computed when the home screen asks, which is the only way it can be
-    /// true: a playlist rebuilt on a schedule would show what the weather was doing
-    /// at the last refresh, and a row whose entire claim is "this suits right now"
-    /// cannot be hours stale. What that costs is the Collection Sections path — that
-    /// plugin resolves a row by playlist name and there is no playlist to name — so
-    /// these two rows exist only under <c>SectionDelivery.Integrated</c>.
+    /// The contents are assembled here, when the home screen asks, so new items and
+    /// new categories show up in the row without waiting for anything. What that
+    /// costs is the Collection Sections path — that plugin resolves a row by
+    /// playlist name and there is no playlist to name — so these two rows exist only
+    /// under <c>SectionDelivery.Integrated</c>.
+    /// </para>
+    ///
+    /// <para>
+    /// The <i>conditions</i>, though, are not read here. They come from the snapshot
+    /// <c>ContextRowService</c> wrote when it registered the row, and that split is
+    /// the load-bearing part of the design: a row's title belongs to its
+    /// registration and cannot change without re-registering, while its contents are
+    /// free to be worked out on every load. Read the weather again here and the two
+    /// halves drift — a row titled for rain at five o'clock fills itself from a
+    /// clear sky at eight, and the name becomes a lie about the cards under it. So
+    /// the title and the cards answer the same pinned question, and the refresh task
+    /// is what moves that question forward.
     /// </para>
     ///
     /// <para>
@@ -66,6 +78,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
         private readonly ICategoryStore _categoryStore;
         private readonly ISummaryStore _summaryStore;
         private readonly IWeatherService _weatherService;
+        private readonly IContextRowStore _store;
         private readonly ILogger<CuratorContextSectionResults> _logger;
 
         public CuratorContextSectionResults(
@@ -75,6 +88,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             ICategoryStore categoryStore,
             ISummaryStore summaryStore,
             IWeatherService weatherService,
+            IContextRowStore store,
             ILogger<CuratorContextSectionResults> logger)
         {
             _libraryManager = libraryManager;
@@ -83,6 +97,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             _categoryStore = categoryStore;
             _summaryStore = summaryStore;
             _weatherService = weatherService;
+            _store = store;
             _logger = logger;
         }
 
@@ -158,7 +173,13 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 return Empty();
             }
 
-            var context = CurrentContext(config, payload.UserId);
+            // The snapshot is looked up by section, so a per-viewer row finds the
+            // conditions it was actually titled for. A viewer whose client echoes
+            // back somebody else's section still gets their own items, because those
+            // come from payload.UserId — the worst case is a title that does not suit
+            // their sky, which is what enabling only your own row prevents.
+            var snapshot = SnapshotFor(payload, rowKind);
+            var context = CurrentContext(config, payload.UserId, snapshot);
             var ranked = RankedForViewer(payload.UserId, config);
             if (ranked.Count == 0)
             {
@@ -188,14 +209,30 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
         /// The conditions this row is being drawn for.
         /// </summary>
         /// <remarks>
-        /// The weather reading carries the location's own UTC offset, so a viewer
-        /// given a location in another timezone gets <em>their</em> evening rather
-        /// than the server's. With no reading at all the server's clock is the only
-        /// clock there is, which is right for the ordinary case of a household
-        /// watching where its server lives.
+        /// Read from the snapshot the refresh task wrote, <b>not</b> from the weather
+        /// right now, and that is the whole point of the snapshot existing. The row's
+        /// title is fixed at registration; its contents are worked out here. Take the
+        /// conditions from two different moments and the two disagree — a row titled
+        /// for rain at five o'clock quietly fills itself from a clear sky at eight,
+        /// and the name becomes a lie about the cards underneath it.
+        /// <para>
+        /// Falling back to live conditions covers the window before the task has ever
+        /// run: better a row that is right about now and generically named than no
+        /// row at all. The weather reading carries the location's own UTC offset, so a
+        /// viewer in another timezone gets <em>their</em> evening rather than the
+        /// server's.
+        /// </para>
         /// </remarks>
-        private ViewingContext CurrentContext(PluginConfiguration config, Guid userId)
+        private ViewingContext CurrentContext(
+            PluginConfiguration config,
+            Guid userId,
+            ContextRowSnapshot? snapshot)
         {
+            if (snapshot is not null)
+            {
+                return snapshot.Context();
+            }
+
             var reading = _weatherService.Current(config.LocationFor(userId));
 
             var utcNow = DateTime.UtcNow;
@@ -205,6 +242,39 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             return reading.IsUsable
                 ? new ViewingContext(reading.Words, daypart)
                 : ViewingContext.ClockOnly(daypart);
+        }
+
+        /// <summary>
+        /// The snapshot for the row being drawn.
+        /// </summary>
+        /// <remarks>
+        /// Tries this viewer's own section first and the shared one second, which
+        /// covers both location modes without the handler having to know which is
+        /// configured — and covers the window just after the mode is switched, when
+        /// rows of the other shape are still registered and still being asked for
+        /// their contents. Nothing unregisters a section.
+        /// </remarks>
+        private ContextRowSnapshot? SnapshotFor(CuratorSectionPayload payload, ContextRowKind kind)
+        {
+            var snapshots = _store.GetSnapshots();
+            if (snapshots.Count == 0)
+            {
+                return null;
+            }
+
+            var kindKey = kind == ContextRowKind.Weather ? "weather" : "daypart";
+
+            if (snapshots.TryGetValue(
+                    SectionConfigMerger.ContextSectionIdFor(kindKey, payload.UserId), out var mine))
+            {
+                return mine;
+            }
+
+            var sharedId = kind == ContextRowKind.Weather
+                ? SectionConfigMerger.WeatherSectionId
+                : SectionConfigMerger.DaypartSectionId;
+
+            return snapshots.TryGetValue(sharedId, out var shared) ? shared : null;
         }
 
         /// <summary>

@@ -991,6 +991,33 @@
                                 landscape.
                             </div>
                         </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="SectionOrderIndex">Row order index</label>
+                            <input id="SectionOrderIndex" name="SectionOrderIndex" type="number" min="0" max="10000"
+                                   class="emby-input" />
+                            <div class="fieldDescription">
+                                Where Curator's category rows sit among everything else on the home screen —
+                                Home Screen Sections orders every row by this number, and 500 puts Curator in one
+                                lane in the middle. Worth knowing what else it does:
+                                <strong>rows sharing an order index are shuffled on every load</strong>, so all of
+                                Curator's categories in one lane appear in a different order each time you open
+                                Jellyfin. That is the price of taking one lane and staying out of the way of your
+                                own rows.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="ContextRowOrderIndex">Context row order index</label>
+                            <input id="ContextRowOrderIndex" name="ContextRowOrderIndex" type="number" min="0" max="10000"
+                                   class="emby-input" />
+                            <div class="fieldDescription">
+                                A lane of their own for the weather and time-of-day rows. 0 puts them in the same
+                                lane as everything above. Giving them their own — something low, to sit near the
+                                top — is the one case where Curator has a real basis for ranking its own rows:
+                                there are exactly two of them, they are the same two every day, and they are about
+                                right now. In a shared lane they get shuffled into the middle of fifty category
+                                rows where nobody scrolls.
+                            </div>
+                        </div>
 
                         <h3 class="sectionTitle">Recommendation playlist</h3>
                         <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
@@ -1172,12 +1199,76 @@
                                 says so and the weather row is simply left out.
                             </div>
                         </div>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="ContextRowTitleMode">Row titles</label>
+                            <select is="emby-select" id="ContextRowTitleMode" name="ContextRowTitleMode"
+                                    class="emby-select-withcolor emby-select">
+                                <option value="Fixed">Use the names above</option>
+                                <option value="Model">Let a model name them</option>
+                            </select>
+                            <div class="fieldDescription">
+                                A model writes a few titles for each set of conditions and the rows rotate
+                                through them, so a rainy evening in March is not labelled identically to one in
+                                November. Bought <strong>once per set of conditions</strong>, not once per
+                                refresh: a place produces around thirty distinct conditions, so the cost flattens
+                                within a few weeks and then stays flat. A failed call, or a condition seen for the
+                                first time while the model is unreachable, falls back to the names above.
+                            </div>
+                        </div>
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="ContextTitleModelProfileId">Model profile for titles</label>
+                            <select is="emby-select" id="ContextTitleModelProfileId" name="ContextTitleModelProfileId"
+                                    class="emby-select"></select>
+                            <div class="fieldDescription">
+                                Worth pointing somewhere cheap. Naming a shelf is the smallest job anything here
+                                asks for — a few dozen words in and a few dozen out.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="ContextTitlesPerCondition">Titles per condition</label>
+                            <input id="ContextTitlesPerCondition" name="ContextTitlesPerCondition" type="number"
+                                   min="1" max="12" class="emby-input" />
+                            <div class="fieldDescription">
+                                All of them arrive in one call, so this is variety per unit of spend rather than a
+                                multiplier on it. Above about eight the model starts reaching and the last few are
+                                noticeably worse than the first.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="ContextTitleRetentionDays">Cull unused titles after (days)</label>
+                            <input id="ContextTitleRetentionDays" name="ContextTitleRetentionDays" type="number"
+                                   min="0" max="3650" class="emby-input" />
+                            <div class="fieldDescription">
+                                Titles for conditions that stop occurring are dropped. A year by default, because
+                                these conditions are <em>seasonal</em>: culling the snowy-evening titles in July
+                                for going six months unused would re-buy them every winter, which is exactly what
+                                the cache exists to prevent. 0 keeps them forever. Titles naming a condition
+                                Curator no longer recognises are dropped immediately either way — those can never
+                                match again.
+                            </div>
+                        </div>
                         <div id="CuratorUserLocations" class="hide" style="margin-top:1em;">
                             <h4 class="sectionTitle" style="font-size:1.1em;">Each viewer's location</h4>
                             <div class="fieldDescription" style="margin-bottom:0.8em;">
                                 Leave one blank to use the server's location above.
                             </div>
                             <div id="CuratorUserLocationRows"></div>
+                        </div>
+                        <div style="margin-top:1.2em;">
+                            <button is="emby-button" type="button" id="CuratorTestWeather" class="raised">
+                                <span>Test the weather lookup</span>
+                            </button>
+                            <button is="emby-button" type="button" id="CuratorRefreshContextRows" class="raised">
+                                <span>Refresh rows now</span>
+                            </button>
+                            <div class="fieldDescription" style="margin-top:0.5em;" id="CuratorWeatherState">
+                                <strong>Test</strong> calls Open-Meteo right now, bypassing the cache, and reports
+                                what came back — the place it matched, the conditions, the temperature and the
+                                local time. It is the only way to tell &ldquo;the requests are not getting
+                                through&rdquo; apart from &ldquo;nothing in the library suits the weather&rdquo;.
+                                <strong>Refresh</strong> re-reads the weather, re-titles both rows and republishes
+                                them. <strong>Save first</strong> if you have just changed the settings above.
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1739,6 +1830,7 @@
                 renderPassProfileSelect('#DiscoveryModelProfileId');
                 renderPassProfileSelect('#PersonalModelProfileId');
                 renderPassProfileSelect('#RecommendationModelProfileId');
+                renderPassProfileSelect('#ContextTitleModelProfileId');
             }
 
             function renderPassProfileSelect(selector, chosenId) {
@@ -1808,6 +1900,90 @@
                         var selected = chosenIds.indexOf(user.Id) !== -1 ? ' selected' : '';
                         return '<option value="' + user.Id + '"' + selected + '>' + escapeHtml(user.Name) + '</option>';
                     }).join('');
+                });
+            }
+
+            /**
+             * Calls Open-Meteo through the server, right now, and reports what came
+             * back. Deliberately bypasses the cache on the server side: a stale
+             * reading answering this would report success for a network that has been
+             * failing for hours, which is the exact thing this button is for.
+             */
+            function testWeather() {
+                var button = page.querySelector('#CuratorTestWeather');
+                var state = page.querySelector('#CuratorWeatherState');
+                button.disabled = true;
+                state.innerHTML = 'Asking Open-Meteo&hellip;';
+
+                var location = page.querySelector('#WeatherLocation').value.trim();
+                var url = 'Curator/Context/Weather';
+                if (location) {
+                    url += '?location=' + encodeURIComponent(location);
+                }
+
+                ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl(url),
+                    dataType: 'json'
+                }).then(function (result) {
+                    if (!result || !result.ok) {
+                        state.innerHTML = 'No reading. ' + escapeHtml((result && result.error) || 'Check the server log.');
+                        return;
+                    }
+
+                    var temperature = '';
+                    if (result.temperatureCelsius !== null && result.temperatureCelsius !== undefined) {
+                        temperature = ', ' + Math.round(result.temperatureCelsius) + '&deg;C ('
+                            + Math.round(result.temperatureFahrenheit) + '&deg;F)';
+                    }
+
+                    state.innerHTML = 'Reached Open-Meteo. <strong>' + escapeHtml(result.resolved)
+                        + '</strong>' + temperature
+                        + ' &mdash; Curator reads that as <strong>'
+                        + escapeHtml((result.conditions || []).join(', ') || 'nothing it has a word for')
+                        + '</strong>, at ' + escapeHtml(result.localTime) + ' local time ('
+                        + escapeHtml(result.daypart) + ').';
+                }).catch(function () {
+                    state.innerHTML = 'The request failed before it reached Open-Meteo. Check the server log.';
+                }).finally(function () {
+                    button.disabled = false;
+                });
+            }
+
+            function refreshContextRows() {
+                var button = page.querySelector('#CuratorRefreshContextRows');
+                var state = page.querySelector('#CuratorWeatherState');
+                button.disabled = true;
+                state.innerHTML = 'Refreshing the rows&hellip;';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Context/Refresh'),
+                    dataType: 'json'
+                }).then(function (result) {
+                    if (!result) {
+                        state.innerHTML = 'Nothing came back &mdash; check the server log.';
+                        return;
+                    }
+
+                    if (result.error) {
+                        state.innerHTML = 'Not published: ' + escapeHtml(result.error);
+                        return;
+                    }
+
+                    if (!result.rows) {
+                        state.innerHTML = 'No rows were published. The rows need to be switched on, the row '
+                            + 'source set to Curator, and a location that resolves.';
+                        return;
+                    }
+
+                    state.innerHTML = 'Published ' + result.rows + ' row(s) across ' + result.places
+                        + ' location(s). ' + result.titlesBought + ' new title set(s) bought, '
+                        + result.titlesCulled + ' culled.';
+                }).catch(function () {
+                    state.innerHTML = 'The refresh failed &mdash; check the server log.';
+                }).finally(function () {
+                    button.disabled = false;
                 });
             }
 
@@ -4277,6 +4453,12 @@
                     page.querySelector('#MaxContextRowItems').value = config.MaxContextRowItems;
                     page.querySelector('#WeatherLocation').value = config.WeatherLocation || '';
                     setEnumSelect(page.querySelector('#WeatherLocationMode'), config.WeatherLocationMode);
+                    setEnumSelect(page.querySelector('#ContextRowTitleMode'), config.ContextRowTitleMode);
+                    page.querySelector('#ContextTitlesPerCondition').value = config.ContextTitlesPerCondition;
+                    page.querySelector('#ContextTitleRetentionDays').value = config.ContextTitleRetentionDays;
+                    page.querySelector('#SectionOrderIndex').value = config.SectionOrderIndex;
+                    page.querySelector('#ContextRowOrderIndex').value = config.ContextRowOrderIndex;
+                    renderPassProfileSelect('#ContextTitleModelProfileId', config.ContextTitleModelProfileId || '');
 
                     return fillUsers(config.TargetUsers || []).then(function () {
                         // After fillUsers, which is what loads the user list these
@@ -4366,6 +4548,12 @@
                     config.WeatherLocation = page.querySelector('#WeatherLocation').value.trim();
                     config.WeatherLocationMode = page.querySelector('#WeatherLocationMode').value;
                     config.UserWeatherLocations = collectUserLocations();
+                    config.ContextRowTitleMode = page.querySelector('#ContextRowTitleMode').value;
+                    config.ContextTitleModelProfileId = page.querySelector('#ContextTitleModelProfileId').value;
+                    config.ContextTitlesPerCondition = parseInt(page.querySelector('#ContextTitlesPerCondition').value, 10);
+                    config.ContextTitleRetentionDays = parseInt(page.querySelector('#ContextTitleRetentionDays').value, 10);
+                    config.SectionOrderIndex = parseInt(page.querySelector('#SectionOrderIndex').value, 10);
+                    config.ContextRowOrderIndex = parseInt(page.querySelector('#ContextRowOrderIndex').value, 10);
 
                     config.TargetUsers = Array.prototype.filter.call(
                         page.querySelector('#TargetUsers').options,
@@ -4496,6 +4684,8 @@
                 page.querySelector('#CuratorUsageRefresh').addEventListener('click', loadUsage);
                 page.querySelector('#CuratorUsageRange').addEventListener('change', loadUsage);
                 page.querySelector('#WeatherLocationMode').addEventListener('change', applyLocationModeVisibility);
+                page.querySelector('#CuratorTestWeather').addEventListener('click', testWeather);
+                page.querySelector('#CuratorRefreshContextRows').addEventListener('click', refreshContextRows);
 
                 // The summary is the setting's only readable form, so it has to track
                 // the boxes as they are typed in rather than on save.

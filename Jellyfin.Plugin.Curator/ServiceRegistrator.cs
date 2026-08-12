@@ -34,6 +34,8 @@ namespace Jellyfin.Plugin.Curator
             // for the life of the process, conditions for half an hour. A transient
             // one would geocode on every home screen load.
             serviceCollection.AddSingleton<IWeatherService, OpenMeteoWeatherService>();
+            serviceCollection.AddSingleton<IContextRowStore, ContextRowStore>();
+            serviceCollection.AddSingleton<ContextRowService>();
             serviceCollection.AddSingleton<ISectionRegistrar, HomeScreenSectionRegistrar>();
             serviceCollection.AddSingleton<IHomeScreenIntegrationService, HomeScreenIntegrationService>();
 
@@ -54,6 +56,7 @@ namespace Jellyfin.Plugin.Curator
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, HealthCheckTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, RefreshRecommendationsTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, PublishHomeScreenRowsTask>();
+            serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, RefreshContextRowsTask>();
         }
     }
 }

@@ -912,6 +912,46 @@ namespace Jellyfin.Plugin.Curator.Tests
         /// then throws away — a judgement paid for and silently discarded.
         /// </summary>
         [Fact]
+        public async Task Grok_ContextTitleSchema_AsksForTheTitlesArray()
+        {
+            var handler = new StubHandler(GrokResponse);
+            var provider = OpenAiChatProvider.CreateGrok(new HttpClient(handler), "grok-4", "xai-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "PROMPT", string.Empty, 1200, ResponseShape.ContextTitles),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var schema = body.RootElement
+                .GetProperty("response_format").GetProperty("json_schema").GetProperty("schema");
+
+            Assert.Equal("titles", Assert.Single(schema.GetProperty("required").EnumerateArray()).GetString());
+            Assert.Equal(
+                "string",
+                schema.GetProperty("properties").GetProperty("titles").GetProperty("items").GetProperty("type").GetString());
+            Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
+        }
+
+        [Fact]
+        public async Task Google_ContextTitleSchema_AsksForTheTitlesArray()
+        {
+            var handler = new StubHandler(GoogleResponse);
+            var provider = new GoogleProvider(new HttpClient(handler), "gemini-2.5-flash", "AIza-test");
+
+            await provider.CompleteAsync(
+                new LlmRequest("SYSTEM", "PROMPT", string.Empty, 1200, ResponseShape.ContextTitles),
+                CancellationToken.None);
+
+            using var body = JsonDocument.Parse(handler.RequestBody!);
+            var schema = body.RootElement.GetProperty("generationConfig").GetProperty("responseSchema");
+
+            Assert.Equal("titles", Assert.Single(schema.GetProperty("required").EnumerateArray()).GetString());
+            Assert.Equal(
+                "STRING",
+                schema.GetProperty("properties").GetProperty("titles").GetProperty("items").GetProperty("type").GetString());
+        }
+
+        [Fact]
         public async Task Grok_ContextSchema_ConstrainsBothListsToTheVocabulary()
         {
             var handler = new StubHandler(GrokResponse);

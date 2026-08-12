@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +9,8 @@ using Jellyfin.Plugin.Curator.Core.Scheduling;
 using Jellyfin.Plugin.Curator.Core.Usage;
 using Jellyfin.Plugin.Curator.Services;
 using Jellyfin.Plugin.Curator.Services.Categories;
+using Jellyfin.Plugin.Curator.Core.Context;
+using Jellyfin.Plugin.Curator.Services.Context;
 using Jellyfin.Plugin.Curator.Services.Health;
 using Jellyfin.Plugin.Curator.Services.HomeScreen;
 using Jellyfin.Plugin.Curator.Services.Playlists;
@@ -53,6 +56,29 @@ namespace Jellyfin.Plugin.Curator.Api
         IReadOnlyList<CategorySourceProposal> SourceProposals,
         Guid? OwnerUserId,
         string? OwnerUserName);
+
+    /// <summary>
+    /// What a live weather lookup returned, for the config page's Test button.
+    /// </summary>
+    /// <param name="Ok">Whether a usable reading came back.</param>
+    /// <param name="Requested">The place name as configured.</param>
+    /// <param name="Resolved">The place the geocoder matched it to.</param>
+    /// <param name="Conditions">The reading reduced to Curator's vocabulary.</param>
+    /// <param name="TemperatureCelsius">The temperature in Celsius.</param>
+    /// <param name="TemperatureFahrenheit">The same, in Fahrenheit.</param>
+    /// <param name="LocalTime">The local time at that place, as HH:mm.</param>
+    /// <param name="Daypart">Which daypart that local time falls in.</param>
+    /// <param name="Error">What went wrong, or null.</param>
+    public sealed record WeatherProbe(
+        bool Ok,
+        string Requested,
+        string Resolved,
+        IReadOnlyList<string> Conditions,
+        double? TemperatureCelsius,
+        double? TemperatureFahrenheit,
+        string LocalTime,
+        string Daypart,
+        string? Error);
 
     /// <summary>One user's playlist link for a category, for the config page.</summary>
     /// <param name="UserId">The Jellyfin user.</param>
@@ -199,6 +225,8 @@ namespace Jellyfin.Plugin.Curator.Api
         private readonly IUserManager _userManager;
         private readonly ILibraryManager _libraryManager;
         private readonly ITaskManager _taskManager;
+        private readonly IWeatherService _weatherService;
+        private readonly ContextRowService _contextRows;
         private readonly ILogger<CuratorController> _logger;
 
         public CuratorController(
@@ -212,6 +240,8 @@ namespace Jellyfin.Plugin.Curator.Api
             IUserManager userManager,
             ILibraryManager libraryManager,
             ITaskManager taskManager,
+            IWeatherService weatherService,
+            ContextRowService contextRows,
             ILogger<CuratorController> logger)
         {
             _runService = runService;
@@ -224,6 +254,8 @@ namespace Jellyfin.Plugin.Curator.Api
             _userManager = userManager;
             _libraryManager = libraryManager;
             _taskManager = taskManager;
+            _weatherService = weatherService;
+            _contextRows = contextRows;
             _logger = logger;
         }
 
@@ -449,6 +481,88 @@ namespace Jellyfin.Plugin.Curator.Api
         public async Task<ActionResult<int>> RefreshRecommendations()
         {
             return await _runService.RefreshRecommendationsAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Reads the weather for a location right now, and says what Curator would
+        /// make of it.
+        /// </summary>
+        /// <remarks>
+        /// A diagnostic, and the only place the Open-Meteo calls happen in the
+        /// foreground. Everything else reads them from a cache filled in the
+        /// background, precisely so a home screen never waits on a third party — so
+        /// without this there is no way to tell "the requests are not getting
+        /// through" apart from "nothing in the library suits the weather", which look
+        /// identical from the config page.
+        /// <para>
+        /// It deliberately bypasses the cache: a stale reading answering this
+        /// question would report success for a network that has been failing for
+        /// hours.
+        /// </para>
+        /// </remarks>
+        /// <param name="location">The place to look up. Defaults to the configured one.</param>
+        /// <response code="200">The lookup ran; check <c>ok</c> for whether it worked.</response>
+        /// <returns>What was read.</returns>
+        [HttpGet("Context/Weather")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<WeatherProbe>> ProbeWeather([FromQuery] string? location)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config is null)
+            {
+                return Conflict("Curator configuration is unavailable.");
+            }
+
+            var place = string.IsNullOrWhiteSpace(location)
+                ? config.WeatherLocation?.Trim() ?? string.Empty
+                : location.Trim();
+
+            if (place.Length == 0)
+            {
+                return new WeatherProbe(
+                    false, string.Empty, string.Empty, [], null, null, string.Empty, string.Empty,
+                    "No location is configured. Type a place name on the Home screen tab and save.");
+            }
+
+            var reading = await _weatherService
+                .RefreshAsync(place, CancellationToken.None)
+                .ConfigureAwait(false);
+
+            if (!reading.IsUsable)
+            {
+                return new WeatherProbe(
+                    false, place, string.Empty, [], null, null, string.Empty, string.Empty,
+                    "Nothing came back for that place. Check the server log — the usual causes are a name "
+                    + "no geocoder matches, and the server having no outbound internet access.");
+            }
+
+            var utcNow = DateTime.UtcNow;
+            var localTime = reading.LocalTimeOfDay(utcNow) ?? DateTime.Now.TimeOfDay;
+            var daypart = ContextVocabulary.DaypartFor(localTime);
+
+            return new WeatherProbe(
+                true,
+                place,
+                reading.Place,
+                reading.Words,
+                reading.TemperatureCelsius,
+                reading.TemperatureCelsius is { } c ? Math.Round(WeatherCodes.ToFahrenheit(c), 1) : null,
+                localTime.ToString(@"hh\:mm", CultureInfo.InvariantCulture),
+                ContextVocabulary.WordFor(daypart),
+                null);
+        }
+
+        /// <summary>
+        /// Refreshes the two context rows now: re-reads the weather, re-titles them,
+        /// and republishes them.
+        /// </summary>
+        /// <response code="200">Refreshed.</response>
+        /// <returns>What it did.</returns>
+        [HttpPost("Context/Refresh")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<ContextRowRefreshResult>> RefreshContextRows()
+        {
+            return await _contextRows.RefreshAsync(CancellationToken.None).ConfigureAwait(false);
         }
 
         /// <summary>

@@ -111,21 +111,20 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                     new DesiredSection(
                         SectionConfigMerger.SectionIdFor(category.Id),
                         category.Name,
-                        category.Members.Count),
+                        category.Members.Count,
+                        config.SectionOrderIndex),
                     category.Id.ToString("N"),
                     typeof(CuratorSectionResults)))
                 .ToList();
 
-            // The two context rows, which have no playlist behind them and no
-            // category either. They join the registration list and the section
-            // settings write, but never the Collection Sections path below — that
-            // plugin resolves a row by playlist name, and these have no playlist to
-            // name. See CuratorContextSectionResults for why they cannot have one.
-            var contextRows = ContextRows(config);
-            var registrations = claimed.Concat(contextRows).ToList();
-
+            // The context rows are deliberately absent. They are published by the
+            // Refresh Context Rows task, several times a day, because their titles
+            // track conditions that change — and a run registering them here with
+            // whatever name it happened to know would overwrite that. Everything in
+            // this method is scoped to Categories for the same reason: the two passes
+            // must not delete each other's rows.
+            var registrations = claimed;
             var desired = claimed.ConvertAll(entry => entry.Section);
-            var desiredWithContext = registrations.ConvertAll(entry => entry.Section);
 
             try
             {
@@ -177,12 +176,11 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 // registered: under the Collection Sections path they do not exist,
                 // and writing settings for a section nothing registered leaves an
                 // entry pointing at nothing.
-                var settingsFor = integrated ? desiredWithContext : desired;
-                await WriteSectionSettingsAsync(client, settingsFor, cancellationToken).ConfigureAwait(false);
+                await WriteSectionSettingsAsync(client, desired, cancellationToken).ConfigureAwait(false);
 
-                if (config.AutoEnableSections && settingsFor.Count > 0)
+                if (config.AutoEnableSections && desired.Count > 0)
                 {
-                    await EnableSectionsForUsersAsync(client, settingsFor, targetUserIds, cancellationToken).ConfigureAwait(false);
+                    await EnableSectionsForUsersAsync(client, desired, targetUserIds, cancellationToken).ConfigureAwait(false);
                 }
                 else if (!config.AutoEnableSections)
                 {
@@ -208,56 +206,75 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             }
         }
 
-        /// <summary>
-        /// The weather and time-of-day rows, when they are switched on.
-        /// </summary>
-        /// <remarks>
-        /// Their names are whatever the owner typed and do not track the sky, because
-        /// a row's display text is fixed at registration and registration happens at
-        /// startup and on sync. A title reading "For a rainy night" would therefore be
-        /// a claim about the weather several hours ago — worse than a general one,
-        /// since the row's <em>contents</em> are exact and the name should not promise
-        /// precision it cannot keep.
-        /// <para>
-        /// The member count decides card shape through <c>PortraitThreshold</c>, and
-        /// the configured row length is the honest answer for it — these rows have no
-        /// stored membership to count.
-        /// </para>
-        /// </remarks>
-        private static List<SectionRegistrationRequest> ContextRows(PluginConfiguration config)
+        /// <inheritdoc />
+        public async Task<bool> SyncContextRowsAsync(
+            IReadOnlyList<ContextRowRegistration> rows,
+            CancellationToken cancellationToken)
         {
-            if (!config.ContextRows)
+            ArgumentNullException.ThrowIfNull(rows);
+
+            if (rows.Count == 0)
             {
-                return [];
+                return true;
             }
 
-            var size = Math.Max(0, config.MaxContextRowItems);
+            if (!IsPluginLoaded("HomeScreenSections"))
+            {
+                _logger.LogWarning(
+                    "Curator: Home Screen Sections is not installed, so the context rows cannot be published");
+                return false;
+            }
 
-            return
-            [
-                new SectionRegistrationRequest(
-                    new DesiredSection(
-                        SectionConfigMerger.WeatherSectionId,
-                        Named(config.WeatherRowName, "Picks for the Weather"),
-                        size),
-                    CuratorContextSectionResults.WeatherRowKey,
-                    typeof(CuratorContextSectionResults)),
-                new SectionRegistrationRequest(
-                    new DesiredSection(
-                        SectionConfigMerger.DaypartSectionId,
-                        Named(config.DaypartRowName, "Picks for the Hour"),
-                        size),
-                    CuratorContextSectionResults.DaypartRowKey,
-                    typeof(CuratorContextSectionResults)),
-            ];
+            var requests = rows.Select(row => row.Request).ToList();
+            if (_registrar.RegisterSections(requests) is null)
+            {
+                return false;
+            }
+
+            try
+            {
+                using var client = await CreateClientAsync().ConfigureAwait(false);
+
+                var sections = requests.ConvertAll(request => request.Section);
+                await WriteSectionSettingsAsync(
+                    client, sections, cancellationToken, SectionConfigMerger.SectionScope.Context)
+                    .ConfigureAwait(false);
+
+                var config = Plugin.Instance?.Configuration;
+                if (config?.AutoEnableSections != true)
+                {
+                    return true;
+                }
+
+                // Enabled per row rather than per user, because a per-viewer row is
+                // enabled for exactly one person. Enabling all of them for everyone
+                // would put five other people's rows on each home screen, each titled
+                // for weather they are not standing in.
+                foreach (var group in rows
+                    .SelectMany(row => row.Audience.Select(userId => (userId, row.Request.Section.SectionId)))
+                    .GroupBy(pair => pair.userId))
+                {
+                    await EnableSectionsForUsersAsync(
+                        client,
+                        [.. group.Select(pair => new DesiredSection(pair.SectionId, string.Empty))],
+                        [group.Key],
+                        cancellationToken,
+                        SectionConfigMerger.SectionScope.Context).ConfigureAwait(false);
+                }
+
+                return true;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+            {
+                // The registration above already succeeded, so the rows exist. What
+                // failed is their order, shape or enablement — worth a warning, not
+                // worth reporting the rows as unpublished and having the task retry.
+                _logger.LogWarning(
+                    ex,
+                    "Curator: the context rows were registered but their settings could not be written");
+                return true;
+            }
         }
-
-        /// <summary>
-        /// A row name that is never blank — an empty display text renders as an
-        /// unlabelled row rather than as a hidden one.
-        /// </summary>
-        private static string Named(string? configured, string fallback)
-            => string.IsNullOrWhiteSpace(configured) ? fallback : configured.Trim();
 
         /// <summary>
         /// Sets the row order and card shape for Curator's sections in Home Screen
@@ -271,7 +288,8 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
         private async Task WriteSectionSettingsAsync(
             HttpClient client,
             IReadOnlyList<DesiredSection> desired,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            SectionConfigMerger.SectionScope scope = SectionConfigMerger.SectionScope.Categories)
         {
             var path = $"/Plugins/{HomeScreenSectionsPluginId}/Configuration";
 
@@ -290,7 +308,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             var portraitThreshold = Plugin.Instance?.Configuration.PortraitThreshold
                 ?? SectionConfigMerger.DefaultPortraitThreshold;
 
-            if (!SectionConfigMerger.MergeSectionSettings(configJson, desired, portraitThreshold))
+            if (!SectionConfigMerger.MergeSectionSettings(configJson, desired, portraitThreshold, scope))
             {
                 return;
             }
@@ -423,7 +441,8 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             HttpClient client,
             IReadOnlyList<DesiredSection> desired,
             IReadOnlyList<Guid> targetUserIds,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            SectionConfigMerger.SectionScope scope = SectionConfigMerger.SectionScope.Categories)
         {
             var sectionIds = desired.Select(d => d.SectionId).ToList();
 
@@ -451,7 +470,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 // no saved settings; the POST routes on it, so make sure it is set.
                 settings["UserId"] = userId.ToString("D", CultureInfo.InvariantCulture);
 
-                if (!SectionConfigMerger.MergeEnabledSections(settings, sectionIds))
+                if (!SectionConfigMerger.MergeEnabledSections(settings, sectionIds, scope))
                 {
                     continue;
                 }

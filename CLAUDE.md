@@ -66,7 +66,9 @@ Jellyfin.Plugin.Curator/
 │   │                         #   cadence <-> Jellyfin's trigger list)
 │   ├── Context/              # ViewingContext (the closed weather/daypart
 │   │                         #   vocabulary, WeatherReading), WeatherCodes (WMO
-│   │                         #   code + temperature -> words), ContextRanker
+│   │                         #   code + temperature -> words), ContextRanker,
+│   │                         #   ContextTitles (condition keys, rotation, culling),
+│   │                         #   ContextTitlePromptBuilder
 │   ├── Health/               # HealthCheck (facts in, findings out — pure)
 │   ├── Usage/                # UsageRollup + models — every billable call reduced
 │   │                         #   to cost by model, by pass and by day
@@ -84,7 +86,9 @@ Jellyfin.Plugin.Curator/
 │   ├── HealthCheckTask.cs          # IScheduledTask, daily; read-only diagnosis
 │   ├── Context/              # IWeatherService + OpenMeteoWeatherService (no API
 │   │                         #   key; caches coordinates for the process and
-│   │                         #   conditions for 30 min, refreshed off the render path)
+│   │                         #   conditions for 30 min, refreshed off the render path),
+│   │                         #   ContextRowService (reads weather, titles the rows,
+│   │                         #   publishes them), IContextRowStore (titles + snapshots)
 │   ├── Library/              # LibraryScanner, UserActivityProvider
 │   ├── Llm/                  # ILlmProvider + Anthropic/Google/Grok/OpenAI/compatible,
 │   │                         #   TransientHttpRetry (shared 429/5xx backoff), factory,
@@ -97,6 +101,8 @@ Jellyfin.Plugin.Curator/
 │   ├── Playlists/            # CuratorPlaylistService — create/update/delete, tagging;
 │   │                         #   PlaylistLookup (the one by-GUID/by-tether resolver)
 │   ├── PublishHomeScreenRowsTask.cs # IScheduledTask, startup; re-registers the rows
+│   ├── RefreshContextRowsTask.cs    # IScheduledTask, hourly + startup; re-titles
+│   │                                #   and republishes the two context rows
 │   └── HomeScreen/           # HomeScreenIntegrationService (picks the path),
 │                             #   HomeScreenSectionRegistrar (reflects into the other
 │                             #   plugin), CuratorSectionResults (answers for a row),
@@ -449,11 +455,11 @@ every one of these was a real failure on a real server before it was a rule.
    every pass. When `SendConsolidatedTags` is on the run service raises the
    effective tag cap, because `MaxTagsPerItem` is normally 0 and would otherwise
    substitute the consolidated tags onto every record and then write none of them.
-18. **Six scheduled tasks, one job each.** Generate Categories (weekly, the only
+18. **Seven scheduled tasks, one job each.** Generate Categories (weekly, the only
    one that costs money), Condense Summaries (daily), Refresh Recommendations
    (6-hourly), Clean Up and Sync (daily), Health Check (daily), Publish Home
-   Screen Rows (**every server start**, and the only one with a startup
-   trigger — see rule 22). The recommendation
+   Screen Rows (**every server start**), Refresh Context Rows (hourly, plus
+   startup). The recommendation
    refresh deliberately does **not** live in the maintenance task any more: it
    tracks watch activity and wants a far shorter cadence than reconciling
    playlists does, and having two tasks rebuild the same playlists was duplicate
@@ -595,13 +601,49 @@ every one of these was a real failure on a real server before it was a rule.
      resolved. Watch history is deliberately not consulted — the recommendation row
      answers "what next", this one answers "what suits now", and the honest answer
      to that is often something they have loved before.
-   Two smaller consequences worth knowing. A row's **display text is fixed at
-   registration**, so the names are general (`Picks for the Weather`) and must not
-   be made to track the sky — registration happens at startup and on sync, so a
-   title reading "For a rainy night" would be a claim about the weather hours ago.
-   And the weather cache is in memory like the registrations are, so
-   `PublishHomeScreenRowsTask` primes it: otherwise the first person to open
-   Jellyfin after a restart is the one who does not get the feature.
+   **A row's display text belongs to its registration**, which is what
+   `RefreshContextRowsTask` exists for. Home Screen Sections keeps no per-user and
+   no per-request title, so a name that tracks the sky is a name that has to be
+   *re-registered* when the sky turns over — and that cannot happen on the render
+   path, which may not write into another plugin or buy anything. Hourly plus a
+   startup trigger: the startup one is what makes the interval safe under rule 16,
+   since a restart re-arms it immediately.
+   Four things around that, all load-bearing:
+   - **The title and the cards must answer the same question.** The title is fixed
+     at registration and the contents are assembled at render, so reading the
+     weather twice lets them drift — a row titled for rain at five filling itself
+     from a clear sky at eight. `ContextRowService` writes a `ContextRowSnapshot`
+     naming the exact conditions each row was registered for, and
+     `CuratorContextSectionResults` takes its context from there, never from the
+     clock. Live conditions are the fallback only before the task has ever run.
+   - **Titles are bought per set of conditions, not per refresh.** One call gets
+     several, cached under a key like `weather:cold,rain` and rotated on each draw,
+     with the viewer's own offset mixed in so two people under one sky do not read
+     the same words. A place produces around thirty conditions, so the cost
+     flattens within weeks — against two calls per refresh forever, which is what
+     titling on the clock would mean. Culling drops a set naming a lost vocabulary
+     word *immediately* and an unused one only after a year, because these
+     conditions are seasonal and an eager rule re-buys every winter what it culled
+     every summer.
+   - **Per-viewer rows exist only under per-viewer locations.** A title is a
+     property of the section, so two viewers can only read two titles by looking at
+     two sections — `ContextSectionIdFor` builds those, and each is enabled for its
+     own viewer alone. Under one location the weather and the hour are identical
+     for everyone and N copies of one row would be N registrations for no
+     difference.
+   - **`SectionScope` is not decoration.** Both merges in `SectionConfigMerger`
+     *remove* Curator entries absent from the list they were handed. Category rows
+     are published by a run; context rows several times a day. A context sync
+     claiming the whole `curator-` prefix would therefore delete every category row
+     from the section settings and from every viewer's enabled list, several times
+     a day, silently. `Categories` and `Context` are disjoint and each pass claims
+     exactly its own.
+   The weather cache is in memory like the registrations are, so both startup
+   paths refresh it: otherwise the first person to open Jellyfin after a restart is
+   the one who does not get the feature. `GET /Curator/Context/Weather` is the
+   diagnostic — the one place an Open-Meteo call happens in the foreground and
+   bypasses the cache, because a stale reading answering "are the requests getting
+   through" would report success for a network that has been failing for hours.
 
 ## Verified integration facts
 
@@ -669,11 +711,17 @@ counterintuitive; do not "correct" them from memory.
     server, so it is untrusted input on the way in. `CuratorSectionResults`
     validates it and only ever returns items already in that viewer's own playlist.
 - **Rows in one `OrderIndex` group are shuffled** — `CacheSectionsForUser` calls
-  `Shuffle` on each group before returning it. Curator gives every row
-  `OrderIndex` 500, so its rows appear in a different order on every home screen
-  load. Row *order*, not item order; the row contents are unaffected. Not yet
-  addressed — spreading the rows over distinct indices would fix it and would
-  reverse the "Curator takes one lane" decision below, so it is the owner's call.
+  `Shuffle` on each group before returning it, so every Curator row sharing a lane
+  appears in a different position on every home screen load. Row *order*, not item
+  order; the contents are unaffected. **Now the owner's call, as it should be:**
+  `SectionOrderIndex` (default 500) sets the lane for category rows and
+  `ContextRowOrderIndex` (0 inherits) gives the two context rows one of their own.
+  The one-lane default still stands for categories — Curator has no basis for
+  ranking one category above another on a stranger's home screen — but the context
+  rows are the exception that proves it: there are exactly two, they are the same
+  two every day, and a shared lane shuffles them into the middle of fifty rows
+  where nobody scrolls. `DesiredSection` carries its own index so a single merge
+  can write both lanes.
 - `GetInfo` on a plugin-defined section hardcodes `ViewMode = Landscape`, but
   `SectionToInfo` overwrites it from `SectionSettings` before returning. **So the
   section settings write is what actually sets card shape, in both integration
@@ -825,9 +873,9 @@ release or two, and only remove it once a few restarts have been survived.
   that still paint the list from the page's palette. Use `#101010`, Jellyfin's own
   base — the same value the Usage tab's palette was validated against.
 - **Anything listing profiles must be rebuilt whenever the list changes.** There
-  are now three such pickers — the Summaries tab's, and the Model tab's two
-  per-pass ones — and `renderProfiles()` refreshes all of them via
-  `syncSummaryProfileSelect()` / `syncPassProfileSelects()`. Miss one and a rename
+  are now four such pickers — the Summaries tab's, the Model tab's two per-pass
+  ones, and the Home screen tab's title picker — and `renderProfiles()` refreshes
+  all of them via `syncSummaryProfileSelect()` / `syncPassProfileSelects()`. Miss one and a rename
   two rows up leaves a picker showing a name the profile no longer has, silently
   saving the wrong id. Blank is a **real value** on these: it means "follow the
   default profile", not "unset".
@@ -970,19 +1018,23 @@ round-trip — are confirmed working. What remains:
    without episode expansion. Home rows render correctly; in-library playback of
    such a playlist may behave oddly.
 5. **The weather and time-of-day rows.** Everything decidable without a server is
-   pinned by tests — the vocabulary, the WMO mapping, the ranking, all four
-   response shapes in both schema dialects, and the fact that
+   pinned by tests — the vocabulary, the WMO mapping, the ranking, the condition
+   keys and their rotation and culling, the store round-trip, every response shape
+   in both schema dialects, that the two section scopes are disjoint, and that
    `CuratorContextSectionResults` declares exactly one public `GetResults`. What
-   they cannot show is a row rendering, and there are three specific unknowns.
+   they cannot show is a row rendering, and four unknowns remain.
    No live Open-Meteo call has been made from this machine, so the geocoding and
-   forecast response shapes are read from their documentation rather than
-   observed. No model has yet been asked to judge context, so how sparing the
-   prompt actually makes it is unmeasured — the failure to watch for is the
-   opposite of the one tags had: a model that says "rain" about everything makes
-   both rows meaningless, and the fix is the prompt, not the ranker. And the
-   `enum` keyword on an array's `items` is used in both provider dialects but has
-   only been exercised against xAI's and Gemini's documented schema support, not
-   against a live call.
+   forecast response shapes come from documentation rather than observation —
+   `GET /Curator/Context/Weather` and the Test button on the Home screen tab exist
+   to settle that in one click on a real server. No model has yet been asked to
+   judge context, so how sparing the prompt makes it is unmeasured; the failure to
+   watch for is the inverse of the tag bug — a model answering "rain" about
+   everything makes both rows meaningless, and the fix is the prompt, not the
+   ranker. No model has been asked for a row *title* either, and the specific risk
+   there is that it hands back the label it was meant to replace ("Rainy Evening
+   Picks"), which the prompt forbids in as many words but nothing has verified.
+   And `enum` on an array's `items` is used in both dialects against documented
+   support, never against a live call.
 6. **Curator's own home screen rows.** The registration contract was read out of
    the 2.5.11.0 DLL and then exercised against it — the payload Curator builds
    deserializes into that plugin's `SectionRegisterPayload` with every field

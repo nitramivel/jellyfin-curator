@@ -11,7 +11,16 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
     /// <param name="SectionId">The section's UniqueId ("curator-" + category id).</param>
     /// <param name="Name">Category name — both the display text and the name-based join key.</param>
     /// <param name="MemberCount">How many items the category holds; picks the card shape.</param>
-    public sealed record DesiredSection(string SectionId, string Name, int MemberCount = 0);
+    /// <param name="OrderIndex">
+    /// Which lane the row sits in. Rows sharing a lane are shuffled by Home Screen
+    /// Sections on every load, so this is the only way to pin a row's position
+    /// relative to Curator's other rows.
+    /// </param>
+    public sealed record DesiredSection(
+        string SectionId,
+        string Name,
+        int MemberCount = 0,
+        int OrderIndex = SectionConfigMerger.OrderIndex);
 
     /// <summary>
     /// Pure JSON merge logic for the two integration writes: Collection Sections'
@@ -35,13 +44,68 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
             return SectionIdPrefix + categoryId.ToString("N");
         }
 
-        /// <summary>The section ID of the weather row.</summary>
+        /// <summary>The prefix marking a section as one of the context rows.</summary>
+        public const string ContextSectionIdPrefix = SectionIdPrefix + "context-";
+
+        /// <summary>
+        /// Which of Curator's rows a merge is authoritative over.
+        /// </summary>
         /// <remarks>
-        /// Fixed rather than derived from a GUID, because there is exactly one of
-        /// these and it has no stored definition to take an ID from. It still carries
-        /// the Curator prefix, so every merge in this class treats it as ours — which
-        /// matters most for the one that <em>removes</em> entries: a context row left
-        /// behind in Collection Sections' configuration would race the registration.
+        /// Load-bearing, and the reason is that both merges in this class <em>remove</em>
+        /// Curator entries absent from the list they were handed. That is right for a
+        /// caller syncing every row and catastrophic for one syncing two: category
+        /// rows and context rows are published by different passes on wildly
+        /// different cadences — a run, against several times a day — so a
+        /// context-only sync claiming the whole <c>curator-</c> prefix would delete
+        /// every category row from the section settings and from every viewer's
+        /// enabled list, several times a day.
+        /// <para>
+        /// <see cref="Categories"/> and <see cref="Context"/> are therefore disjoint,
+        /// and each pass claims exactly its own.
+        /// </para>
+        /// </remarks>
+        public enum SectionScope
+        {
+            /// <summary>Every Curator section. For tearing all of them down.</summary>
+            All = 0,
+
+            /// <summary>Category rows only — Curator-owned, but not a context row.</summary>
+            Categories = 1,
+
+            /// <summary>The weather and time-of-day rows only.</summary>
+            Context = 2,
+        }
+
+        /// <summary>
+        /// Whether a section ID falls inside a scope.
+        /// </summary>
+        /// <param name="sectionId">The section ID.</param>
+        /// <param name="scope">The scope.</param>
+        /// <returns>Whether the merge may add, update or remove it.</returns>
+        public static bool InScope(string? sectionId, SectionScope scope)
+        {
+            if (sectionId is null || !sectionId.StartsWith(SectionIdPrefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var isContext = sectionId.StartsWith(ContextSectionIdPrefix, StringComparison.Ordinal);
+
+            return scope switch
+            {
+                SectionScope.Categories => !isContext,
+                SectionScope.Context => isContext,
+                _ => true,
+            };
+        }
+
+        /// <summary>The section ID of the shared weather row.</summary>
+        /// <remarks>
+        /// Fixed rather than derived from a GUID, because it has no stored definition
+        /// to take an ID from. It still carries the Curator prefix, so every merge in
+        /// this class treats it as ours — which matters most for the one that
+        /// <em>removes</em> entries: a context row left behind in Collection
+        /// Sections' configuration would race the registration.
         /// <para>
         /// The 32 hex characters a category ID produces cannot collide with these,
         /// since neither is valid hex.
@@ -49,8 +113,34 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         /// </remarks>
         public const string WeatherSectionId = SectionIdPrefix + "context-weather";
 
-        /// <summary>The section ID of the time-of-day row.</summary>
+        /// <summary>The section ID of the shared time-of-day row.</summary>
         public const string DaypartSectionId = SectionIdPrefix + "context-daypart";
+
+        /// <summary>
+        /// The section ID of one viewer's own context row.
+        /// </summary>
+        /// <remarks>
+        /// Per-viewer sections exist because a row's title is a property of the
+        /// <em>section</em>, and Home Screen Sections has no per-user display text —
+        /// the only per-user structure it keeps is the enabled-sections set. So the
+        /// only way two viewers in different weather can read two different titles is
+        /// for them to be looking at two different sections. Each is then enabled for
+        /// its own viewer and nobody else.
+        /// <para>
+        /// Only used when viewers have their own locations. With one location for the
+        /// server the weather and the hour are the same for everyone, and N copies of
+        /// an identical row would be N times the registrations for no difference.
+        /// </para>
+        /// </remarks>
+        /// <param name="kind">Which of the two rows.</param>
+        /// <param name="userId">The viewer.</param>
+        /// <returns>The section ID.</returns>
+        public static string ContextSectionIdFor(string kind, Guid userId)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(kind);
+
+            return SectionIdPrefix + "context-" + kind + "-" + userId.ToString("N");
+        }
 
         /// <summary>
         /// Merges the desired Curator sections into a Collection Sections
@@ -130,8 +220,17 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         /// </summary>
         /// <param name="userSettings">The settings JSON from GET /ModularHomeViews/UserSettings; mutated in place.</param>
         /// <param name="sectionIds">The Curator section IDs that should be enabled.</param>
+        /// <param name="scope">
+        /// Which Curator sections this call is authoritative over. Entries in scope
+        /// and absent from <paramref name="sectionIds"/> are removed; everything else
+        /// is left alone. See <see cref="SectionScope"/> for why this is not optional
+        /// in practice.
+        /// </param>
         /// <returns>True when the settings changed and need to be written back.</returns>
-        public static bool MergeEnabledSections(JsonNode userSettings, IReadOnlyList<string> sectionIds)
+        public static bool MergeEnabledSections(
+            JsonNode userSettings,
+            IReadOnlyList<string> sectionIds,
+            SectionScope scope = SectionScope.All)
         {
             ArgumentNullException.ThrowIfNull(userSettings);
             ArgumentNullException.ThrowIfNull(sectionIds);
@@ -154,7 +253,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
             {
                 if (enabled[i] is JsonValue value
                     && value.TryGetValue<string>(out var id)
-                    && id.StartsWith(SectionIdPrefix, StringComparison.Ordinal)
+                    && InScope(id, scope)
                     && !sectionIds.Contains(id, StringComparer.Ordinal))
                 {
                     enabled.RemoveAt(i);
@@ -175,13 +274,21 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         }
 
         /// <summary>
-        /// The row order Curator claims for every one of its sections.
+        /// The row order Curator claims for its sections when nothing else is set.
         /// </summary>
         /// <remarks>
-        /// Deliberately uniform. Home Screen Sections orders rows by this number
-        /// and Curator has no basis for ranking one category above another on a
-        /// stranger's home screen — so it takes one lane and leaves the ordering
-        /// within it, and around it, to be arranged by hand.
+        /// Curator has no basis for ranking one category above another on a
+        /// stranger's home screen, so by default it takes one lane and leaves the
+        /// ordering within it, and around it, to be arranged by hand.
+        /// <para>
+        /// It is a default rather than a rule because of what Home Screen Sections
+        /// does with a group: <c>CacheSectionsForUser</c> <b>shuffles</b> the rows
+        /// sharing an order index before returning them, so every Curator row in one
+        /// lane appears in a different position on every home screen load. Giving the
+        /// context rows an index of their own is what lets them sit somewhere fixed —
+        /// they are two rows about right now, and having them wander into the middle
+        /// of fifty category rows wastes them.
+        /// </para>
         /// </remarks>
         public const int OrderIndex = 500;
 
@@ -247,11 +354,17 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         /// <param name="config">The configuration JSON from GET /Plugins/{id}/Configuration; mutated in place.</param>
         /// <param name="desired">The sections that should exist.</param>
         /// <param name="portraitThreshold">Member count at or above which a row goes portrait.</param>
+        /// <param name="scope">
+        /// Which Curator sections this call is authoritative over; entries in scope
+        /// and absent from <paramref name="desired"/> are removed. See
+        /// <see cref="SectionScope"/>.
+        /// </param>
         /// <returns>True when the configuration changed and needs to be written back.</returns>
         public static bool MergeSectionSettings(
             JsonNode config,
             IReadOnlyList<DesiredSection> desired,
-            int portraitThreshold = DefaultPortraitThreshold)
+            int portraitThreshold = DefaultPortraitThreshold,
+            SectionScope scope = SectionScope.All)
         {
             ArgumentNullException.ThrowIfNull(config);
             ArgumentNullException.ThrowIfNull(desired);
@@ -276,7 +389,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
                 }
 
                 var sectionId = GetString(entry, "SectionId");
-                if (sectionId is null || !sectionId.StartsWith(SectionIdPrefix, StringComparison.Ordinal))
+                if (sectionId is null || !InScope(sectionId, scope))
                 {
                     continue;
                 }
@@ -288,7 +401,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
                     continue;
                 }
 
-                changed |= SetNumber(entry, "OrderIndex", OrderIndex);
+                changed |= SetNumber(entry, "OrderIndex", want.OrderIndex);
                 changed |= SetString(entry, "ViewMode", ViewModeFor(want.MemberCount, portraitThreshold));
                 changed |= RepairIncompleteEntry(entry);
                 desiredById.Remove(sectionId);
@@ -303,7 +416,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
                     ["AllowUserOverride"] = true,
                     ["LowerLimit"] = DefaultLowerLimit,
                     ["UpperLimit"] = DefaultUpperLimit,
-                    ["OrderIndex"] = OrderIndex,
+                    ["OrderIndex"] = want.OrderIndex,
                     ["ViewMode"] = ViewModeFor(want.MemberCount, portraitThreshold),
                     ["HideWatchedItems"] = false,
                 });

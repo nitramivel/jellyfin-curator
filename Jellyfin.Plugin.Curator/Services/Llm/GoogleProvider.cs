@@ -254,6 +254,25 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                 };
             }
 
+            if (shape == ResponseShape.ContextTitles)
+            {
+                return new
+                {
+                    type = "OBJECT",
+                    properties = new
+                    {
+                        titles = new
+                        {
+                            type = "ARRAY",
+                            description = "Row titles for the conditions, each at most 40 characters.",
+                            items = new { type = "STRING" },
+                        },
+                    },
+                    required = new[] { "titles" },
+                    propertyOrdering = new[] { "titles" },
+                };
+            }
+
             var category = new
             {
                 type = "OBJECT",
