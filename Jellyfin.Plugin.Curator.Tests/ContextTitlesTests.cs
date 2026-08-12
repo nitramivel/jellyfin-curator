@@ -205,6 +205,59 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
+        public void TitlesWrittenByAnOlderPromptAreCulledAtOnce()
+        {
+            // Without this a rewritten prompt changes nothing anybody sees. A set is
+            // bought per condition and kept for a year, so the old wording would go
+            // on appearing on every sky the server has already met — the owner pays
+            // nothing and watches the titles they asked to be changed carry on.
+            var now = DateTime.UtcNow;
+            var sets = new[]
+            {
+                new ContextTitleSet("rain|evening", ["Slate Sky Slow Burns"], 0, now, "m", Style: 1),
+                new ContextTitleSet("cold|morning", ["Older still"], 0, now, "m", Style: 0),
+                new ContextTitleSet("clear|afternoon", ["Good for a bright afternoon"], 0, now, "m", Style: 2),
+            };
+
+            var (kept, expired, obsolete) = ContextTitles.Prune(
+                sets, now, ContextTitles.DefaultRetentionDays, style: 2);
+
+            Assert.Equal("clear|afternoon", Assert.Single(kept).Condition);
+            Assert.Equal(2, obsolete);
+
+            // Obsolete, never merely expired: these are wrong rather than stale, and
+            // waiting out the retention window is the failure being fixed.
+            Assert.Equal(0, expired);
+        }
+
+        [Fact]
+        public void ASetKeepsItsStyleStampAsItRotates()
+        {
+            // Draw rewrites the set on every draw. Losing the stamp there would make
+            // a current set look legacy the first time it was used and be culled on
+            // the same pass, re-buying every condition every hour — a free feature
+            // turned into a per-refresh one.
+            var set = new ContextTitleSet("rain|evening", ["A", "B"], 0, DateTime.UtcNow, "m", Style: 2);
+
+            var drawn = ContextTitles.Draw(set, 0, DateTime.UtcNow);
+
+            Assert.NotNull(drawn);
+            Assert.Equal(2, drawn!.Value.Updated.Style);
+        }
+
+        [Fact]
+        public void ASetWrittenBeforeStylesExistedReadsAsLegacy()
+        {
+            // Existing stores have no such property, so the constructor default is
+            // what every set already on disk deserializes to. It must not collide
+            // with a real generation.
+            var set = new ContextTitleSet("rain|evening", ["A"], 0, DateTime.UtcNow);
+
+            Assert.Equal(0, set.Style);
+            Assert.NotEqual(ContextTitlePromptBuilder.StyleVersion, set.Style);
+        }
+
+        [Fact]
         public void AnEmptySetIsCulledAsObsolete()
         {
             var now = DateTime.UtcNow;
@@ -256,11 +309,54 @@ namespace Jellyfin.Plugin.Curator.Tests
         {
             // A model asked for "a title for a rainy evening" hands back "Rainy
             // Evening Picks" — the setting it replaced, spelled the same, having
-            // cost money.
+            // cost money. Naming the conditions is now wanted; the merchandising
+            // vocabulary is what still has to go, and it is the only thing keeping
+            // "plain" from collapsing back into "Picks".
             var prompt = ContextTitlePromptBuilder.BuildSystemPrompt(5);
 
             Assert.Contains("picks", prompt, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("40 characters", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ThePromptAsksForTheConditionsInPlainWords()
+        {
+            // The opposite failure, and the measured one: pushed away from the bare
+            // label, a model returns "Slate Sky Slow Burns" — a title naming neither
+            // the sky nor the hour in any word a reader recognises as either. The
+            // prompt now carries worked examples rather than a direction to travel
+            // in, because "less oblique" is not a target a model can aim at.
+            var prompt = ContextTitlePromptBuilder.BuildSystemPrompt(5);
+
+            Assert.Contains("Good for an overcast afternoon", prompt, StringComparison.Ordinal);
+            Assert.Contains("Slate Sky Slow Burns", prompt, StringComparison.Ordinal);
+            Assert.Contains("Sentence case", prompt, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void ThePromptStopsEveryTitleOpeningTheSameWay()
+        {
+            // What plainness costs: the plainest phrasing is the same phrasing every
+            // time. A set is bought once and rotated, so the reader sees all of them
+            // — five titles that all begin "Good for" is one title shown five times.
+            var prompt = ContextTitlePromptBuilder.BuildSystemPrompt(5);
+
+            Assert.Contains("Good for", prompt, StringComparison.Ordinal);
+            Assert.Contains("At most ONE may", prompt, StringComparison.Ordinal);
+            Assert.Contains("Vary how they open", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ThePromptSaysNotToInventASkyThatCouldNotBeRead()
+        {
+            // Naming both halves is now a rule, so the case where there is no
+            // weather reading needs an explicit exemption — otherwise the rule reads
+            // as an instruction to guess one, and the row claims a sky the server
+            // never saw.
+            var prompt = ContextTitlePromptBuilder.BuildSystemPrompt(5);
+
+            Assert.Contains("weather is given as unknown", prompt, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("do not guess at a sky", prompt, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]

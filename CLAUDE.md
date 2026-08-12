@@ -716,6 +716,33 @@ every one of these was a real failure on a real server before it was a rule.
      "Rainy Night Cozy Vibes" cannot be reused at eleven in the morning — which
      multiplies the conditions by four and is affordable for exactly the reason
      above. An empty weather half is a legitimate key, not a broken one.
+     **Which is why every set carries the generation of the prompt that wrote it.**
+     Cached titles outlive the instruction that bought them, so rewriting the prompt
+     otherwise applies only to weather the server has not met yet: the owner changes
+     the wording, pays nothing, and watches the old titles carry on until the seasons
+     turn. `ContextTitleSet.Style` against `ContextTitlePromptBuilder.StyleVersion` —
+     **bump that constant whenever the prompt changes what a title should sound
+     like** — makes a stale set *obsolete* rather than merely expired, so it goes on
+     the next hourly pass instead of after a year. Three details hold it up: `Style`
+     defaults to **0**, which is what every set already on disk deserializes to since
+     the JSON has no such property; `Draw` must carry the stamp through its `with`,
+     or a current set reads as legacy the moment it is used and every condition is
+     re-bought hourly; and the *lookup* checks the style as well as the prune, or the
+     conditions in play right now show the old wording once more and change an hour
+     later — which is precisely where the owner is looking.
+   - **The title prompt has now been wrong in both directions, and the second is the
+     one to guard against.** Asked plainly, a model returns "Rainy Evening Picks" —
+     the setting it replaced, spelled the same, having cost money. Pushed away from
+     that towards "the mood the conditions make", it returned **"Slate Sky Slow
+     Burns"**: a riddle naming neither the sky nor the hour in any word a reader
+     recognises as either. Generation 2 asks for the middle and describes it *as* the
+     middle rather than as a direction to travel in — worked examples ("Good for an
+     overcast afternoon"), the failure quoted by name, sentence case, and the
+     merchandising vocabulary still banned, which is the only thing stopping plain
+     from collapsing back into *Picks*. What plainness costs is variety, since the
+     plainest phrasing is the same phrasing every time, so the prompt caps how many
+     titles in a set may open the same way. Sets are rotated, so the reader sees all
+     of them and the repetition with them.
    - **Per-viewer rows exist only under per-viewer locations.** A title is a
      property of the section, so two viewers can only read two titles by looking at
      two sections — `ContextSectionIdFor(userId)` builds those, and each is enabled
@@ -1200,11 +1227,14 @@ round-trip — are confirmed working. What remains:
    judge context, so how sparing the prompt makes it is unmeasured; the failure to
    watch for is the inverse of the tag bug — a model answering "rain" about
    everything makes both rows meaningless, and the fix is the prompt, not the
-   ranker. No model has been asked for a row *title* either, and the specific risk
-   there is that it hands back the label it was meant to replace ("Rainy Evening
-   Picks"), which the prompt forbids in as many words but nothing has verified.
-   And `enum` on an array's `items` is used in both dialects against documented
-   support, never against a live call.
+   ranker. ~~No model has been asked for a row *title* either~~ — **it has now, and
+   the answer was the opposite failure to the one predicted here.** The risk written
+   down was that it would hand back the label it was meant to replace ("Rainy Evening
+   Picks"); what it actually returned was "Slate Sky Slow Burns", too oblique to read
+   as a sky or an hour at all. Fixed in generation 2 of the prompt (rule 23), so what
+   remains unverified is whether *that* lands in the middle. And `enum` on an array's
+   `items` is used in both dialects against documented support, never against a live
+   call.
 6. **Curator's own home screen rows.** The registration contract was read out of
    the 2.5.11.0 DLL and then exercised against it — the payload Curator builds
    deserializes into that plugin's `SectionRegisterPayload` with every field

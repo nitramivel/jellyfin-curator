@@ -11,11 +11,23 @@ namespace Jellyfin.Plugin.Curator.Core.Context
     ///
     /// <para>
     /// The smallest paid call in the plugin, and the one most at risk of being
-    /// worthless. A model asked for "a title for a rainy evening" hands back
-    /// <i>Rainy Evening Picks</i> — which is the setting it replaced, spelled the
-    /// same way, having cost money. So the prompt spends most of its length on what
-    /// not to do: do not name the weather, do not say "picks" or "for you", do not
-    /// write a sentence.
+    /// worthless — in two opposite directions, and this prompt has now been wrong
+    /// in both. Asked plainly for "a title for a rainy evening" a model hands back
+    /// <i>Rainy Evening Picks</i>, which is the setting it replaced, spelled the
+    /// same way, having cost money. So the prompt was written to push away from the
+    /// bare label and towards the mood the conditions make — and it pushed far too
+    /// hard. Measured on the owner's server: <i>Slate Sky Slow Burns</i>, which
+    /// names neither the weather nor the hour in any word a reader would recognise
+    /// as either, and reads as a riddle on a row nobody has time to solve.
+    /// </para>
+    /// <para>
+    /// So the target is the middle and it has to be described as the middle, not as
+    /// a direction to travel in: say plainly what the row suits, in the words a
+    /// person would use out loud — <i>Good for an overcast afternoon</i>. The
+    /// merchandising vocabulary stays banned, which is what keeps plain from
+    /// collapsing back into <i>Picks</i>. The one thing plainness costs is variety,
+    /// because the plainest phrasing is the same phrasing every time, so the prompt
+    /// spends its remaining length insisting the openings differ.
     /// </para>
     /// </summary>
     public static class ContextTitlePromptBuilder
@@ -27,6 +39,27 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         /// about what the narrowest client shows.
         /// </remarks>
         public const int MaxTitleLength = 40;
+
+        /// <summary>
+        /// Which generation of this prompt is current.
+        /// </summary>
+        /// <remarks>
+        /// <b>Bump this whenever the prompt changes what a title should sound
+        /// like</b> — not for a typo, but for anything a reader would notice.
+        /// Titles are bought per set of conditions and kept for a year, so a
+        /// rewritten prompt otherwise applies only to weather the server has not
+        /// seen yet: the owner rewrites the instruction, pays nothing, and watches
+        /// the old titles carry on appearing until the seasons turn. Stamping the
+        /// generation on each set makes <see cref="ContextTitles.Prune"/> cull the
+        /// stale ones on the next hourly pass, which re-buys them at the usual one
+        /// call per condition.
+        /// <para>
+        /// 0 is every set written before this existed. 1 was the mood prompt, which
+        /// pushed so hard away from naming the conditions that it produced titles
+        /// like <i>Slate Sky Slow Burns</i>. 2 names them plainly.
+        /// </para>
+        /// </remarks>
+        public const int StyleVersion = 2;
 
         /// <summary>
         /// Builds the system prompt.
@@ -60,31 +93,42 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         private const string SystemPromptTemplate =
             """
             You name a single row on a home screen full of films and television. The row holds things that
-            suit this exact moment — both the weather outside and the hour of the day, together.
+            suit this exact moment — the weather outside and the hour of the day, together.
 
             Write {COUNT} different titles for it.
 
-            A good one names the MOOD the two make between them. Weather and hour are not two facts to
-            list, they are one feeling: rain at eleven at night is not rain at eight in the morning, and
-            the title should be recognisable as one and not the other.
+            Say plainly what the row is for. Name the weather and the hour in ordinary words, the way
+            someone would say them out loud:
 
-            Aim for something like "Rainy Night Cozy Vibes" or "Cloudy Morning Stories" — plain enough to
-            read at a glance, specific enough that it could not describe a different sky or a different
-            hour.
+              Good for an overcast afternoon
+              Made for a grey afternoon
+              Suits a rainy evening
+              When the rain sets in after dark
+              Clear morning watching
+              Cold night, warm film
 
-            The mistake to avoid is the bare label. "Rainy Evening Picks" is not a title — the reader can
-            see it is raining, they are standing in it. Reach past the conditions to what they DO to a
-            person: what they make someone want to sink into, hide from, stay up for, wake up gently with.
+            Straightforward beats clever here, and by some distance. "Slate Sky Slow Burns" is the
+            failure to avoid: it is a riddle, the reader has to work out what is being offered, and on a
+            home screen nobody stops to. If someone glancing at the row cannot tell within a second what
+            weather and what time of day it is meant for, the title has not worked.
+
+            Vary how they open. {COUNT} titles that all begin "Good for" is one title written {COUNT}
+            times, and these are shown in rotation, so the reader sees the repetition. At most ONE may
+            open that way. Reach for other shapes: put the hour first, put the sky first, name the
+            conditions and stop, say what it suits without using the word "for".
 
             Rules:
             - At most {MAX} characters. Rows clip rather than wrap, so a long title is a cut-off one.
-            - Title Case. No full stops, no colons, no quotation marks, no emoji.
+            - Sentence case — a capital at the start, and after that only words normally capitalised.
+            - No full stops, no colons, no quotation marks, no emoji.
             - Never use the words "picks", "selection", "curated", "for you", "recommended", or "row".
-            - Let BOTH the weather and the hour show, in the words or in the feeling. A title that would
-              read the same at any hour has only done half the job.
+              Plain is the point; advertising is not.
+            - Both the weather and the hour must be readable in the words. One without the other names
+              half a moment. The exception is when the weather is given as unknown: then name only the
+              hour, and do not guess at a sky.
             - Do not begin more than one of them the same way, and do not return near-duplicates —
               {COUNT} titles that all say the same thing is one title and a wasted call.
-            - No second person. Name the mood, do not instruct the reader.
+            - No second person. Describe the moment, do not address or instruct the reader.
 
             Respond with a single JSON object and nothing else — no prose, no code fences:
             {"titles":["...","..."]}

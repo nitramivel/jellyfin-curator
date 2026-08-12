@@ -204,7 +204,10 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             // Culled AFTER the draws above stamped LastUsedUtc, so the conditions in
             // play right now can never be culled out from under the row using them.
             var (kept, expired, obsolete) = ContextTitles.Prune(
-                [.. titles.Values], utcNow, config.ContextTitleRetentionDays);
+                [.. titles.Values],
+                utcNow,
+                config.ContextTitleRetentionDays,
+                ContextTitlePromptBuilder.StyleVersion);
 
             _store.SaveTitles(kept);
             _store.SaveSnapshots(snapshots);
@@ -275,15 +278,24 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             {
                 var condition = ContextTitles.ConditionKey(context);
 
-                if (!titles.TryGetValue(condition, out var set))
+                // A set written by an older generation of the prompt is treated as
+                // absent rather than merely prunable. Pruning happens after the
+                // draws, so honouring one here would show the old wording once more
+                // and only replace it an hour later — on the conditions in play
+                // right now, which is exactly where the owner is looking.
+                if (!titles.TryGetValue(condition, out var set)
+                    || set.Style != ContextTitlePromptBuilder.StyleVersion)
                 {
+                    set = null;
+
                     var written = await titler
                         .WriteAsync(context, config.ContextTitlesPerCondition, cancellationToken)
                         .ConfigureAwait(false);
 
                     if (written.Count > 0)
                     {
-                        set = new ContextTitleSet(condition, written, 0, utcNow, titler.ModelId);
+                        set = new ContextTitleSet(
+                            condition, written, 0, utcNow, titler.ModelId, ContextTitlePromptBuilder.StyleVersion);
                         bought = true;
                     }
                 }
