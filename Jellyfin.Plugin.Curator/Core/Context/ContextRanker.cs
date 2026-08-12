@@ -66,6 +66,24 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         public const int StandInWeight = 1;
 
         /// <summary>
+        /// The length below which a row is topped up with near-misses.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="MinimumRowLength"/> is the point below which a row is not worth
+        /// drawing; this is the point below which it is worth drawing but looks thin.
+        /// A home screen shows roughly this many cards before scrolling, so a row of
+        /// four beside rows of twenty reads as a mistake even when every one of the
+        /// four is a good answer.
+        /// <para>
+        /// Only ever used to <em>add</em>. A row that already has this many is left
+        /// strictly alone, so a well-stocked evening is never diluted to make a
+        /// starved morning work — which is the whole reason this is a threshold
+        /// rather than another weight.
+        /// </para>
+        /// </remarks>
+        public const int ComfortableRowLength = 12;
+
+        /// <summary>
         /// Builds the context row.
         /// </summary>
         /// <param name="rankedIds">
@@ -93,8 +111,10 @@ namespace Jellyfin.Plugin.Curator.Core.Context
 
             var daypart = ContextVocabulary.WordFor(context.Daypart);
             var related = RelatedWords(context.Weather);
+            var adjacent = ContextVocabulary.AdjacentTo(context.Daypart);
 
             var matched = new List<(Guid Id, int Score, int Rank)>();
+            var nearMisses = new List<(Guid Id, int Score, int Rank)>();
 
             for (var rank = 0; rank < rankedIds.Count; rank++)
             {
@@ -121,22 +141,35 @@ namespace Jellyfin.Plugin.Curator.Core.Context
                 if (score > 0)
                 {
                     matched.Add((id, score, rank));
+                    continue;
                 }
+
+                // Held back rather than scored. An item suiting the hour either side
+                // of this one is a near miss, and near misses are only worth showing
+                // when there is nothing better — see ComfortableRowLength.
+                if (Overlap(affinity.Dayparts, adjacent) > 0)
+                {
+                    nearMisses.Add((id, 0, rank));
+                }
+            }
+
+            matched.Sort(CompareMatches);
+
+            // Topping up a thin row, and only a thin row. Some libraries have almost
+            // nothing for a given hour — measured on a real one, six items in all
+            // suited a morning — so a strict row there is three good answers beside
+            // other rows of twenty, which reads as broken rather than selective.
+            // Appended after sorting, so every genuine match still leads.
+            if (matched.Count < ComfortableRowLength && nearMisses.Count > 0)
+            {
+                nearMisses.Sort(CompareMatches);
+                matched.AddRange(nearMisses.Take(ComfortableRowLength - matched.Count));
             }
 
             if (matched.Count < MinimumRowLength)
             {
                 return [];
             }
-
-            // Score first, so an item suiting both the sky and the hour leads one
-            // suiting only half of it. Then the viewer's own rank, which already
-            // carries unwatched-first and everything the recommendation pass decided.
-            matched.Sort((a, b) =>
-            {
-                var byScore = b.Score.CompareTo(a.Score);
-                return byScore != 0 ? byScore : a.Rank.CompareTo(b.Rank);
-            });
 
             IEnumerable<Guid> ordered = matched.Select(m => m.Id);
             if (maxItems > 0)
@@ -145,6 +178,22 @@ namespace Jellyfin.Plugin.Curator.Core.Context
             }
 
             return [.. ordered];
+        }
+
+        /// <summary>
+        /// Orders by fit, then by the viewer's own ranking.
+        /// </summary>
+        /// <remarks>
+        /// Score first, so an item suiting both the sky and the hour leads one
+        /// suiting half of it. Then the viewer's own rank, which already carries
+        /// unwatched-first and everything the recommendation pass decided.
+        /// </remarks>
+        private static int CompareMatches(
+            (Guid Id, int Score, int Rank) a,
+            (Guid Id, int Score, int Rank) b)
+        {
+            var byScore = b.Score.CompareTo(a.Score);
+            return byScore != 0 ? byScore : a.Rank.CompareTo(b.Rank);
         }
 
         /// <summary>

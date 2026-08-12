@@ -920,13 +920,27 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
-        public void Prompt_TellsTheModelThatEmptyIsTheCommonAnswer()
+        public void Prompt_HoldsWeatherAndTimeOfDayToDifferentBars()
         {
-            // The failure this resists: a vocabulary applied to every item stops
-            // selecting anything.
+            // They fail in opposite directions. Weather applied to everything stops
+            // selecting anything; time of day applied to almost nothing starves the
+            // row — measured on a real library, six items in all suited a morning.
             var prompt = SummaryPromptBuilder.BuildSystemPrompt(90, classifyContext: true);
 
-            Assert.Contains("empty lists", prompt, StringComparison.Ordinal);
+            Assert.Contains("Be sparing", prompt, StringComparison.Ordinal);
+            Assert.Contains("empty \"w\" is the correct answer", prompt, StringComparison.Ordinal);
+            Assert.Contains("give MOST", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Prompt_NamesTheEveningDefaultAsTheTrapItIs()
+        {
+            // The specific bias to resist: asked what hour a film suits, a model
+            // reaches for "evening" far more often than is true, which leaves one
+            // useful daypart and three empty ones.
+            var prompt = SummaryPromptBuilder.BuildSystemPrompt(90, classifyContext: true);
+
+            Assert.Contains("not everything is an evening film", prompt, StringComparison.Ordinal);
         }
     }
 }

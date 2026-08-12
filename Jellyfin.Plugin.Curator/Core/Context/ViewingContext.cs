@@ -146,6 +146,33 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         };
 
         /// <summary>
+        /// The hours either side of one on the clock.
+        /// </summary>
+        /// <remarks>
+        /// Used only to top up a row that would otherwise be thin, and scored below
+        /// every exact match. The four buckets are a convenience, not a cliff: at
+        /// 16:55 the afternoon becomes the evening, and nothing about what someone
+        /// wants to watch changes across that minute. Late night wraps to the morning
+        /// for the same reason it wraps in <see cref="DaypartFor"/> — four in the
+        /// morning is nearer dawn than it is to the previous evening.
+        /// <para>
+        /// This is deliberately a ring rather than a general loosening. Morning and
+        /// evening stay unrelated, because a film that suits one genuinely does not
+        /// suit the other, and a row that reached that far would stop meaning
+        /// anything.
+        /// </para>
+        /// </remarks>
+        /// <param name="daypart">The current daypart.</param>
+        /// <returns>The neighbouring dayparts.</returns>
+        public static IReadOnlyList<string> AdjacentTo(Daypart daypart) => daypart switch
+        {
+            Daypart.Morning => [WordFor(Daypart.Afternoon), WordFor(Daypart.LateNight)],
+            Daypart.Afternoon => [WordFor(Daypart.Evening), WordFor(Daypart.Morning)],
+            Daypart.Evening => [WordFor(Daypart.LateNight), WordFor(Daypart.Afternoon)],
+            _ => [WordFor(Daypart.Evening), WordFor(Daypart.Morning)],
+        };
+
+        /// <summary>
         /// The vocabulary word for a daypart.
         /// </summary>
         /// <param name="daypart">The daypart.</param>
