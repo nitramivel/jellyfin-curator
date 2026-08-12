@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.8.7.0",
+        "changelog": "The weather and time-of-day home screen row now says plainly what it is for \u2014 'Good for an overcast afternoon' rather than 'Slate Sky Slow Burns'. Titles name the sky and the hour in ordinary words, in sentence case, and vary how they open so they do not all begin the same way. Titles bought under the old wording are replaced automatically on the next hourly refresh rather than lingering for a year.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.7.0/curator_0.8.7.0.zip",
+        "checksum": "6441ee850e598acd1d952e1d86180909",
+        "timestamp": "2026-08-12T20:33:30Z"
+      },
+      {
         "version": "0.8.6.0",
         "changelog": "Each viewer can now get a films-only and a television-only recommendation playlist beside the combined one, switched on with 'Also build a films-only and a television-only list' on the Home screen tab. Both are cut from the same ranking, so they cost no extra model call \u2014 even with model-chosen ordering on, it is still one call per viewer. The combined list is always built and unchanged, which is what the Media Bar plugin wants: it takes a single playlist name and separates films from television itself. Note these cannot appear on the Movies and Shows Suggestions tabs \u2014 those come from the server's own recommendation endpoints, which no plugin can add to.",
         "targetAbi": "10.11.0.0",
@@ -39,14 +47,6 @@
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.0.0/curator_0.8.0.0.zip",
         "checksum": "4e114b993bd8018441ff32f09db7aabc",
         "timestamp": "2026-08-12T11:25:14Z"
-      },
-      {
-        "version": "0.7.3.0",
-        "changelog": "Shows the running plugin version on the configuration page, so a browser-cached page is obvious at a glance. The weather test now logs its result server-side as well as showing it.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.3.0/curator_0.7.3.0.zip",
-        "checksum": "d25b86e014b5030b061f15a0cce98078",
-        "timestamp": "2026-08-12T09:58:06Z"
       }
     ]
   }
