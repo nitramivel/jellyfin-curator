@@ -204,7 +204,17 @@ namespace Jellyfin.Plugin.Curator.Api
         int Length,
         int SourceLength,
         string? ModelId,
-        DateTime CreatedAt);
+        DateTime CreatedAt,
+
+        /* What the same call judged about when this suits watching. Shown beside the
+         * summary because the two are one answer: the model wrote the rewrite and
+         * then read its own words back to decide the weather, so a row claiming a
+         * film suits thunder is only as good as the sentence above it. Seeing them
+         * apart makes a wrong judgement look arbitrary; seeing them together shows
+         * where it came from. */
+        IReadOnlyList<string> Weather,
+        IReadOnlyList<string> Dayparts,
+        bool ContextJudged);
 
     /// <summary>
     /// Admin API backing the configuration page: run status, the category list,
@@ -763,8 +773,15 @@ namespace Jellyfin.Plugin.Curator.Api
         {
             var capped = Math.Clamp(limit, 1, 500);
 
+            // By title, not by date. Newest-first is the right order for a handful of
+            // samples taken straight after a pass, and the wrong one for a list you
+            // browse: a bulk pass works through the library roughly alphabetically, so
+            // the last batch carries the newest timestamp and "newest first" renders
+            // as Z to A. Sorting happens before the cap, or a truncated list would be
+            // an arbitrary slice rather than the start of the alphabet.
             var samples = _summaryStore.GetAll().Values
-                .OrderByDescending(s => s.CreatedAt)
+                .OrderBy(s => s.Title ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(s => s.CreatedAt)
                 .Take(capped)
                 .Select(s => new SummarySample(
                     s.ItemId,
@@ -774,7 +791,15 @@ namespace Jellyfin.Plugin.Curator.Api
                     s.Text?.Length ?? 0,
                     s.SourceLength,
                     s.ModelId,
-                    s.CreatedAt))
+                    s.CreatedAt,
+                    s.Weather,
+                    s.Dayparts,
+
+                    // The hash, never the lists: an item judged to suit nothing in
+                    // particular has been judged, and most of the library is expected
+                    // to land there. Reading emptiness as "not done" would report a
+                    // correctly classified library as unclassified.
+                    s.ContextSourceHash is not null))
                 .ToList();
 
             return samples;
