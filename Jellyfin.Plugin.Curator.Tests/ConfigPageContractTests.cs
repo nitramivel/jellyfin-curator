@@ -60,7 +60,10 @@ namespace Jellyfin.Plugin.Curator.Tests
         /// <summary>Every name the page reads through the tolerant helper.</summary>
         private static IReadOnlyList<string> FieldsReadByThePage()
         {
-            var matches = Regex.Matches(ConfigPage(), @"field\(\s*result\s*,\s*'([A-Za-z]+)'\s*\)");
+            // Any receiver, not just `result` — the summaries list reads its rows
+            // through the same helper under a different variable name, and a guard
+            // that only watched one name would quietly stop covering new code.
+            var matches = Regex.Matches(ConfigPage(), @"field\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*'([A-Za-z]+)'\s*\)");
             return [.. matches.Select(m => m.Groups[1].Value).Distinct(StringComparer.Ordinal)];
         }
 
@@ -88,6 +91,7 @@ namespace Jellyfin.Plugin.Curator.Tests
                 typeof(WeatherProbe),
                 typeof(ContextRowRefreshResult),
                 typeof(Jellyfin.Plugin.Curator.Services.HomeScreen.SectionSyncResult),
+                typeof(SummarySample),
             ];
 
             var missing = FieldsReadByThePage()
@@ -97,6 +101,20 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.True(
                 missing.Count == 0,
                 "The config page reads fields no API record exposes: " + string.Join(", ", missing));
+        }
+
+        [Fact]
+        public void TheSummarySampleCarriesWhatTheListDisplays()
+        {
+            // The weather columns sit beside the summary because they are one answer:
+            // the model wrote the rewrite and then read its own words back to judge
+            // the weather. ContextJudged is separate from the lists on purpose — an
+            // item judged to suit nothing has been judged, and most of a library
+            // lands there, so emptiness must not render as "not done".
+            foreach (var name in new[] { "Title", "Text", "Tags", "Weather", "Dayparts", "ContextJudged" })
+            {
+                Assert.True(HasProperty(typeof(SummarySample), name), name + " is missing from SummarySample");
+            }
         }
 
         [Fact]

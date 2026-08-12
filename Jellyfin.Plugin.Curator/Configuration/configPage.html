@@ -10,6 +10,19 @@
         <div class="content-primary">
 
             <style>
+                /* Jellyfin's own stylesheet carries `.readOnlyContent,form{max-width:54em}`,
+                   which is why the five settings tabs were narrower than Schedule, Runs
+                   and Usage: those three sit OUTSIDE the form element and so were never
+                   capped. The tab bar is outside it too, which is what made the
+                   mismatch obvious — the row of buttons ran wider than the panel under
+                   it. Scoped to this form by id so nothing else on the dashboard, and
+                   no other plugin's page, is affected. */
+                #CuratorConfigForm { max-width: none; }
+
+                /* Separates the save row from the first heading under it, which would
+                   otherwise read as a caption to the button. */
+                .curatorSaveRow { margin-bottom: 1.6em; }
+
                 .curatorTabBar { display: flex; flex-wrap: wrap; gap: 0.4em; margin: 1em 0 1.5em 0; }
                 .curatorTabBar .curatorTabButton { margin: 0; }
                 .curatorTabButton.curatorTabActive { background: #00a4dc; color: #fff; }
@@ -332,6 +345,18 @@
 
                 .curatorScrollList table { margin: 0; }
 
+                /* The tables elsewhere on this page deliberately run flush to the left,
+                   so a column of titles lines up with the prose above it. Inside a
+                   bordered, scrolling box that reads as text jammed against the frame
+                   — the first column touching the left edge and the right-aligned
+                   Chars column touching the right. Restored here only, where there is
+                   a border for it to collide with. */
+                .curatorScrollList .curatorDataTable th:first-child,
+                .curatorScrollList .curatorDataTable td:first-child { padding-left: 0.9em; }
+
+                .curatorScrollList .curatorDataTable th:last-child,
+                .curatorScrollList .curatorDataTable td:last-child { padding-right: 0.9em; }
+
                 .curatorScrollList thead th {
                     position: sticky;
                     top: 0;
@@ -532,6 +557,19 @@
             </div>
 
             <form id="CuratorConfigForm">
+
+                <!-- Above the panels rather than below them. These tabs are long — the
+                     Model tab alone runs past a screen — so a Save at the bottom is a
+                     scroll away from wherever the change was just made, and on the
+                     Summaries tab it sat below a list of three hundred rows. It is one
+                     row shared by all five settings tabs, shown and hidden by the tab
+                     switch; a submit button works from anywhere inside the form, so
+                     position is purely a question of where a hand reaches for it. -->
+                <div id="CuratorSaveRow" class="curatorSaveRow">
+                    <button is="emby-button" type="submit" class="raised button-submit block">
+                        <span>Save</span>
+                    </button>
+                </div>
 
                 <div class="curatorTabPanel" data-panel="model">
                     <div class="verticalSection">
@@ -1508,11 +1546,6 @@
                     </div>
                 </div>
 
-                <div id="CuratorSaveRow">
-                    <button is="emby-button" type="submit" class="raised button-submit block">
-                        <span>Save</span>
-                    </button>
-                </div>
             </form>
 
             <div class="curatorTabPanel hide" data-panel="schedule">
@@ -2743,6 +2776,29 @@
                 return count + ' chars';
             }
 
+            function dash() {
+                return '<span style="opacity:0.4;">&mdash;</span>';
+            }
+
+            /**
+             * Renders one of the two context columns.
+             *
+             * Distinguishes three states that look alike and are not: not judged yet,
+             * judged and found to suit nothing in particular, and judged with words.
+             * The middle one is the commonest outcome by design — the model is told to
+             * be sparing — so rendering it identically to "not done" would make a
+             * working library look like a broken one.
+             */
+            function words(list, judged) {
+                if (list && list.length) {
+                    return list.map(escapeHtml).join(', ');
+                }
+
+                return judged
+                    ? dash()
+                    : '<span style="opacity:0.4;" title="Not judged yet">?</span>';
+            }
+
             function renderSummarySamples(samples) {
                 var container = page.querySelector('#CuratorSummarySamples');
                 if (!samples.length) {
@@ -2750,20 +2806,39 @@
                     return;
                 }
 
+                var judged = 0;
+
                 var rows = samples.map(function (s) {
                     var tags = (s.Tags && s.Tags.length)
                         ? s.Tags.map(escapeHtml).join(', ')
-                        : '<span style="opacity:0.4;">—</span>';
+                        : dash();
+
+                    if (field(s, 'contextJudged')) {
+                        judged++;
+                    }
+
                     return '<tr><td>' + escapeHtml(s.Title) + '</td>'
                         + '<td>' + escapeHtml(s.Text) + '</td>'
                         + '<td>' + tags + '</td>'
+                        + '<td>' + words(field(s, 'weather'), field(s, 'contextJudged')) + '</td>'
+                        + '<td>' + words(field(s, 'dayparts'), field(s, 'contextJudged')) + '</td>'
                         + '<td class="curatorNum">' + escapeHtml(s.SourceLength + ' → ' + s.Length) + '</td></tr>';
                 }).join('');
 
-                container.innerHTML = '<div class="fieldDescription" style="margin-bottom:0.6em;">Showing '
-                    + samples.length + ' most recently condensed, newest first.</div>'
+                var note = 'Showing ' + samples.length + ', A to Z.';
+                if (judged) {
+                    note += ' ' + judged + ' judged for weather and time of day — an empty pair of '
+                        + 'columns there is a real answer, and the answer for most of a library.';
+                } else {
+                    note += ' Nothing judged for weather yet: switch on <em>Judge when an item suits '
+                        + 'watching</em> above and condense again.';
+                }
+
+                container.innerHTML = '<div class="fieldDescription" style="margin-bottom:0.6em;">'
+                    + note + '</div>'
                     + '<div class="curatorScrollList curatorTableScroll"><table class="curatorDataTable">'
                     + '<thead><tr><th>Title</th><th>Condensed summary</th><th>Tags</th>'
+                    + '<th>Weather</th><th>When</th>'
                     + '<th class="curatorNum">Chars</th></tr></thead>'
                     + '<tbody>' + rows + '</tbody></table></div>';
             }
