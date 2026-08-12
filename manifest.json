@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.8.5.0",
+        "changelog": "Settings page: the tabs now match the Concierge plugin's \u2014 text with an underline instead of eight raised pills competing with the Save button beneath them \u2014 and the model configurator puts the profile picker and its buttons on one line, with every per-profile setting inside a box of its own so it is clear which settings belong to the selected profile and which do not. Fixes the Runs tab losing its scope highlight when you switch tabs, and stops two startup refreshes buying the same context row titles twice.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.5.0/curator_0.8.5.0.zip",
+        "checksum": "97e50c6cfad9cc93017dfec4a86685d3",
+        "timestamp": "2026-08-12T15:41:39Z"
+      },
+      {
         "version": "0.8.4.0",
         "changelog": "A thin context row is now topped up with things suiting the hour either side \u2014 evening reaches late night and afternoon, never morning \u2014 placed below every genuine match, and only when the row would otherwise look sparse. A row that already has enough is left strictly alone, so a well-stocked evening is never diluted to rescue a starved morning. Measured on a real library, a cloudy morning went from 1 matching item to 39 while a rainy evening kept all 106 and gained nothing. The classification prompt also stops holding weather and time of day to the same bar: weather stays sparing, but most items should now carry a time of day, and the prompt names the trap of calling everything an evening film. That half applies to items classified from now on \u2014 an existing library needs Re-condense everything to benefit. Also from 0.8.3.0: the weather and time-of-day rows became ONE row for the moment you are in, titled for the pair such as \"Rainy Night Cozy Vibes\", graded rather than strict so it draws in any conditions, one per viewer when each has their own location. And from 0.8.2.0: full-width settings tabs, a scrollable A-to-Z summaries list with Weather and When columns, and Save at the top of each tab.",
         "targetAbi": "10.11.0.0",
