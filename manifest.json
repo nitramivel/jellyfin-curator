@@ -13,8 +13,8 @@
         "changelog": "The weather and time-of-day rows become ONE row for the moment you are in, titled for the pair \u2014 \"Rainy Night Cozy Vibes\", \"Cloudy Morning Stories\". Two strict rows were empty exactly when most wanted: on a 202-item library \"cloudy and morning\" described one film and \"rain and morning\" described none. The single row grades instead of filtering, so something suiting both the sky and the hour leads, then the weather, then the hour \u2014 and it still draws when the weather cannot be read. One row per viewer when each has their own location. Also from 0.8.2.0: the settings tabs stretch to the full page width like Schedule, Runs and Usage; the condensed summaries list is scrollable with a pinned header, sorts A to Z, shows Weather and When columns, and no longer touches its frame; and Save sits at the top of each tab.",
         "targetAbi": "10.11.0.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.3.0/curator_0.8.3.0.zip",
-        "checksum": "c06e03c72b440afd011266eeb34a7f30",
-        "timestamp": "2026-08-12T13:22:28Z"
+        "checksum": "d8777737c164de4b2440fac7b0142968",
+        "timestamp": "2026-08-12T13:24:05Z"
       },
       {
         "version": "0.8.0.0",
