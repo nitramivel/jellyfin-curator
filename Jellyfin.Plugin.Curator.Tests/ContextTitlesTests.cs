@@ -21,50 +21,50 @@ namespace Jellyfin.Plugin.Curator.Tests
             => new(words, Daypart.Evening);
 
         [Fact]
-        public void TheWeatherKeyIgnoresTheOrderTheWordsArrivedIn()
+        public void TheWeatherWordsAreSortedSoOneMomentIsOneKey()
         {
             // The order Open-Meteo happens to report them in is not a fact about the
             // weather, and treating it as one would double the conditions bought.
             Assert.Equal(
-                ContextTitles.ConditionKey(ContextRowKind.Weather, Weather("rain", "cold")),
-                ContextTitles.ConditionKey(ContextRowKind.Weather, Weather("cold", "rain")));
+                ContextTitles.ConditionKey(new ViewingContext(["rain", "cold"], Daypart.Evening)),
+                ContextTitles.ConditionKey(new ViewingContext(["cold", "rain"], Daypart.Evening)));
         }
 
         [Fact]
-        public void TheDaypartKeyIgnoresTheWeatherEntirely()
+        public void TheHourIsPartOfTheKeyBecauseItIsPartOfTheTitle()
         {
-            // Combining the two would multiply the conditions eightfold to describe a
-            // row that only ever claims one of them.
-            var rainy = new ViewingContext(["rain"], Daypart.Evening);
-            var clear = new ViewingContext(["clear", "hot"], Daypart.Evening);
-
-            Assert.Equal(
-                ContextTitles.ConditionKey(ContextRowKind.Daypart, rainy),
-                ContextTitles.ConditionKey(ContextRowKind.Daypart, clear));
-        }
-
-        [Fact]
-        public void TheTwoRowsNeverShareAKey()
-        {
-            var context = Weather("rain");
-
+            // "Rainy Night Cozy Vibes" cannot be reused at eleven in the morning.
             Assert.NotEqual(
-                ContextTitles.ConditionKey(ContextRowKind.Weather, context),
-                ContextTitles.ConditionKey(ContextRowKind.Daypart, context));
+                ContextTitles.ConditionKey(new ViewingContext(["rain"], Daypart.Evening)),
+                ContextTitles.ConditionKey(new ViewingContext(["rain"], Daypart.Morning)));
         }
 
         [Fact]
-        public void DifferentConditionsGetDifferentKeys()
+        public void DifferentMomentsGetDifferentKeys()
         {
             var keys = new[]
             {
-                ContextTitles.ConditionKey(ContextRowKind.Weather, Weather("rain")),
-                ContextTitles.ConditionKey(ContextRowKind.Weather, Weather("rain", "cold")),
-                ContextTitles.ConditionKey(ContextRowKind.Weather, Weather("snow")),
-                ContextTitles.ConditionKey(ContextRowKind.Daypart, Weather("rain")),
+                ContextTitles.ConditionKey(new ViewingContext(["rain"], Daypart.Evening)),
+                ContextTitles.ConditionKey(new ViewingContext(["rain", "cold"], Daypart.Evening)),
+                ContextTitles.ConditionKey(new ViewingContext(["snow"], Daypart.Evening)),
+                ContextTitles.ConditionKey(new ViewingContext(["rain"], Daypart.LateNight)),
+                ContextTitles.ConditionKey(ViewingContext.ClockOnly(Daypart.Evening)),
             };
 
             Assert.Equal(keys.Length, keys.Distinct(StringComparer.Ordinal).Count());
+        }
+
+        [Fact]
+        public void AMomentWithNoReadingStillHasAKeyOfItsOwn()
+        {
+            // The row is drawn from the clock alone when the weather cannot be read,
+            // and that moment deserves its own title rather than borrowing a rainy one.
+            var key = ContextTitles.ConditionKey(ViewingContext.ClockOnly(Daypart.Morning));
+
+            Assert.True(ContextTitles.IsLiveCondition(key));
+            Assert.NotEqual(
+                ContextTitles.ConditionKey(new ViewingContext(["clear"], Daypart.Morning)),
+                key);
         }
 
         // ---- rotation ----
@@ -72,7 +72,7 @@ namespace Jellyfin.Plugin.Curator.Tests
         [Fact]
         public void SuccessiveDrawsMoveThroughTheSet()
         {
-            var set = new ContextTitleSet("weather:rain", ["A", "B", "C"], 0, DateTime.UtcNow);
+            var set = new ContextTitleSet("rain|evening", ["A", "B", "C"], 0, DateTime.UtcNow);
             var seen = new List<string>();
 
             for (var i = 0; i < 3; i++)
@@ -89,7 +89,7 @@ namespace Jellyfin.Plugin.Curator.Tests
         [Fact]
         public void TheRotationWrapsRatherThanRunningOff()
         {
-            var set = new ContextTitleSet("weather:rain", ["A", "B"], 7, DateTime.UtcNow);
+            var set = new ContextTitleSet("rain|evening", ["A", "B"], 7, DateTime.UtcNow);
 
             Assert.NotNull(ContextTitles.Draw(set, 0, DateTime.UtcNow));
         }
@@ -99,7 +99,7 @@ namespace Jellyfin.Plugin.Curator.Tests
         {
             // The moment per-viewer rows exist they share a condition and therefore a
             // set, so without the offset every household would read one title.
-            var set = new ContextTitleSet("weather:rain", ["A", "B", "C", "D"], 0, DateTime.UtcNow);
+            var set = new ContextTitleSet("rain|evening", ["A", "B", "C", "D"], 0, DateTime.UtcNow);
 
             var first = ContextTitles.Draw(set, 0, DateTime.UtcNow)!.Value.Title;
             var second = ContextTitles.Draw(set, 1, DateTime.UtcNow)!.Value.Title;
@@ -121,7 +121,7 @@ namespace Jellyfin.Plugin.Curator.Tests
         [Fact]
         public void AnEmptySetDrawsNothingRatherThanThrowing()
         {
-            var set = new ContextTitleSet("weather:rain", [], 0, DateTime.UtcNow);
+            var set = new ContextTitleSet("rain|evening", [], 0, DateTime.UtcNow);
 
             Assert.Null(ContextTitles.Draw(set, 0, DateTime.UtcNow));
         }
@@ -130,7 +130,7 @@ namespace Jellyfin.Plugin.Curator.Tests
         public void ADrawStampsTheSetAsUsedSoCullingCannotTakeIt()
         {
             var stale = DateTime.UtcNow.AddYears(-5);
-            var set = new ContextTitleSet("weather:rain", ["A"], 0, stale);
+            var set = new ContextTitleSet("rain|evening", ["A"], 0, stale);
             var now = DateTime.UtcNow;
 
             var drawn = ContextTitles.Draw(set, 0, now);
@@ -146,13 +146,13 @@ namespace Jellyfin.Plugin.Curator.Tests
             var now = DateTime.UtcNow;
             var sets = new[]
             {
-                new ContextTitleSet("weather:rain", ["A"], 0, now),
-                new ContextTitleSet("weather:snow", ["B"], 0, now.AddDays(-400)),
+                new ContextTitleSet("rain|evening", ["A"], 0, now),
+                new ContextTitleSet("snow|evening", ["B"], 0, now.AddDays(-400)),
             };
 
             var (kept, expired, obsolete) = ContextTitles.Prune(sets, now, retentionDays: 365);
 
-            Assert.Equal("weather:rain", Assert.Single(kept).Condition);
+            Assert.Equal("rain|evening", Assert.Single(kept).Condition);
             Assert.Equal(1, expired);
             Assert.Equal(0, obsolete);
         }
@@ -164,7 +164,7 @@ namespace Jellyfin.Plugin.Curator.Tests
             // going six months unused would re-buy it every winter, which is exactly
             // what the cache exists to prevent.
             var now = DateTime.UtcNow;
-            var sets = new[] { new ContextTitleSet("weather:cold,snow", ["A"], 0, now.AddDays(-200)) };
+            var sets = new[] { new ContextTitleSet("cold,snow|evening", ["A"], 0, now.AddDays(-200)) };
 
             var (kept, _, _) = ContextTitles.Prune(sets, now);
 
@@ -175,7 +175,7 @@ namespace Jellyfin.Plugin.Curator.Tests
         public void ARetentionOfZeroKeepsThemForever()
         {
             var now = DateTime.UtcNow;
-            var sets = new[] { new ContextTitleSet("weather:rain", ["A"], 0, now.AddYears(-20)) };
+            var sets = new[] { new ContextTitleSet("rain|evening", ["A"], 0, now.AddYears(-20)) };
 
             var (kept, expired, _) = ContextTitles.Prune(sets, now, retentionDays: 0);
 
@@ -184,22 +184,23 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
-        public void TitlesForAWordTheVocabularyLostGoImmediately()
+        public void TitlesForADeadConditionOrTheOldTwoRowShapeGoImmediately()
         {
             // Not after a year: these can never match anything again, so waiting
             // serves nobody.
             var now = DateTime.UtcNow;
             var sets = new[]
             {
-                new ContextTitleSet("weather:drizzly", ["A"], 0, now),
-                new ContextTitleSet("daypart:dusk", ["B"], 0, now),
+                new ContextTitleSet("drizzly|evening", ["A"], 0, now),
+                new ContextTitleSet("rain|dusk", ["B"], 0, now),
                 new ContextTitleSet("weather:rain", ["C"], 0, now),
+                new ContextTitleSet("rain|evening", ["D"], 0, now),
             };
 
             var (kept, expired, obsolete) = ContextTitles.Prune(sets, now);
 
-            Assert.Equal("weather:rain", Assert.Single(kept).Condition);
-            Assert.Equal(2, obsolete);
+            Assert.Equal("rain|evening", Assert.Single(kept).Condition);
+            Assert.Equal(3, obsolete);
             Assert.Equal(0, expired);
         }
 
@@ -208,20 +209,21 @@ namespace Jellyfin.Plugin.Curator.Tests
         {
             var now = DateTime.UtcNow;
             var (kept, _, obsolete) = ContextTitles.Prune(
-                [new ContextTitleSet("weather:rain", [], 0, now)], now);
+                [new ContextTitleSet("rain|evening", [], 0, now)], now);
 
             Assert.Empty(kept);
             Assert.Equal(1, obsolete);
         }
 
         [Theory]
-        [InlineData("weather:rain", true)]
-        [InlineData("weather:cold,rain", true)]
-        [InlineData("daypart:latenight", true)]
-        [InlineData("weather:drizzly", false)]
-        [InlineData("daypart:evening,morning", false)]
-        [InlineData("weather:", false)]
-        [InlineData("nonsense", false)]
+        [InlineData("rain|evening", true)]
+        [InlineData("cold,rain|latenight", true)]
+        [InlineData("|morning", true)]
+        [InlineData("drizzly|evening", false)]
+        [InlineData("rain|dusk", false)]
+        [InlineData("weather:rain", false)]
+        [InlineData("daypart:evening", false)]
+        [InlineData("rain", false)]
         [InlineData("", false)]
         [InlineData(null, false)]
         public void OnlyKeysAliveConditionCouldProduceAreLive(string? condition, bool expected)
@@ -234,16 +236,16 @@ namespace Jellyfin.Plugin.Curator.Tests
         {
             // The two halves of the cache have to agree, or every entry written is
             // culled on the next pass.
-            foreach (var word in ContextVocabulary.Weather)
-            {
-                Assert.True(ContextTitles.IsLiveCondition(
-                    ContextTitles.ConditionKey(ContextRowKind.Weather, Weather(word))));
-            }
-
             foreach (Daypart daypart in Enum.GetValues<Daypart>())
             {
                 Assert.True(ContextTitles.IsLiveCondition(
-                    ContextTitles.ConditionKey(ContextRowKind.Daypart, new ViewingContext([], daypart))));
+                    ContextTitles.ConditionKey(ViewingContext.ClockOnly(daypart))));
+
+                foreach (var word in ContextVocabulary.Weather)
+                {
+                    Assert.True(ContextTitles.IsLiveCondition(
+                        ContextTitles.ConditionKey(new ViewingContext([word], daypart))));
+                }
             }
         }
 
@@ -262,22 +264,42 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
-        public void TheUserPromptNamesTheConditionsInProse()
+        public void TheUserPromptNamesBothTheSkyAndTheHour()
         {
             var prompt = ContextTitlePromptBuilder.BuildUserPrompt(
-                ContextRowKind.Weather, new ViewingContext(["rain", "cold"], Daypart.Evening), 5);
+                new ViewingContext(["rain", "cold"], Daypart.LateNight), 5);
 
             Assert.Contains("rain", prompt, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("cold", prompt, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("night", prompt, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]
-        public void TheDaypartPromptDoesNotMentionTheWeather()
+        public void TheSameSkyAtADifferentHourAsksADifferentQuestion()
+        {
+            // Rain at eleven at night is not rain at eight in the morning, and the
+            // titles should be recognisable as one and not the other.
+            Assert.NotEqual(
+                ContextTitlePromptBuilder.BuildUserPrompt(new ViewingContext(["rain"], Daypart.Morning), 5),
+                ContextTitlePromptBuilder.BuildUserPrompt(new ViewingContext(["rain"], Daypart.LateNight), 5));
+        }
+
+        [Fact]
+        public void TheSystemPromptAsksForBothHalvesToShow()
+        {
+            var prompt = ContextTitlePromptBuilder.BuildSystemPrompt(5);
+
+            Assert.Contains("weather and the hour", prompt, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void APromptWithNoReadingSaysSoRatherThanInventingWeather()
         {
             var prompt = ContextTitlePromptBuilder.BuildUserPrompt(
-                ContextRowKind.Daypart, new ViewingContext(["snow"], Daypart.LateNight), 5);
+                ViewingContext.ClockOnly(Daypart.Afternoon), 5);
 
-            Assert.DoesNotContain("snow", prompt, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("afternoon", prompt, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("unknown", prompt, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]

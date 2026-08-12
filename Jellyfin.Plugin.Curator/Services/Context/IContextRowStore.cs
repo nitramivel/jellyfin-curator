@@ -19,7 +19,6 @@ namespace Jellyfin.Plugin.Curator.Services.Context
     /// </summary>
     /// <param name="SectionId">The registered section.</param>
     /// <param name="UserId">The viewer this row belongs to, or empty for a shared row.</param>
-    /// <param name="Kind">Which of the two rows.</param>
     /// <param name="Weather">The weather words the row was registered for.</param>
     /// <param name="Daypart">The daypart the row was registered for.</param>
     /// <param name="Title">The title it was registered under.</param>
@@ -28,7 +27,6 @@ namespace Jellyfin.Plugin.Curator.Services.Context
     public sealed record ContextRowSnapshot(
         string SectionId,
         Guid UserId,
-        ContextRowKind Kind,
         IReadOnlyList<string> Weather,
         Daypart Daypart,
         string Title,

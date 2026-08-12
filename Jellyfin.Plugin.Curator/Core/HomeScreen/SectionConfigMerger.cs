@@ -99,7 +99,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
             };
         }
 
-        /// <summary>The section ID of the shared weather row.</summary>
+        /// <summary>The section ID of the shared context row.</summary>
         /// <remarks>
         /// Fixed rather than derived from a GUID, because it has no stored definition
         /// to take an ID from. It still carries the Curator prefix, so every merge in
@@ -111,10 +111,7 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         /// since neither is valid hex.
         /// </para>
         /// </remarks>
-        public const string WeatherSectionId = SectionIdPrefix + "context-weather";
-
-        /// <summary>The section ID of the shared time-of-day row.</summary>
-        public const string DaypartSectionId = SectionIdPrefix + "context-daypart";
+        public const string ContextSectionId = SectionIdPrefix + "context-now";
 
         /// <summary>
         /// The section ID of one viewer's own context row.
@@ -132,15 +129,10 @@ namespace Jellyfin.Plugin.Curator.Core.HomeScreen
         /// an identical row would be N times the registrations for no difference.
         /// </para>
         /// </remarks>
-        /// <param name="kind">Which of the two rows.</param>
         /// <param name="userId">The viewer.</param>
         /// <returns>The section ID.</returns>
-        public static string ContextSectionIdFor(string kind, Guid userId)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(kind);
-
-            return SectionIdPrefix + "context-" + kind + "-" + userId.ToString("N");
-        }
+        public static string ContextSectionIdFor(Guid userId)
+            => SectionIdPrefix + "context-now-" + userId.ToString("N");
 
         /// <summary>
         /// Merges the desired Curator sections into a Collection Sections

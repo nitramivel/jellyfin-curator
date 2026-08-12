@@ -156,9 +156,13 @@ One long playlist per viewer, ordered most-recommended first, built by merging t
 | **Have a model choose the order** | Off by default, and **the only part of this playlist that costs money**. Membership is unaffected; a model reads the top of the shortlist and decides what this viewer should see first — leading with the strongest fit and varying the mood as the row goes rather than stacking six bleak films together, which a weighted sum cannot do. **One call per eligible viewer per refresh**, against a task that runs 6-hourly by default. If a call fails or the answer is unusable the weighted order is kept, so the worst case is a wasted call rather than a broken row |
 | **How many to order** | Only the top of the list is sent, 30 by default. A row is seen a few items at a time, so ordering the head buys nearly all the value for a fraction of the tokens |
 
-### Weather and time-of-day rows
+### The weather and time-of-day row
 
-Two more home screen rows: one for what the weather is doing outside, one for the part of the day it is. *Picks for the Weather* on a cold wet Tuesday evening is not the same shelf as it is on a bright Sunday morning.
+One more home screen row, for the moment you are actually in — the weather outside and the hour of the day answered *together*. A cold wet Tuesday evening is not the same shelf as a bright Sunday morning, and the row's title says so: *Rainy Night Cozy Vibes*, *Cloudy Morning Stories*.
+
+The match is **graded rather than strict**, and that is not a detail. Demanding both halves empties the row exactly when it is most wanted: on the library this was built against, "cloudy and morning" described a single film and "rain and morning" described none, because only six items suit a morning at all. So something suiting both leads, then the weather, then the hour. What tops the row genuinely fits the moment; the grading is what keeps it drawable on a bright Tuesday morning as well as a wet Friday night. Measured after the change, every sky-and-hour combination fills a full row.
+
+With per-viewer locations each person gets their own row, titled for their own sky.
 
 These are **worked out when the home screen asks for them**, not rebuilt on a schedule — so they match the actual hour and the actual sky rather than whatever was true at the last refresh. That is also why they have no playlist behind them, and why they need **Row source: Curator**; Collection Sections can only show a row by naming a playlist.
 
@@ -175,7 +179,7 @@ Weather comes from [Open-Meteo](https://open-meteo.com) — no account, no API k
 | Setting | Description |
 |---|---|
 | **Judge when an item suits watching** *(Summaries tab)* | Buys the judgement. Rides along in the condensing call, so it costs output tokens and no extra input, and switching it on costs one pass over the items not yet judged rather than a full redo |
-| **Show the weather and time-of-day rows** *(Home screen tab)* | Publishes the two rows. Separate from the setting above for the same reason *Send consolidated tags* is separate from building them — classify first, look at what came back, then put rows on everybody's home screen |
+| **Show the weather and time-of-day row** *(Home screen tab)* | Publishes the row. Separate from the setting above for the same reason *Send consolidated tags* is separate from building them — classify first, look at what came back, then put rows on everybody's home screen |
 | **Whose weather** | One place for the whole server, or each viewer's own. Per-viewer also moves the *time-of-day* row onto each viewer's own clock, since the timezone comes back with the forecast |
 | **Location** | A place name — `Pittsburgh`, or `Pittsburgh, Pennsylvania` if the plain name is ambiguous. Also the fallback for any viewer without one of their own |
 | **Row length** | 20 by default, and shorter than the recommendation playlist on purpose: these rows make a narrow claim, and a long one dilutes it with everything that merely qualifies |

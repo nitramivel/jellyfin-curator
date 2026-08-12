@@ -66,11 +66,18 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
     /// </summary>
     public class CuratorContextSectionResults
     {
-        /// <summary>The <c>additionalData</c> value identifying the weather row.</summary>
-        public const string WeatherRowKey = "context:weather";
-
-        /// <summary>The <c>additionalData</c> value identifying the time-of-day row.</summary>
-        public const string DaypartRowKey = "context:daypart";
+        /// <summary>The <c>additionalData</c> value identifying the context row.</summary>
+        /// <remarks>
+        /// One key, where there were two. The old <c>context:weather</c> and
+        /// <c>context:daypart</c> are deliberately not recognised any more: nothing
+        /// unregisters a section, so both are still in Home Screen Sections' table
+        /// until the next restart and will still be asked for their contents. Not
+        /// matching means they answer empty and are not drawn, which is what should
+        /// happen to a row that no longer exists — and the section settings write has
+        /// already removed them from every viewer's enabled list, which is the
+        /// mechanism rather than the backstop.
+        /// </remarks>
+        public const string ContextRowKey = "context:now";
 
         private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
@@ -134,14 +141,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 return Empty();
             }
 
-            var kind = payload.AdditionalData switch
-            {
-                WeatherRowKey => ContextRowKind.Weather,
-                DaypartRowKey => ContextRowKind.Daypart,
-                _ => (ContextRowKind?)null,
-            };
-
-            if (kind is not { } rowKind)
+            if (!string.Equals(payload.AdditionalData, ContextRowKey, StringComparison.Ordinal))
             {
                 return Empty();
             }
@@ -178,7 +178,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             // back somebody else's section still gets their own items, because those
             // come from payload.UserId — the worst case is a title that does not suit
             // their sky, which is what enabling only your own row prevents.
-            var snapshot = SnapshotFor(payload, rowKind);
+            var snapshot = SnapshotFor(payload);
             var context = CurrentContext(config, payload.UserId, snapshot);
             var ranked = RankedForViewer(payload.UserId, config);
             if (ranked.Count == 0)
@@ -187,15 +187,14 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
             }
 
             var chosen = ContextRanker.Rank(
-                ranked, affinities, context, rowKind, Math.Max(0, config.MaxContextRowItems));
+                ranked, affinities, context, Math.Max(0, config.MaxContextRowItems));
 
             if (chosen.Count == 0)
             {
                 _logger.LogDebug(
-                    "Curator: nothing in {Viewer}'s library suits {Context}; the {Row} row is empty",
+                    "Curator: nothing in {Viewer}'s library suits {Context}; the context row is empty",
                     payload.UserId,
-                    context.Describe(),
-                    rowKind);
+                    context.Describe());
                 return Empty();
             }
 
@@ -254,7 +253,7 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
         /// rows of the other shape are still registered and still being asked for
         /// their contents. Nothing unregisters a section.
         /// </remarks>
-        private ContextRowSnapshot? SnapshotFor(CuratorSectionPayload payload, ContextRowKind kind)
+        private ContextRowSnapshot? SnapshotFor(CuratorSectionPayload payload)
         {
             var snapshots = _store.GetSnapshots();
             if (snapshots.Count == 0)
@@ -262,19 +261,13 @@ namespace Jellyfin.Plugin.Curator.Services.HomeScreen
                 return null;
             }
 
-            var kindKey = kind == ContextRowKind.Weather ? "weather" : "daypart";
-
-            if (snapshots.TryGetValue(
-                    SectionConfigMerger.ContextSectionIdFor(kindKey, payload.UserId), out var mine))
-            {
-                return mine;
-            }
-
-            var sharedId = kind == ContextRowKind.Weather
-                ? SectionConfigMerger.WeatherSectionId
-                : SectionConfigMerger.DaypartSectionId;
-
-            return snapshots.TryGetValue(sharedId, out var shared) ? shared : null;
+            // This viewer's own row first, the shared one second. That covers both
+            // location modes without the handler knowing which is configured, and
+            // covers the window just after the mode is switched, when rows of the
+            // other shape are still registered and still being asked for contents.
+            return snapshots.TryGetValue(SectionConfigMerger.ContextSectionIdFor(payload.UserId), out var mine)
+                ? mine
+                : snapshots.TryGetValue(SectionConfigMerger.ContextSectionId, out var shared) ? shared : null;
         }
 
         /// <summary>

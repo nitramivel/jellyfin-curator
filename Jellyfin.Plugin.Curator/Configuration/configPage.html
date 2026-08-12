@@ -1206,39 +1206,41 @@
 
                         <h3 class="sectionTitle">Weather and time of day</h3>
                         <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
-                            Two more rows: one for what the weather is doing outside, one for the part of the day
-                            it is. Both are worked out <em>when the home screen asks for them</em>, so they always
-                            match the actual hour and the actual sky rather than whatever was true at the last
-                            refresh. Neither costs a model call — the judgement about what suits a rainy evening
-                            was bought once by <strong>Judge when an item suits watching</strong> on the Summaries
-                            tab, which has to be on for either row to have anything to show.
+                            One row for the moment you are in — the weather outside and the hour of the day
+                            together, not as two separate rows. Its contents are worked out <em>when the home
+                            screen asks</em>, so they match the sky and the clock rather than whatever was true
+                            at the last refresh, and it costs no model call: the judgement about what suits a
+                            rainy evening was bought once by <strong>Judge when an item suits watching</strong>
+                            on the Summaries tab, which has to be on for the row to have anything to show.
+                            <br /><br />
+                            The match is <strong>graded rather than strict</strong>, which matters more than it
+                            sounds. Demanding both halves would empty the row exactly when it is most wanted —
+                            on the library this was built against, "cloudy and morning" described one film and
+                            "rain and morning" described none. So something suiting both leads, then the
+                            weather, then the hour. What tops the row genuinely fits the moment; the rest keeps
+                            it drawable on a bright Tuesday morning as well as a wet Friday night.
                         </p>
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" id="ContextRows" name="ContextRows" />
-                                <span>Show the weather and time-of-day rows</span>
+                                <span>Show the weather and time-of-day row</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
-                                Requires <em>Row source: Curator</em> above. These rows have no playlist behind
-                                them — that is what lets them be current to the minute — and Collection Sections
-                                can only show a row by naming a playlist, so it cannot serve them. A row with
-                                fewer than three matching items is not drawn at all, on the grounds that a single
-                                card does not read as a thin row so much as a broken one.
+                                Requires <em>Row source: Curator</em> above. The row has no playlist behind it —
+                                that is what lets it be current to the minute — and Collection Sections can only
+                                show a row by naming a playlist, so it cannot serve it. With per-viewer
+                                locations each person gets their own row, titled for their own sky; otherwise one
+                                row is shared. Fewer than three matching items and it is not drawn at all, on the
+                                grounds that a single card does not read as a thin row so much as a broken one.
                             </div>
                         </div>
                         <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="WeatherRowName">Weather row name</label>
-                            <input id="WeatherRowName" name="WeatherRowName" type="text" class="emby-input" />
+                            <label class="inputLabel inputLabelUnfocused" for="ContextRowName">Row name</label>
+                            <input id="ContextRowName" name="ContextRowName" type="text" class="emby-input" />
                             <div class="fieldDescription">
-                                Deliberately a general name rather than one that tracks the sky. A row's title is
-                                fixed when the row is registered — at server start and after a run — so a title
-                                reading "For a rainy night" would be a claim about the weather several hours ago.
-                                The contents are exact; the name should not promise more precision than it can keep.
+                                Used as-is when row titles are fixed, and as the fallback when a model writes
+                                them — for a set of conditions never seen before, or a call that fails.
                             </div>
-                        </div>
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="DaypartRowName">Time-of-day row name</label>
-                            <input id="DaypartRowName" name="DaypartRowName" type="text" class="emby-input" />
                         </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="MaxContextRowItems">Row length</label>
@@ -1343,8 +1345,7 @@
                                 what came back — the place it matched, the conditions, the temperature and the
                                 local time. It is the only way to tell &ldquo;the requests are not getting
                                 through&rdquo; apart from &ldquo;nothing in the library suits the weather&rdquo;.
-                                <strong>Refresh</strong> re-reads the weather, re-titles both rows and republishes
-                                them. <strong>Save first</strong> if you have just changed the settings above.
+                                <strong>Refresh</strong> re-reads the weather, re-titles the row and republishes it. <strong>Save first</strong> if you have just changed the settings above.
                             </div>
                         </div>
                     </div>
@@ -4616,8 +4617,7 @@
                     page.querySelector('#EnableThinking').checked = config.EnableThinking;
                     page.querySelector('#ClassifyViewingContext').checked = config.ClassifyViewingContext;
                     page.querySelector('#ContextRows').checked = config.ContextRows;
-                    page.querySelector('#WeatherRowName').value = config.WeatherRowName || '';
-                    page.querySelector('#DaypartRowName').value = config.DaypartRowName || '';
+                    page.querySelector('#ContextRowName').value = config.ContextRowName || '';
                     page.querySelector('#MaxContextRowItems').value = config.MaxContextRowItems;
                     page.querySelector('#WeatherLocation').value = config.WeatherLocation || '';
                     setEnumSelect(page.querySelector('#WeatherLocationMode'), config.WeatherLocationMode);
@@ -4711,8 +4711,7 @@
                     config.EnableThinking = page.querySelector('#EnableThinking').checked;
                     config.ClassifyViewingContext = page.querySelector('#ClassifyViewingContext').checked;
                     config.ContextRows = page.querySelector('#ContextRows').checked;
-                    config.WeatherRowName = page.querySelector('#WeatherRowName').value.trim();
-                    config.DaypartRowName = page.querySelector('#DaypartRowName').value.trim();
+                    config.ContextRowName = page.querySelector('#ContextRowName').value.trim();
                     config.MaxContextRowItems = parseInt(page.querySelector('#MaxContextRowItems').value, 10);
                     config.WeatherLocation = page.querySelector('#WeatherLocation').value.trim();
                     config.WeatherLocationMode = page.querySelector('#WeatherLocationMode').value;

@@ -558,14 +558,28 @@ every one of these was a real failure on a real server before it was a rule.
      per-user enabled list dropping it, so the row is never drawn; the handler
      returning empty for an unknown category is the backstop, not the mechanism.
 
-23. **The context rows are bought once and computed on every render, and the two
+23. **The context row is bought once and computed on every render, and the two
    halves are separate settings for a reason.** `ClassifyViewingContext` rides on
    the *existing* condensing call — the model writes the rewrite, then the tags,
    then judges what weather and what part of the day the thing suits — so it costs
    output tokens and no extra input. A pass of its own would re-send the whole item
-   list to ask one more question. `ContextRows` then publishes two home screen rows
-   that are computed **when the home screen asks**, in `CuratorContextSectionResults`,
-   from the cached affinities plus a cached weather reading. That is the only way a
+   list to ask one more question. `ContextRows` then publishes **one** home screen row
+   — the weather and the hour answered together — computed **when the home screen
+   asks**, in `CuratorContextSectionResults`, from the cached affinities plus a
+   cached weather reading.
+   **It was two rows, and the reason it is one is measured rather than aesthetic.**
+   A row demanding both halves is empty exactly when it is most wanted: on the
+   owner's 202-item library, `cloudy + morning` described **one** film and
+   `rain + morning` and `storm + morning` described none, because only 6 items
+   suit a morning at all. So `ContextRanker` grades instead of filtering — both
+   halves scores `WeatherWeight + DaypartWeight`, weather alone scores more than
+   the hour alone (four dayparts, the busiest holding a third of a library, make
+   the hour the weaker signal), and a stand-in sky scores least. Measured after:
+   every sky-and-hour combination fills a 20-item row, and `cloudy + morning` went
+   from 1 item to 20. The row is also drawn from the clock alone when the weather
+   cannot be read — unlike the weather row it replaced, it has a second half to
+   stand on, so a server with no outbound access loses precision rather than the
+   row. That is the only way a
    row whose whole claim is "this suits right now" can be true; a playlist rebuilt
    on a schedule would show the weather at the last refresh.
    What it costs is the Collection Sections path — that plugin resolves a row by
@@ -630,20 +644,29 @@ every one of these was a real failure on a real server before it was a rule.
      `CuratorContextSectionResults` takes its context from there, never from the
      clock. Live conditions are the fallback only before the task has ever run.
    - **Titles are bought per set of conditions, not per refresh.** One call gets
-     several, cached under a key like `weather:cold,rain` and rotated on each draw,
+     several, cached under a key like `cold,rain|evening` and rotated on each draw,
      with the viewer's own offset mixed in so two people under one sky do not read
      the same words. A place produces around thirty conditions, so the cost
      flattens within weeks — against two calls per refresh forever, which is what
      titling on the clock would mean. Culling drops a set naming a lost vocabulary
      word *immediately* and an unused one only after a year, because these
      conditions are seasonal and an eager rule re-buys every winter what it culled
-     every summer.
+     every summer. The hour is part of the key because it is part of the title —
+     "Rainy Night Cozy Vibes" cannot be reused at eleven in the morning — which
+     multiplies the conditions by four and is affordable for exactly the reason
+     above. An empty weather half is a legitimate key, not a broken one.
    - **Per-viewer rows exist only under per-viewer locations.** A title is a
      property of the section, so two viewers can only read two titles by looking at
-     two sections — `ContextSectionIdFor` builds those, and each is enabled for its
-     own viewer alone. Under one location the weather and the hour are identical
-     for everyone and N copies of one row would be N registrations for no
+     two sections — `ContextSectionIdFor(userId)` builds those, and each is enabled
+     for its own viewer alone. Under one location the weather and the hour are
+     identical for everyone and N copies of one row would be N registrations for no
      difference.
+     **Nothing unregisters a section**, so the retired `context:weather` and
+     `context:daypart` rows are still in the other plugin's table until the next
+     restart and are still asked for their contents. `ContextRowKey` deliberately
+     does not match them, so they answer empty and are not drawn; the section
+     settings write removing them from every viewer's enabled list is the
+     mechanism, and this is the backstop.
    - **`SectionScope` is not decoration.** Both merges in `SectionConfigMerger`
      *remove* Curator entries absent from the list they were handed. Category rows
      are published by a run; context rows several times a day. A context sync

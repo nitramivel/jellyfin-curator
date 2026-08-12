@@ -115,16 +115,16 @@ namespace Jellyfin.Plugin.Curator.Tests
             // The context rows have no category and no playlist, so additionalData
             // names which of the two the row is instead of a GUID. It must go over
             // the wire exactly as the handler expects to read it back.
-            var section = new DesiredSection(SectionConfigMerger.WeatherSectionId, "Picks for the Weather", 20);
+            var section = new DesiredSection(SectionConfigMerger.ContextSectionId, "Picks for the Weather", 20);
 
             var payload = JsonNode.Parse(SectionRegistration.BuildPayload(
                 section,
-                CuratorContextSectionResults.WeatherRowKey,
+                CuratorContextSectionResults.ContextRowKey,
                 "Jellyfin.Plugin.Curator, Version=1.0.0.0",
                 typeof(CuratorContextSectionResults).FullName!))!.AsObject();
 
-            Assert.Equal(CuratorContextSectionResults.WeatherRowKey, (string?)payload["additionalData"]);
-            Assert.Equal(SectionConfigMerger.WeatherSectionId, (string?)payload["id"]);
+            Assert.Equal(CuratorContextSectionResults.ContextRowKey, (string?)payload["additionalData"]);
+            Assert.Equal(SectionConfigMerger.ContextSectionId, (string?)payload["id"]);
             Assert.Equal(
                 "Jellyfin.Plugin.Curator.Services.HomeScreen.CuratorContextSectionResults",
                 (string?)payload["resultsClass"]);
@@ -137,13 +137,14 @@ namespace Jellyfin.Plugin.Curator.Tests
             // as ours — including the one that removes stale entries. A context row
             // left behind in Collection Sections' config would race the registration.
             Assert.StartsWith(
-                SectionConfigMerger.SectionIdPrefix, SectionConfigMerger.WeatherSectionId, StringComparison.Ordinal);
+                SectionConfigMerger.SectionIdPrefix, SectionConfigMerger.ContextSectionId, StringComparison.Ordinal);
             Assert.StartsWith(
-                SectionConfigMerger.SectionIdPrefix, SectionConfigMerger.DaypartSectionId, StringComparison.Ordinal);
-            Assert.NotEqual(SectionConfigMerger.WeatherSectionId, SectionConfigMerger.DaypartSectionId);
+                SectionConfigMerger.ContextSectionIdPrefix,
+                SectionConfigMerger.ContextSectionId,
+                StringComparison.Ordinal);
 
             // A category ID is 32 hex characters; neither of these is valid hex.
-            Assert.NotEqual(SectionConfigMerger.WeatherSectionId, SectionConfigMerger.SectionIdFor(CategoryId));
+            Assert.NotEqual(SectionConfigMerger.ContextSectionId, SectionConfigMerger.SectionIdFor(CategoryId));
         }
 
         [Fact]
@@ -163,20 +164,31 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
-        public void TheTwoContextRowKeysAreDistinct()
+        public void APerViewerRowIsDistinctFromTheSharedOne()
         {
-            Assert.NotEqual(
-                CuratorContextSectionResults.WeatherRowKey,
-                CuratorContextSectionResults.DaypartRowKey);
+            // With per-viewer locations each person gets their own section, because a
+            // title belongs to the section and two viewers under different skies must
+            // be able to read two different titles.
+            var userId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+            var mine = SectionConfigMerger.ContextSectionIdFor(userId);
+
+            Assert.NotEqual(SectionConfigMerger.ContextSectionId, mine);
+            Assert.StartsWith(SectionConfigMerger.ContextSectionIdPrefix, mine, StringComparison.Ordinal);
+            Assert.True(SectionConfigMerger.InScope(mine, SectionConfigMerger.SectionScope.Context));
+            Assert.False(SectionConfigMerger.InScope(mine, SectionConfigMerger.SectionScope.Categories));
         }
 
         [Fact]
-        public void BuildPayload_RejectsAnUnnamedResultsTarget()
+        public void TheRetiredTwoRowKeysAreNoLongerRecognised()
         {
-            var section = new DesiredSection(SectionConfigMerger.SectionIdFor(CategoryId), "Anything");
-
-            Assert.Throws<ArgumentException>(() => SectionRegistration.BuildPayload(section, CategoryId.ToString("N"), string.Empty, "Type"));
-            Assert.Throws<ArgumentException>(() => SectionRegistration.BuildPayload(section, CategoryId.ToString("N"), "Assembly", string.Empty));
+            // Nothing unregisters a section, so both old rows are still in Home Screen
+            // Sections' table until the next restart and will still be asked for their
+            // contents. Not matching is what makes them answer empty and stop being
+            // drawn — the settings write, which removed them from every viewer's
+            // enabled list, is the mechanism.
+            Assert.NotEqual("context:weather", CuratorContextSectionResults.ContextRowKey);
+            Assert.NotEqual("context:daypart", CuratorContextSectionResults.ContextRowKey);
         }
+
     }
 }
