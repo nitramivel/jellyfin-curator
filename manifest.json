@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.7.1.0",
+        "changelog": "The weather and time-of-day rows can now be named by a model instead of carrying a fixed label. Titles are bought once per set of conditions \u2014 several at a time, cached and rotated \u2014 so a place producing around thirty distinct conditions costs about thirty calls in total rather than two per refresh forever, and unused sets are culled automatically after a year. Each viewer gets their own pair of rows when they have their own location, titled for their own sky. A new hourly task, Refresh Context Rows, re-reads the weather and re-registers the rows; it also pins the conditions each row was titled for, so a row's name and its cards can never contradict each other. The Home Screen Sections order index is now a setting rather than a fixed 500, and the two context rows can be given a lane of their own \u2014 worth doing, since rows sharing a lane are shuffled on every home screen load. Also adds a Test button on the Home screen tab that calls Open-Meteo in the foreground and reports the place, conditions, temperature and local time, so 'the server cannot reach the internet' stops looking identical to 'nothing in the library suits today'.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.1.0/curator_0.7.1.0.zip",
+        "checksum": "dae656f970e735460295e1843488ecdf",
+        "timestamp": "2026-08-12T09:08:59Z"
+      },
+      {
         "version": "0.7.0.0",
         "changelog": "Two new home screen rows: one for what the weather is doing outside, one for the part of the day it is. Both are worked out when the home screen asks for them, so they match the actual hour and sky rather than the last refresh, and neither costs a model call \u2014 the judgement about what suits a rainy evening rides along in the existing Condense Summaries call and is cached against the item. Weather comes from Open-Meteo, which needs no account and no API key; the location can be one place for the server or each viewer's own. Switch on 'Judge when an item suits watching' on the Summaries tab and 'Show the weather and time-of-day rows' on the Home screen tab; the health check tells you if you have done one without the other. Also: two library rows for one film are now collapsed on Jellyfin's own merged-version link and on the metadata-provider ID, not only on title and year \u2014 so 'Blade Runner' and 'Blade Runner: The Final Cut' stop appearing as two cards, while 'Freaky Friday' 2003 and 1995 stay two films. That is applied as rows are drawn as well, so existing categories stop showing the same poster twice immediately rather than at the next run.",
         "targetAbi": "10.11.0.0",
