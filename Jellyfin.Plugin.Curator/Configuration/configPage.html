@@ -1904,6 +1904,31 @@
             }
 
             /**
+             * Reads one field off an API response without betting on its casing.
+             *
+             * Jellyfin serializes controller responses in PascalCase — status.IsRunning,
+             * result.Skipped — while the plugin-configuration endpoints go over the wire
+             * in camelCase, which is the same split SectionConfigMerger.FindProperty
+             * copes with on the C# side. Getting it wrong does not throw: the field
+             * reads undefined and the page quietly reports failure for a call that
+             * succeeded, which is exactly how the weather Test button came to say
+             * "No reading" about a working lookup. Ask for both.
+             */
+            function field(source, name) {
+                if (!source) {
+                    return undefined;
+                }
+
+                var pascal = name.charAt(0).toUpperCase() + name.slice(1);
+                if (source[pascal] !== undefined) {
+                    return source[pascal];
+                }
+
+                var camel = name.charAt(0).toLowerCase() + name.slice(1);
+                return source[camel];
+            }
+
+            /**
              * Calls Open-Meteo through the server, right now, and reports what came
              * back. Deliberately bypasses the cache on the server side: a stale
              * reading answering this would report success for a network that has been
@@ -1926,23 +1951,25 @@
                     url: ApiClient.getUrl(url),
                     dataType: 'json'
                 }).then(function (result) {
-                    if (!result || !result.ok) {
-                        state.innerHTML = 'No reading. ' + escapeHtml((result && result.error) || 'Check the server log.');
+                    if (!field(result, 'ok')) {
+                        state.innerHTML = 'No reading. '
+                            + escapeHtml(field(result, 'error') || 'The server returned nothing readable.');
                         return;
                     }
 
+                    var celsius = field(result, 'temperatureCelsius');
                     var temperature = '';
-                    if (result.temperatureCelsius !== null && result.temperatureCelsius !== undefined) {
-                        temperature = ', ' + Math.round(result.temperatureCelsius) + '&deg;C ('
-                            + Math.round(result.temperatureFahrenheit) + '&deg;F)';
+                    if (celsius !== null && celsius !== undefined) {
+                        temperature = ', ' + Math.round(celsius) + '&deg;C ('
+                            + Math.round(field(result, 'temperatureFahrenheit')) + '&deg;F)';
                     }
 
-                    state.innerHTML = 'Reached Open-Meteo. <strong>' + escapeHtml(result.resolved)
+                    state.innerHTML = 'Reached Open-Meteo. <strong>' + escapeHtml(field(result, 'resolved'))
                         + '</strong>' + temperature
                         + ' &mdash; Curator reads that as <strong>'
-                        + escapeHtml((result.conditions || []).join(', ') || 'nothing it has a word for')
-                        + '</strong>, at ' + escapeHtml(result.localTime) + ' local time ('
-                        + escapeHtml(result.daypart) + ').';
+                        + escapeHtml((field(result, 'conditions') || []).join(', ') || 'nothing it has a word for')
+                        + '</strong>, at ' + escapeHtml(field(result, 'localTime')) + ' local time ('
+                        + escapeHtml(field(result, 'daypart')) + ').';
                 }).catch(function () {
                     state.innerHTML = 'The request failed before it reached Open-Meteo. Check the server log.';
                 }).finally(function () {
@@ -1966,20 +1993,22 @@
                         return;
                     }
 
-                    if (result.error) {
-                        state.innerHTML = 'Not published: ' + escapeHtml(result.error);
+                    var error = field(result, 'error');
+                    if (error) {
+                        state.innerHTML = 'Not published: ' + escapeHtml(error);
                         return;
                     }
 
-                    if (!result.rows) {
+                    var rows = field(result, 'rows');
+                    if (!rows) {
                         state.innerHTML = 'No rows were published. The rows need to be switched on, the row '
                             + 'source set to Curator, and a location that resolves.';
                         return;
                     }
 
-                    state.innerHTML = 'Published ' + result.rows + ' row(s) across ' + result.places
-                        + ' location(s). ' + result.titlesBought + ' new title set(s) bought, '
-                        + result.titlesCulled + ' culled.';
+                    state.innerHTML = 'Published ' + rows + ' row(s) across ' + field(result, 'places')
+                        + ' location(s). ' + field(result, 'titlesBought') + ' new title set(s) bought, '
+                        + field(result, 'titlesCulled') + ' culled.';
                 }).catch(function () {
                     state.innerHTML = 'The refresh failed &mdash; check the server log.';
                 }).finally(function () {
@@ -4579,10 +4608,10 @@
                     url: ApiClient.getUrl('Curator/HomeScreen/Sync'),
                     dataType: 'json'
                 }).then(function (result) {
-                    if (!result || !result.published) {
+                    if (!field(result, 'published')) {
                         state.innerHTML = 'Nothing was synced — check the server log. Home Screen Sections '
                             + 'must be installed, and Collection Sections too if it is set as the row source.';
-                    } else if (result.degraded) {
+                    } else if (field(result, 'degraded')) {
                         state.innerHTML = 'Home screen rows re-synced, but through Collection Sections — '
                             + 'Curator could not register them itself. Check the server log, and try again '
                             + 'if the server has only just started.';

@@ -872,6 +872,28 @@ release or two, and only remove it once a few restarts have been survived.
   what `color-scheme: dark` is for, with explicit `option` colours for the browsers
   that still paint the list from the page's palette. Use `#101010`, Jellyfin's own
   base — the same value the Usage tab's palette was validated against.
+- **Controller responses come back PascalCase; plugin configuration comes back
+  camelCase.** Two different serializer paths on one server, and the page talks to
+  both: `Curator/*` action results arrive as `IsRunning` and `Skipped`, while
+  `GET /Plugins/{guid}/Configuration` arrives camelCase (which is why
+  `SectionConfigMerger.FindProperty` tolerates both on the C# side). Guessing wrong
+  **does not throw** — the field reads `undefined` and the page reports failure for
+  a call that succeeded. That shipped: the weather Test button said "No reading.
+  Check the server log" about a lookup that had worked, pointing at a log with
+  nothing in it, and the same mistake had been sitting unnoticed in `syncRows`
+  reporting every successful row sync as "Nothing was synced". Read every response
+  field through the `field()` helper, which tries both; `ConfigPageContractTests`
+  fails the build on a direct `result.someField` read and on a name no API record
+  exposes.
+- **A diagnostic must carry its reason out, not log it.** Everything in
+  `Services/Context` swallows its failures by design — a background refresh that
+  cannot reach the internet must be silent and harmless — so the Test button on top
+  of it could only ever say "nothing came back". A wrong place name, no outbound
+  DNS, a proxy answering 403 and a rate limit are four problems with four different
+  fixes and are indistinguishable from a config page. Hence `ProbeAsync` beside
+  `RefreshAsync`: same work, but the reason survives the trip. The rule generalises
+  — if a button exists to answer *what is wrong*, the layer under it needs a path
+  that does not discard the answer.
 - **Anything listing profiles must be rebuilt whenever the list changes.** There
   are now four such pickers — the Summaries tab's, the Model tab's two per-pass
   ones, and the Home screen tab's title picker — and `renderProfiles()` refreshes

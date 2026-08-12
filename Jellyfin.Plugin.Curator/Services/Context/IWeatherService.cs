@@ -44,5 +44,44 @@ namespace Jellyfin.Plugin.Curator.Services.Context
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>The reading, or an empty one when it could not be fetched.</returns>
         Task<WeatherReading> RefreshAsync(string? location, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Fetches conditions and says <em>why</em> when it cannot.
+        /// </summary>
+        /// <remarks>
+        /// For the diagnostic endpoint, and the difference from
+        /// <see cref="RefreshAsync"/> is the whole reason it exists. Every ordinary
+        /// call here is a background one whose failure must be silent and harmless,
+        /// so it swallows the reason and returns an empty reading — which leaves the
+        /// owner's Test button able to report "nothing came back" and nothing else,
+        /// for a question whose entire subject is <em>what went wrong</em>.
+        /// <para>
+        /// A wrong place name, no outbound DNS, a blocked egress and a rate limit are
+        /// four different problems with four different fixes, and they are
+        /// indistinguishable from the config page unless the reason survives the trip.
+        /// </para>
+        /// </remarks>
+        /// <param name="location">The place name to look up.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The reading, and the reason it is empty when it is.</returns>
+        Task<WeatherProbeResult> ProbeAsync(string? location, CancellationToken cancellationToken);
+    }
+
+    /// <summary>
+    /// One diagnostic lookup: what came back, or what stopped it.
+    /// </summary>
+    /// <param name="Reading">The reading; unusable when the lookup failed.</param>
+    /// <param name="Error">Why it failed, in words an owner can act on. Null on success.</param>
+    public sealed record WeatherProbeResult(WeatherReading Reading, string? Error)
+    {
+        /// <summary>A successful lookup.</summary>
+        /// <param name="reading">The reading.</param>
+        /// <returns>The result.</returns>
+        public static WeatherProbeResult Success(WeatherReading reading) => new(reading, null);
+
+        /// <summary>A failed lookup.</summary>
+        /// <param name="error">Why.</param>
+        /// <returns>The result.</returns>
+        public static WeatherProbeResult Failed(string error) => new(WeatherReading.None, error);
     }
 }
