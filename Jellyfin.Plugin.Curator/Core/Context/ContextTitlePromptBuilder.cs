@@ -66,9 +66,11 @@ namespace Jellyfin.Plugin.Curator.Core.Context
 
             A good one names the MOOD the two make between them. Weather and hour are not two facts to
             list, they are one feeling: rain at eleven at night is not rain at eight in the morning, and
-            the title should be recognisable as one and not the other. Aim for something like "Rainy Night
-            Cozy Vibes" or "Cloudy Morning Stories" — plain enough to read at a glance, specific enough
-            that it could not describe a different sky or a different hour.
+            the title should be recognisable as one and not the other.
+
+            Aim for something like "Rainy Night Cozy Vibes" or "Cloudy Morning Stories" — plain enough to
+            read at a glance, specific enough that it could not describe a different sky or a different
+            hour.
 
             The mistake to avoid is the bare label. "Rainy Evening Picks" is not a title — the reader can
             see it is raining, they are standing in it. Reach past the conditions to what they DO to a

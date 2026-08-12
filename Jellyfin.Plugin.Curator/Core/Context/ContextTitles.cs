@@ -268,21 +268,25 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         {
             ArgumentNullException.ThrowIfNull(context);
 
+            // The article is part of each phrase rather than a prefix, because they
+            // do not all take the same one: "an evening", but "the small hours".
+            // Bolting "a " on the front produced "a small hours of the night", which
+            // went into the prompt verbatim.
             var daypart = context.Daypart switch
             {
-                Daypart.Morning => "morning",
-                Daypart.Afternoon => "afternoon",
-                Daypart.Evening => "evening",
-                _ => "small hours of the night",
+                Daypart.Morning => "a morning",
+                Daypart.Afternoon => "an afternoon",
+                Daypart.Evening => "an evening",
+                _ => "the small hours of the night",
             };
 
             if (!context.HasWeather)
             {
-                return string.Create(CultureInfo.InvariantCulture, $"a {daypart}, with the weather unknown");
+                return string.Create(CultureInfo.InvariantCulture, $"{daypart}, with the weather unknown");
             }
 
             var weather = string.Join(" and ", context.Weather.Select(WeatherPhrase));
-            return string.Create(CultureInfo.InvariantCulture, $"a {daypart} with {weather}");
+            return string.Create(CultureInfo.InvariantCulture, $"{daypart} with {weather}");
         }
 
         private static string WeatherPhrase(string word) => word switch
