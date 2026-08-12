@@ -162,6 +162,8 @@ One more home screen row, for the moment you are actually in — the weather out
 
 The match is **graded rather than strict**, and that is not a detail. Demanding both halves empties the row exactly when it is most wanted: on the library this was built against, "cloudy and morning" described a single film and "rain and morning" described none, because only six items suit a morning at all. So something suiting both leads, then the weather, then the hour. What tops the row genuinely fits the moment; the grading is what keeps it drawable on a bright Tuesday morning as well as a wet Friday night. Measured after the change, every sky-and-hour combination fills a full row.
 
+A thin row is also **topped up** with things suiting the hour either side — evening reaches late night and afternoon, never morning — placed below every genuine match. A row that already has enough is left strictly alone, so a well-stocked evening is never diluted to rescue a starved morning.
+
 With per-viewer locations each person gets their own row, titled for their own sky.
 
 These are **worked out when the home screen asks for them**, not rebuilt on a schedule — so they match the actual hour and the actual sky rather than whatever was true at the last refresh. That is also why they have no playlist behind them, and why they need **Row source: Curator**; Collection Sections can only show a row by naming a playlist.

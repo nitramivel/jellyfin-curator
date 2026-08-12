@@ -576,7 +576,25 @@ every one of these was a real failure on a real server before it was a rule.
    the hour alone (four dayparts, the busiest holding a third of a library, make
    the hour the weaker signal), and a stand-in sky scores least. Measured after:
    every sky-and-hour combination fills a 20-item row, and `cloudy + morning` went
-   from 1 item to 20. The row is also drawn from the clock alone when the weather
+   from 1 item to 20.
+   **A thin row is topped up, a rich one never is.** Below `ComfortableRowLength`
+   the row appends items suiting an *adjacent* hour — `AdjacentTo` is a ring, so
+   evening reaches late night and afternoon but never morning — sorted among
+   themselves and placed after every genuine match. A threshold rather than another
+   weight, on purpose: a well-stocked evening must not be diluted to make a starved
+   morning work. Measured after: cloudy-and-morning drew 39 where a strict match
+   drew 1, while rain-and-evening kept its 106 untouched, never having fallen below
+   the threshold.
+   **The two lists are held to opposite bars in the prompt**, and conflating them
+   was the bug. Weather applied to everything stops selecting anything, so it stays
+   sparing and an empty `w` is right for a broad comedy. Time of day fails the
+   other way: measured, 6 items of 202 suited a morning against 83 for evening,
+   because "evening" is the easy answer to "what hour is this film". The prompt now
+   names that trap and asks for most items to carry one or two dayparts. It only
+   affects items classified *after* it — the judgement is cached on
+   `ContextSourceHash`, so an existing library needs a forced re-distillation to
+   benefit, which is exactly why the ranker half had to exist as well.
+   The row is also drawn from the clock alone when the weather
    cannot be read — unlike the weather row it replaced, it has a second half to
    stand on, so a server with no outbound access loses precision rather than the
    row. That is the only way a

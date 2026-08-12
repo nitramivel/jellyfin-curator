@@ -209,11 +209,22 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             Use ONLY those words, exactly as spelled. A word outside the list is thrown away, so "drizzly"
             or "overcast" is not a more precise answer than "rain" or "cloudy" — it is no answer.
 
-            Be sparing. The bar is that the condition is part of WHY someone would reach for it, not that
-            it would be tolerable then. A bleak, slow film genuinely belongs to a grey wet evening; a
-            broad comedy suits any hour and any sky, and the correct answer for it is two empty lists.
-            Most items should get few words or none. An item that claims every kind of weather has
-            told the row nothing, and a vocabulary applied to everything stops selecting anything.
+            The two lists have DIFFERENT bars, and this is the part to get right.
+
+            Weather is the selective one. Be sparing: the bar is that the sky is part of WHY someone
+            would reach for it, not that it would be tolerable then. A bleak, slow film genuinely belongs
+            to a grey wet evening; a broad comedy suits any sky, and an empty "w" is the correct answer
+            for it. An item claiming every kind of weather has told the row nothing.
+
+            Time of day is not like that. Almost everything has an hour it sits best at, so give MOST
+            items one or two — an empty "d" should be the exception rather than the rule, and is right
+            only for something genuinely hour-agnostic.
+
+            Watch for the obvious trap here: not everything is an evening film. Evening is the easy
+            answer and it is wrong far more often than it feels. A gentle documentary or a warm sitcom
+            is a morning; something light and undemanding is an afternoon; only what actually wants the
+            dark is "latenight". A library where nearly everything came back "evening" has one useful
+            answer and three empty ones, which is worse than no answer at all.
 
             Judge the FEEL, not the setting. A film set in the snow is not automatically a snowy-day
             film, and a summer-holiday film shot in the sun may be exactly what a cold January night

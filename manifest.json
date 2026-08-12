@@ -9,12 +9,12 @@
     "imageUrl": "",
     "versions": [
       {
-        "version": "0.8.3.0",
-        "changelog": "The weather and time-of-day rows become ONE row for the moment you are in, titled for the pair \u2014 \"Rainy Night Cozy Vibes\", \"Cloudy Morning Stories\". Two strict rows were empty exactly when most wanted: on a 202-item library \"cloudy and morning\" described one film and \"rain and morning\" described none. The single row grades instead of filtering, so something suiting both the sky and the hour leads, then the weather, then the hour \u2014 and it still draws when the weather cannot be read. One row per viewer when each has their own location. Also from 0.8.2.0: the settings tabs stretch to the full page width like Schedule, Runs and Usage; the condensed summaries list is scrollable with a pinned header, sorts A to Z, shows Weather and When columns, and no longer touches its frame; and Save sits at the top of each tab.",
+        "version": "0.8.4.0",
+        "changelog": "A thin context row is now topped up with things suiting the hour either side \u2014 evening reaches late night and afternoon, never morning \u2014 placed below every genuine match, and only when the row would otherwise look sparse. A row that already has enough is left strictly alone, so a well-stocked evening is never diluted to rescue a starved morning. Measured on a real library, a cloudy morning went from 1 matching item to 39 while a rainy evening kept all 106 and gained nothing. The classification prompt also stops holding weather and time of day to the same bar: weather stays sparing, but most items should now carry a time of day, and the prompt names the trap of calling everything an evening film. That half applies to items classified from now on \u2014 an existing library needs Re-condense everything to benefit. Also from 0.8.3.0: the weather and time-of-day rows became ONE row for the moment you are in, titled for the pair such as \"Rainy Night Cozy Vibes\", graded rather than strict so it draws in any conditions, one per viewer when each has their own location. And from 0.8.2.0: full-width settings tabs, a scrollable A-to-Z summaries list with Weather and When columns, and Save at the top of each tab.",
         "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.3.0/curator_0.8.3.0.zip",
-        "checksum": "d8777737c164de4b2440fac7b0142968",
-        "timestamp": "2026-08-12T13:24:05Z"
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.4.0/curator_0.8.4.0.zip",
+        "checksum": "bc2fb7e16248c2d70dcd4dbc4e31c2b0",
+        "timestamp": "2026-08-12T13:30:59Z"
       },
       {
         "version": "0.8.0.0",
