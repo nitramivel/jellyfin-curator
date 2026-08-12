@@ -9,8 +9,16 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.8.1.0",
+        "changelog": "The list of condensed summaries on the Summaries tab is now a scrollable list with a pinned header instead of running down the whole page, and shows up to 300 entries rather than 40. No behaviour change to condensing itself: the character threshold below which an overview is left alone is unchanged on the Summaries tab as 'Leave overviews shorter than'.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.1.0/curator_0.8.1.0.zip",
+        "checksum": "ccd52136913e411192f88fb62b570ce7",
+        "timestamp": "2026-08-12T11:58:47Z"
+      },
+      {
         "version": "0.8.0.0",
-        "changelog": "Every weather code Open-Meteo reports is now covered by a test of its own \u2014 clear, cloudy, rain, thunderstorms, snow, fog, freezing rain, plus hot and cold from the temperature. Rare conditions also get a stand-in: 'storm' is a word few films earn, so rather than showing nothing during a thunderstorm the row now falls back to rain-suited titles, ranked strictly below anything that genuinely suits thunder, and only when the exact condition cannot fill a row. Separately, if you also run the Concierge search plugin, the condensing pass will read the tone descriptions it has already generated and send them alongside each overview. An overview describes the premise, while this pass is about tone and mood, so 'lonely and heartbreaking' is better input than another sentence of plot \u2014 and it costs nothing, because that judgement was already bought. Purely additive: an item Concierge has not seen is described exactly as before, and nothing breaks if it is absent, removed, or changes its format.",
+        "changelog": "Full coverage of every weather code Open-Meteo reports, with stand-ins so a thunderstorm row falls back to rain-suited titles rather than showing nothing. Optionally reads tone descriptions from the Concierge search plugin as extra input when condensing.",
         "targetAbi": "10.11.0.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.0.0/curator_0.8.0.0.zip",
         "checksum": "4e114b993bd8018441ff32f09db7aabc",
@@ -18,7 +26,7 @@
       },
       {
         "version": "0.7.3.0",
-        "changelog": "Diagnostics only; no behaviour change. The weather Test button now logs what it found on the server as well as showing it on the page \u2014 previously the reason went only to the page, so if you were looking at a cached page the log it told you to check was empty. The plugin version is also shown beside the title on the configuration page: a page cached from an older release cannot render it, so a missing version badge tells you at a glance that you are looking at a stale page rather than a broken server. If the page misbehaves after an update, open it in a private window \u2014 Jellyfin serves it from a URL that never changes and sends no cache headers, so a normal reload may not replace it.",
+        "changelog": "Shows the running plugin version on the configuration page, so a browser-cached page is obvious at a glance. The weather test now logs its result server-side as well as showing it.",
         "targetAbi": "10.11.0.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.3.0/curator_0.7.3.0.zip",
         "checksum": "d25b86e014b5030b061f15a0cce98078",
@@ -26,7 +34,7 @@
       },
       {
         "version": "0.7.2.0",
-        "changelog": "Fixes the weather Test button reporting 'No reading. Check the server log' for lookups that had actually succeeded. Jellyfin sends controller responses in PascalCase and the new handlers were reading camelCase, so the field came back undefined and the page reported a working call as broken \u2014 with nothing in the log to find, because nothing had gone wrong. The same fault had been sitting unnoticed in the home screen row sync button, reporting every successful sync as 'Nothing was synced'. Every response field now goes through a reader that accepts both casings, and a test fails the build on any direct read. The Test button also now tells you WHY when a lookup genuinely fails: a place name nothing matches, no outbound internet, a proxy answering 403 and a rate limit are four different problems with four different fixes, and the weather service previously swallowed the reason on purpose because its normal callers are background refreshes that must fail silently. It now carries the reason out for the diagnostic while staying silent everywhere else.",
+        "changelog": "Fixes the weather test button reporting failure for lookups that had actually succeeded, and makes it report the real reason when one genuinely fails.",
         "targetAbi": "10.11.0.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.2.0/curator_0.7.2.0.zip",
         "checksum": "787770c3c2f0a3a9a89380846eed51e7",
@@ -34,83 +42,11 @@
       },
       {
         "version": "0.7.1.0",
-        "changelog": "The weather and time-of-day rows can now be named by a model instead of carrying a fixed label. Titles are bought once per set of conditions \u2014 several at a time, cached and rotated \u2014 so a place producing around thirty distinct conditions costs about thirty calls in total rather than two per refresh forever, and unused sets are culled automatically after a year. Each viewer gets their own pair of rows when they have their own location, titled for their own sky. A new hourly task, Refresh Context Rows, re-reads the weather and re-registers the rows; it also pins the conditions each row was titled for, so a row's name and its cards can never contradict each other. The Home Screen Sections order index is now a setting rather than a fixed 500, and the two context rows can be given a lane of their own \u2014 worth doing, since rows sharing a lane are shuffled on every home screen load. Also adds a Test button on the Home screen tab that calls Open-Meteo in the foreground and reports the place, conditions, temperature and local time, so 'the server cannot reach the internet' stops looking identical to 'nothing in the library suits today'.",
+        "changelog": "Weather and time-of-day rows can be named by a model, cached per weather condition and rotated. One pair of rows per viewer when each has their own location, a new hourly Refresh Context Rows task, and a configurable home screen order index.",
         "targetAbi": "10.11.0.0",
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.1.0/curator_0.7.1.0.zip",
         "checksum": "dae656f970e735460295e1843488ecdf",
         "timestamp": "2026-08-12T09:08:59Z"
-      },
-      {
-        "version": "0.7.0.0",
-        "changelog": "Two new home screen rows: one for what the weather is doing outside, one for the part of the day it is. Both are worked out when the home screen asks for them, so they match the actual hour and sky rather than the last refresh, and neither costs a model call \u2014 the judgement about what suits a rainy evening rides along in the existing Condense Summaries call and is cached against the item. Weather comes from Open-Meteo, which needs no account and no API key; the location can be one place for the server or each viewer's own. Switch on 'Judge when an item suits watching' on the Summaries tab and 'Show the weather and time-of-day rows' on the Home screen tab; the health check tells you if you have done one without the other. Also: two library rows for one film are now collapsed on Jellyfin's own merged-version link and on the metadata-provider ID, not only on title and year \u2014 so 'Blade Runner' and 'Blade Runner: The Final Cut' stop appearing as two cards, while 'Freaky Friday' 2003 and 1995 stay two films. That is applied as rows are drawn as well, so existing categories stop showing the same poster twice immediately rather than at the next run.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.0.0/curator_0.7.0.0.zip",
-        "checksum": "709490fac9f73538b936fef5defba323",
-        "timestamp": "2026-08-11T04:51:04Z"
-      },
-      {
-        "version": "0.6.2.0",
-        "changelog": "Add a health check finding for a missing startup trigger on Publish Home Screen Rows \u2014 the failure that leaves every Curator row absent after a restart while the playlists behind them stay healthy.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.6.2.0/curator_0.6.2.0.zip",
-        "checksum": "e1e644c9956b567c17dae3820daaaed8",
-        "timestamp": "2026-08-03T07:28:17Z"
-      },
-      {
-        "version": "0.6.1.0",
-        "changelog": "Fix the Schedule tab deleting Publish Home Screen Rows' startup trigger, which left every Curator row absent after a restart. Fix white-on-white controls on that tab, warn that interval cadences restart their countdown at every server start, and name the model on recommendation runs.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.6.1.0/curator_0.6.1.0.zip",
-        "checksum": "aea7022667b3a055b1abea23fde4fe59",
-        "timestamp": "2026-08-03T06:34:11Z"
-      },
-      {
-        "version": "0.6.0.0",
-        "changelog": "Curator serves its own home screen rows instead of routing them through Collection Sections, so a row shows every member in playlist order and per-viewer ordering finally reaches the screen. New Usage tab: what every model call has cost, by model, by pass and by day. Two passes that were spending money without recording it now do.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.6.0.0/curator_0.6.0.0.zip",
-        "checksum": "cffd54ae95b054b9b65d6388755e0cd6",
-        "timestamp": "2026-08-01T09:34:26Z"
-      },
-      {
-        "version": "0.5.5.0",
-        "changelog": "The Schedule tab now shows when a run is happening. Generate Categories carries a live badge \u2014 the phase in plain words and a percentage \u2014 drawn from the same status the Runs tab progress bar reads, so the two cannot disagree about whether a run is in progress or how far along it is. Only that task can claim it: it is the one whose progress Curator reports itself, and the rest are Jellyfin's to report under Dashboard, Scheduled Tasks. Also in 0.5.x: a film you hold in two cuts now appears once, keeping the copy with the longest runtime and folding the other's watch history onto it, with matching strict enough that Freaky Friday (2003) and Freaky Friday (1995) stay two different films. A bug that gave every viewer's private rows to the whole household is fixed and repairs itself on the next cleanup. Shared rows are personalized without anyone losing one \u2014 every viewer still gets every shared row, but each viewer's own copy of the playlist is ordered for them, which works in every client including Infuse. Anthropic could not condense summaries at all, rejecting every batch over an empty content block. The Categories tab is rebuilt as two side-by-side cards with a sentence that reads your numbers back and warns when they contradict. Scheduled tasks lost the redundant \"Curator:\" prefix and a Health check now button sits on the Schedule tab. Each model profile carries whether it thinks; a model can optionally order each viewer's recommendation playlist; the discovery pass is told what its rows are already called, after 0 of 16 then 0 of 33 names survived a run; the distillation pass writes a run log and splits and retries a batch it answers badly; and OpenAI gets a prompt cache key.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.5.5.0/curator_0.5.5.0.zip",
-        "checksum": "6f5c1be0710e7ebd4715e828727060b7",
-        "timestamp": "2026-08-01T06:11:51Z"
-      },
-      {
-        "version": "0.4.8.0",
-        "changelog": "The summaries era, plus everything built on it. A daily Health Check task looks for the ways Curator goes quietly wrong \u2014 runs that have stopped happening, a missing prerequisite plugin, library rows pointing at folders that no longer exist, a summary cache switched on but incomplete \u2014 and reports each with what to do about it. It reads only and costs nothing. Condensed summaries: a Summaries tab, a manual button and a daily task rewrite each long library overview into a short summary carrying its tone, cached and reused so every run sends a much smaller prompt; after the first pass only new and changed items cost anything, and your library's own overviews are never modified. The same pass optionally consolidates scraped tags, which average around eighteen values an item and are mostly production trivia. Summaries no longer end mid-phrase \u2014 measured at 11% of a real pass \u2014 because the model is asked to compose something that already fits rather than writing to the limit and stopping. Each viewer gets a recommendation playlist, ordered most recommended first, merged from the categories they already have and costing no extra model call; every viewer's copy shares one configurable name, which makes it usable as the source for a spotlight banner such as the Media Bar plugin. A daily Clean Up and Sync task reconciles categories against the playlists that actually exist, republishes home screen rows, and drops summaries for items that have left the library. Home screen rows stop flickering: a category keeps its row for a few runs when the model does not re-propose it, rather than losing it immediately and usually getting it back.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.8.0/curator_0.4.8.0.zip",
-        "checksum": "c2f6672a581d010805c2356f89c6938a",
-        "timestamp": "2026-07-31T05:35:50Z"
-      },
-      {
-        "version": "0.4.2.0",
-        "changelog": "Model profiles: save several providers, models and API keys as a list and pick which one runs, instead of one set of fields you overwrite. Each profile carries its own key and its own prices, so switching profile switches the cost reporting with it \u2014 a cheap model is no longer reported at an expensive model's rate. Your existing provider, model and key migrate automatically into a single profile. Also fixes prompt caching on xAI Grok and stops under-reporting what a run costs. Grok stores cache entries on the server that wrote them, so a run's calls were scattering across the fleet and each landing on a machine that had never seen the item list; every call now carries the run's ID so they route together. Measured before the fix: 16 of 18 calls reported 128 cached tokens against a byte-identical 28,000-token prefix. Separately, cache reads were being dropped from the cost total entirely, understating one run by 24%.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.2.0/curator_0.4.2.0.zip",
-        "checksum": "f12b775236043a9d95505bbf63de11c6",
-        "timestamp": "2026-07-30T23:52:00Z"
-      },
-      {
-        "version": "0.4.0.0",
-        "changelog": "Batch size 0 now sends the whole library in one request, and is the default: a thread running through items split across two batches is one the model never gets to see. The settings page is reorganised into tabs by subject, and items in collections you name \u2014 Oscar Nominees and Oscar Winners by default \u2014 are labelled as such so the model can weigh an award as evidence about a film. Also fixes personalization for anyone who watches television. Jellyfin records playback against episodes, so a series row carries no watch history and every TV viewer read as a viewer of nothing \u2014 measured on a 297-item library, six users' activity held 210 movie entries against 3 series entries. Episode playback is now rolled up onto the series and reaches the model as watch depth. Items orphaned by a removed or remounted library folder no longer reach the model: Jellyfin keeps the database row, so a ghost still looks like a real item and plays back as nothing, and on one server 36 of 298 items were such ghosts landing in real playlists. A progress panel replaces the status line that used to tell you to go read the server log, showing the phase in plain words and a breakdown of estimated cost as the run proceeds.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.4.0.0/curator_0.4.0.0.zip",
-        "checksum": "2eece8484bd557b128b30817f776b5fd",
-        "timestamp": "2026-07-30T20:37:42Z"
-      },
-      {
-        "version": "0.3.16.0",
-        "changelog": "Requires Jellyfin 10.11.11 or newer. Adds native Google Gemini and xAI Grok providers, both constraining the model to a response schema so a malformed answer cannot lose a batch, alongside Anthropic, OpenAI and any OpenAI-compatible endpoint. Every run writes a complete JSON record \u2014 the settings it ran under, every step, every prompt and response in full, and cost per call and per run. Category size and count limits are told to the model as well as enforced on its answer, since a limit the model cannot see is one it cannot aim at. A renamed category keeps its playlist, its position and its watch state: models reword the same theme every run, and matching on the name alone tore down and rebuilt every home screen row each time. This is also the first release that runs at all on Jellyfin 10.11.11, which broke the plugin ABI, and it carries the earlier pipeline whole: library scan, category reconciliation, playlist building with ownership tagging, home screen rows via Collection Sections, prompt caching, an optional batch API path, a weekly scheduled task and a configuration page with a manual run button.",
-        "targetAbi": "10.11.11.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.3.16.0/curator_0.3.16.0.zip",
-        "checksum": "0a9336c1e0db462a3d2fa41a2e1a7b95",
-        "timestamp": "2026-07-30T09:22:52Z"
       }
     ]
   }

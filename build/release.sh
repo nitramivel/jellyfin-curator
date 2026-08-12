@@ -16,9 +16,17 @@ TARGET_ABI="${TARGET_ABI:-10.11.0.0}"
 CHANGELOG="${CHANGELOG:-}"
 REPO_URL="https://github.com/nitramivel/jellyfin-curator"
 
+# How many versions manifest.json keeps. Every Jellyfin client that has added the
+# repository fetches this file to list available plugins, so it is on a hot path
+# for other people's servers and grows forever if nothing prunes it. Older
+# releases stay on GitHub and remain installable by hand; what goes is only the
+# catalogue's memory of them.
+MANIFEST_KEEP="${MANIFEST_KEEP:-5}"
+
 VERSION="$VERSION" TARGET_ABI="$TARGET_ABI" ./build/package.sh
 
 VERSION="$VERSION" TARGET_ABI="$TARGET_ABI" CHANGELOG="$CHANGELOG" REPO_URL="$REPO_URL" \
+MANIFEST_KEEP="$MANIFEST_KEEP" \
 python3 - <<'PY'
 import hashlib
 import json
@@ -72,6 +80,18 @@ else:
 
 versions = [v for v in manifest[0]["versions"] if v["version"] != version]
 versions.insert(0, entry)
+
+# Newest first, then truncated. A manifest is a catalogue, not an archive: every
+# client that has added this repository downloads the whole file to list one
+# plugin, so an unbounded changelog history is a cost paid by other people's
+# servers on every refresh. GitHub keeps the full history.
+keep = int(os.environ.get("MANIFEST_KEEP", "5"))
+if keep > 0:
+    dropped = versions[keep:]
+    versions = versions[:keep]
+    for old_version in dropped:
+        print(f"Pruned:   {old_version['version']} (still on GitHub, no longer in the catalogue)")
+
 manifest[0]["versions"] = versions
 
 with open(manifest_path, "w") as f:
