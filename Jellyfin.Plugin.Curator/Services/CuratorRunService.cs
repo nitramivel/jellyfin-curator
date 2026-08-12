@@ -694,10 +694,21 @@ namespace Jellyfin.Plugin.Curator.Services
                     // viewer's own categories is a small slice of the library.
                     var candidates = mine.SelectMany(c => c.Members).Distinct().ToArray();
                     var activity = _userActivityProvider.GetActivity(userId, candidates);
+
+                    // Ranked uncapped when the per-type lists are wanted, because the
+                    // cap is applied to each finished list rather than to the pool
+                    // they are cut from: capping first would hand a library that is
+                    // mostly films a television list of whatever few shows happened
+                    // to reach the top 75. With the split off the cap goes back on
+                    // here and the result is what it always was — Rank's cap is a
+                    // Take over the finished order, so where it is applied changes
+                    // nothing for the combined list either way.
                     var ranked = RecommendationRanker.Rank(
                         mine,
                         activity,
-                        new RecommendationOptions(config.MaxRecommendations, config.RecommendationsIncludeWatched));
+                        new RecommendationOptions(
+                            config.SplitRecommendationsByType ? 0 : config.MaxRecommendations,
+                            config.RecommendationsIncludeWatched));
 
                     // Selection is done; only the order is still open. A model reads
                     // the top slice and says what this viewer should see first, which
@@ -705,21 +716,48 @@ namespace Jellyfin.Plugin.Curator.Services
                     // one thing about this playlist that costs money.
                     if (config.ModelRankedRecommendations && ranked.Count > 1)
                     {
+                        // One call, on the combined order, before the split. The
+                        // per-type lists are cut from what comes back, so each one's
+                        // head is re-ranked material without a second call — which is
+                        // what keeps hard rule 15's cost promise true no matter how
+                        // many lists this pass writes.
                         ranked = await ReorderRecommendationsAsync(
-                            config, userId, ranked, activity, descriptions, runLog, cancellationToken).ConfigureAwait(false);
+                            config, userId, ranked, activity, descriptions, RerankHeadSize(config), runLog, cancellationToken)
+                            .ConfigureAwait(false);
                     }
 
-                    var playlistId = await _playlistService
-                        .SyncRecommendationsAsync(
-                            userId,
-                            config.RecommendationPlaylistName,
-                            ranked,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                    // Only looked up when the answer is needed. The combined list is
+                    // the whole order and asks nothing about kinds.
+                    var kinds = config.SplitRecommendationsByType
+                        ? _libraryScanner.GetKinds(ranked)
+                        : EmptyKinds;
 
-                    if (playlistId is not null)
+                    foreach (var scope in RecommendationRanker.AllScopes)
                     {
-                        built++;
+                        // Every scope is synced on every pass, including the ones
+                        // switched off: an empty member list is how a per-type
+                        // playlist left behind by turning the split off is taken
+                        // away, through the same ownership table as everything else.
+                        var wanted = scope == RecommendationScope.Combined
+                            || config.SplitRecommendationsByType;
+
+                        var members = wanted
+                            ? RecommendationSplit.Select(scope, ranked, kinds, config.MaxRecommendations)
+                            : [];
+
+                        var playlistId = await _playlistService
+                            .SyncRecommendationsAsync(
+                                userId,
+                                scope,
+                                PlaylistNameFor(config, scope),
+                                members,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        if (playlistId is not null)
+                        {
+                            built++;
+                        }
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -739,9 +777,48 @@ namespace Jellyfin.Plugin.Curator.Services
                 ["name"] = config.RecommendationPlaylistName,
                 ["maxItems"] = config.MaxRecommendations,
                 ["includeWatched"] = config.RecommendationsIncludeWatched,
+                ["splitByType"] = config.SplitRecommendationsByType,
+                ["movieName"] = config.SplitRecommendationsByType ? config.RecommendationMoviePlaylistName : null,
+                ["showName"] = config.SplitRecommendationsByType ? config.RecommendationShowPlaylistName : null,
             });
 
             return built;
+        }
+
+        /// <summary>
+        /// No kinds, for the path that does not need them.
+        /// </summary>
+        private static readonly IReadOnlyDictionary<Guid, MediaKind> EmptyKinds =
+            new Dictionary<Guid, MediaKind>();
+
+        /// <summary>
+        /// The configured name for one scope's playlist.
+        /// </summary>
+        private static string PlaylistNameFor(PluginConfiguration config, RecommendationScope scope)
+        {
+            return scope switch
+            {
+                RecommendationScope.Movies => config.RecommendationMoviePlaylistName,
+                RecommendationScope.Shows => config.RecommendationShowPlaylistName,
+                _ => config.RecommendationPlaylistName,
+            };
+        }
+
+        /// <summary>
+        /// How many of a viewer's shortlist the re-rank may be shown.
+        /// </summary>
+        /// <remarks>
+        /// 0 on the setting has always meant "the whole shortlist", and the shortlist
+        /// used to arrive capped at <see cref="PluginConfiguration.MaxRecommendations"/>.
+        /// Splitting removes that cap from the pool, so 0 has to fall back to the
+        /// number that used to bound it or a feature that costs nothing would quietly
+        /// start sending a viewer's entire library slice to a model on every refresh.
+        /// </remarks>
+        private static int RerankHeadSize(PluginConfiguration config)
+        {
+            return config.MaxRecommendationsToRank > 0
+                ? config.MaxRecommendationsToRank
+                : config.MaxRecommendations;
         }
 
         /// <summary>
@@ -846,11 +923,12 @@ namespace Jellyfin.Plugin.Curator.Services
             IReadOnlyList<Guid> ranked,
             IReadOnlyDictionary<Guid, UserActivity> activity,
             IReadOnlyDictionary<Guid, MediaItemRecord> descriptions,
+            int headCap,
             IRunLog? runLog,
             CancellationToken cancellationToken)
         {
-            var headSize = config.MaxRecommendationsToRank > 0
-                ? Math.Min(config.MaxRecommendationsToRank, ranked.Count)
+            var headSize = headCap > 0
+                ? Math.Min(headCap, ranked.Count)
                 : ranked.Count;
             var head = ranked.Take(headSize).ToList();
             var tail = ranked.Skip(headSize).ToList();

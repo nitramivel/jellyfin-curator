@@ -181,9 +181,46 @@ namespace Jellyfin.Plugin.Curator.Core.Recommendations
         /// <returns>A deterministic ID for that viewer's recommendations.</returns>
         public static Guid IdentityFor(Guid userId)
         {
-            var seed = Encoding.UTF8.GetBytes("curator-recommendations:" + userId.ToString("N"));
+            return IdentityFor(userId, RecommendationScope.Combined);
+        }
+
+        /// <summary>
+        /// The stable identity for one of a viewer's recommendation playlists.
+        /// </summary>
+        /// <remarks>
+        /// Each scope needs an identity of its own or the three lists would share a
+        /// tether and overwrite one another. The combined scope's seed is unchanged
+        /// from when it was the only one, which is what stops an upgrade orphaning
+        /// every existing "Recommended for You": its tether is the only record that
+        /// playlist is Curator's, and a new seed would leave the old one untethered,
+        /// unclaimed by any definition, and looking exactly like the orphan the
+        /// sweep in <c>RemoveOrphanedPlaylistsAsync</c> deletes. Never renumber it.
+        /// </remarks>
+        /// <param name="userId">The viewer.</param>
+        /// <param name="scope">Which of that viewer's lists.</param>
+        /// <returns>A deterministic ID for that viewer's list.</returns>
+        public static Guid IdentityFor(Guid userId, RecommendationScope scope)
+        {
+            var prefix = scope switch
+            {
+                RecommendationScope.Movies => "curator-recommendations:movies:",
+                RecommendationScope.Shows => "curator-recommendations:shows:",
+                _ => "curator-recommendations:",
+            };
+
+            var seed = Encoding.UTF8.GetBytes(prefix + userId.ToString("N"));
             var hash = SHA256.HashData(seed);
             return new Guid(hash.AsSpan(0, 16));
         }
+
+        /// <summary>
+        /// Every scope, so a caller can sweep the ones it is not building.
+        /// </summary>
+        public static IReadOnlyList<RecommendationScope> AllScopes { get; } =
+        [
+            RecommendationScope.Combined,
+            RecommendationScope.Movies,
+            RecommendationScope.Shows,
+        ];
     }
 }

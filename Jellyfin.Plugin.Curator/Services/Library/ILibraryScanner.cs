@@ -49,6 +49,27 @@ namespace Jellyfin.Plugin.Curator.Services.Library
         /// of the overview substitution: the two are built together but sending them
         /// is two separate decisions.
         /// </param>
+        /// <summary>
+        /// Looks up what kind of item each of these IDs is.
+        /// </summary>
+        /// <remarks>
+        /// A deliberately narrow lookup rather than a scan. The caller — splitting a
+        /// viewer's recommendations into a films list and a television one — needs
+        /// one field about a few dozen items it already holds the IDs of, and a full
+        /// <see cref="ScanLibrary"/> to learn it would reduce the whole library, read
+        /// every overview and resolve every collection to answer a question about
+        /// none of that. It also has to work on the free path, where nothing is sent
+        /// to a model and no scan happens at all.
+        /// <para>
+        /// An ID that no longer resolves is simply absent from the result, which is
+        /// the same way <c>ResolveMembers</c> treats an item that has left the
+        /// library.
+        /// </para>
+        /// </remarks>
+        /// <param name="itemIds">The items to look up.</param>
+        /// <returns>The kind of each item that still exists.</returns>
+        IReadOnlyDictionary<Guid, MediaKind> GetKinds(IReadOnlyCollection<Guid> itemIds);
+
         /// <returns>The reduced records, in library enumeration order.</returns>
         IReadOnlyList<MediaItemRecord> ScanLibrary(
             bool includeEpisodes,

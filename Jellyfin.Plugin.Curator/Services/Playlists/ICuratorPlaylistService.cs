@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Curator.Core.Models;
+using Jellyfin.Plugin.Curator.Core.Recommendations;
 
 namespace Jellyfin.Plugin.Curator.Services.Playlists
 {
@@ -45,6 +46,13 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         /// tag is removed, exactly like a category playlist.
         /// </remarks>
         /// <param name="userId">The viewer.</param>
+        /// <param name="scope">
+        /// Which of that viewer's lists. Each scope carries its own tether, so the
+        /// three never collide; passing an empty <paramref name="memberIds"/> is how
+        /// a scope the owner has switched off is taken away again, through the same
+        /// ownership table that empties a category — which is why turning the split
+        /// off deletes the per-type lists but hands off any the viewer has untagged.
+        /// </param>
         /// <param name="name">The playlist name; the same for every viewer.</param>
         /// <param name="memberIds">The items, most recommended first.</param>
         /// <param name="cancellationToken">Cancellation token.</param>
@@ -54,6 +62,7 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         /// </returns>
         Task<Guid?> SyncRecommendationsAsync(
             Guid userId,
+            RecommendationScope scope,
             string name,
             IReadOnlyList<Guid> memberIds,
             CancellationToken cancellationToken);

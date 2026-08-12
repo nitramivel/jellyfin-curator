@@ -6,6 +6,7 @@ using Jellyfin.Plugin.Curator.Core;
 using Jellyfin.Plugin.Curator.Core.Models;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -24,6 +25,35 @@ namespace Jellyfin.Plugin.Curator.Services.Library
         {
             _libraryManager = libraryManager;
             _logger = logger;
+        }
+
+        /// <inheritdoc />
+        public IReadOnlyDictionary<Guid, MediaKind> GetKinds(IReadOnlyCollection<Guid> itemIds)
+        {
+            ArgumentNullException.ThrowIfNull(itemIds);
+
+            var kinds = new Dictionary<Guid, MediaKind>(itemIds.Count);
+            foreach (var id in itemIds)
+            {
+                // The same type test the reducer makes, and for the same reason: an
+                // item that is neither a film, a series nor an episode is not
+                // something Curator ever put in a category, so it has no kind here
+                // either and is left out.
+                var kind = _libraryManager.GetItemById(id) switch
+                {
+                    Movie => MediaKind.Movie,
+                    Series => MediaKind.Series,
+                    Episode => MediaKind.Episode,
+                    _ => (MediaKind?)null,
+                };
+
+                if (kind is { } resolved)
+                {
+                    kinds[id] = resolved;
+                }
+            }
+
+            return kinds;
         }
 
         /// <inheritdoc />

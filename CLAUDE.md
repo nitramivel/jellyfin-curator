@@ -388,6 +388,49 @@ every one of these was a real failure on a real server before it was a rule.
    forgetting to claim would delete every viewer's spotlight row. And because
    nothing is stored, handoff needs no flag: a missing ownership tag says the
    viewer took it, on this run and every future one.
+   **`SplitRecommendationsByType` adds two lists and replaces none.** Each viewer
+   can also get a films-only and a television-only playlist, cut by
+   `Core/Recommendations/RecommendationSplit` from the *same* ranking — a filter
+   over one order, never a second ranking, because an item scores by how many of
+   the viewer's threads it appears in and those threads mix the two by design.
+   That is also what keeps this rule's cost promise: the re-rank runs once, on the
+   combined order, *before* the split, so each per-type list's head is re-ranked
+   material and the pass is still one call per viewer however many playlists come
+   out of it. Three things that will break it if done casually:
+   - **The combined list is always built, and its seed must never be renumbered.**
+     `IdentityFor(userId)` is `IdentityFor(userId, Combined)` and still hashes
+     `curator-recommendations:<user>`; a new seed leaves every existing
+     "Recommended for You" untethered, claimed by no definition, and shaped
+     exactly like what the orphan sweep deletes. `RecommendationSplitTests` pins
+     the literal GUID.
+   - **Every scope goes in `IsRecommendationPlaylist`**, not just the one being
+     built — these playlists have no definition to claim them, so a scope missing
+     from that test is a playlist the sweep deletes on the next maintenance pass.
+     Switching the split off syncs the per-type scopes with an *empty* member list
+     rather than skipping them, so they leave through the same ownership table
+     that empties a category, and one a viewer has untagged is handed off instead.
+   - **The cap applies per finished list, so the pool is ranked uncapped.**
+     Capping first gives a library that is mostly films a television list of
+     whatever few shows reached the top. That uncapping is why `ReorderRecommendationsAsync`
+     now takes an explicit head size: `MaxRecommendationsToRank = 0` means "the
+     whole shortlist", and the shortlist used to arrive bounded by
+     `MaxRecommendations`, so 0 has to fall back to that number or a free feature
+     starts sending an entire library slice to a model four times a day.
+   **The Media Bar plugin takes one playlist name, and that is why the combined
+   list cannot go away.** Read from the installed 2.4.12.0 DLL: `AvatarsPlaylist`
+   is a single text box, and `MaxMovies` / `MaxTvShows` are passed to its own
+   client-side slideshow, which separates the two kinds *within* that one
+   playlist. So the bar at the top of the page wants a list holding both, and a
+   split that emptied the combined one would take the feature away from the most
+   visible place it appears.
+   **None of the three is a Curator home screen row.** Rows are registered from
+   stored category definitions, and these have none — they surface as Jellyfin
+   playlists, through Media Bar, or through Collection Sections by name. And they
+   cannot reach the **Suggestions tab** on the Movies and Shows pages at all:
+   that draws from the server's own `/Movies/Recommendations` and `/Shows/NextUp`,
+   and `RecommendationType` is a closed enum in `MediaBrowser.Model` with four
+   members that `MoviesController` computes itself. There is no extension point,
+   so do not accept a bug report claiming the rows "stopped appearing" there.
 16. **The Schedule tab edits Jellyfin's triggers, not Curator's config.**
    `IScheduledTaskWorker.Triggers` is settable and persists on assignment, so the
    tab and Dashboard → Scheduled Tasks are two editors over one store. Saving

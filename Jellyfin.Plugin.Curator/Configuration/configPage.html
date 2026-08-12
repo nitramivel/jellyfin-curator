@@ -1175,13 +1175,48 @@
                                 be repointed.
                             </div>
                         </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="SplitRecommendationsByType"
+                                       name="SplitRecommendationsByType" />
+                                <span>Also build a films-only and a television-only list</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Two more playlists per viewer, cut from the same ranking, so a row can show films
+                                or television rather than both mixed. <strong>The combined list above keeps being
+                                built</strong> — Media Bar and anything else that takes a single playlist name has
+                                one slot, and it stays pointed at the combined list, which is where both kinds
+                                still appear together. Costs nothing extra: the ranking is done once and these are
+                                filters over it, so even <em>Have a model choose the order</em> is still one call
+                                per viewer. Switching this back off deletes the two per-type playlists on the next
+                                run, unless a viewer has removed the <code>curator</code> tag to keep one.
+                                <br /><br />
+                                <em>Note this cannot reach the Suggestions tab on the Movies and Shows pages.</em>
+                                Those draw from Jellyfin's own <code>/Movies/Recommendations</code> and
+                                <code>/Shows/NextUp</code>, whose section types are a closed set in the server — no
+                                plugin can add a row there. These lists appear as home screen rows and under
+                                Playlists.
+                            </div>
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="RecommendationMoviePlaylistName">Films playlist name</label>
+                            <input id="RecommendationMoviePlaylistName" name="RecommendationMoviePlaylistName" type="text"
+                                   class="emby-input" />
+                        </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="RecommendationShowPlaylistName">Television playlist name</label>
+                            <input id="RecommendationShowPlaylistName" name="RecommendationShowPlaylistName" type="text"
+                                   class="emby-input" />
+                        </div>
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="MaxRecommendations">Length</label>
                             <input id="MaxRecommendations" name="MaxRecommendations" type="number" min="0" max="1000"
                                    class="emby-input" />
                             <div class="fieldDescription">
                                 How many items the playlist holds. 0 means everything the viewer's categories
-                                cover. A spotlight bar cycles, so a long list keeps it from repeating.
+                                cover. A spotlight bar cycles, so a long list keeps it from repeating. Applies to
+                                each list separately when the split above is on, so the television list is not
+                                shortened by a library full of films.
                             </div>
                         </div>
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -4610,6 +4645,11 @@
                     renderPassProfileSelect('#PersonalModelProfileId', config.PersonalModelProfileId || '');
                     page.querySelector('#RecommendationPlaylists').checked = config.RecommendationPlaylists;
                     page.querySelector('#RecommendationPlaylistName').value = config.RecommendationPlaylistName || '';
+                    page.querySelector('#SplitRecommendationsByType').checked = config.SplitRecommendationsByType;
+                    page.querySelector('#RecommendationMoviePlaylistName').value =
+                        config.RecommendationMoviePlaylistName || '';
+                    page.querySelector('#RecommendationShowPlaylistName').value =
+                        config.RecommendationShowPlaylistName || '';
                     page.querySelector('#MaxRecommendations').value = config.MaxRecommendations;
                     page.querySelector('#RecommendationsIncludeWatched').checked = config.RecommendationsIncludeWatched;
                     page.querySelector('#ModelRankedRecommendations').checked = config.ModelRankedRecommendations;
@@ -4729,6 +4769,11 @@
                     config.SurfaceAllCollections = page.querySelector('#SurfaceAllCollections').checked;
                     config.RecommendationPlaylists = page.querySelector('#RecommendationPlaylists').checked;
                     config.RecommendationPlaylistName = page.querySelector('#RecommendationPlaylistName').value.trim();
+                    config.SplitRecommendationsByType = page.querySelector('#SplitRecommendationsByType').checked;
+                    config.RecommendationMoviePlaylistName =
+                        page.querySelector('#RecommendationMoviePlaylistName').value.trim();
+                    config.RecommendationShowPlaylistName =
+                        page.querySelector('#RecommendationShowPlaylistName').value.trim();
                     config.MaxRecommendations = parseInt(page.querySelector('#MaxRecommendations').value, 10);
                     config.RecommendationsIncludeWatched = page.querySelector('#RecommendationsIncludeWatched').checked;
                     config.ModelRankedRecommendations = page.querySelector('#ModelRankedRecommendations').checked;
