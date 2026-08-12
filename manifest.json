@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.8.6.0",
+        "changelog": "Each viewer can now get a films-only and a television-only recommendation playlist beside the combined one, switched on with 'Also build a films-only and a television-only list' on the Home screen tab. Both are cut from the same ranking, so they cost no extra model call \u2014 even with model-chosen ordering on, it is still one call per viewer. The combined list is always built and unchanged, which is what the Media Bar plugin wants: it takes a single playlist name and separates films from television itself. Note these cannot appear on the Movies and Shows Suggestions tabs \u2014 those come from the server's own recommendation endpoints, which no plugin can add to.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.6.0/curator_0.8.6.0.zip",
+        "checksum": "34c904d696fcc75138f9ce55f0843c21",
+        "timestamp": "2026-08-12T19:55:46Z"
+      },
+      {
         "version": "0.8.5.0",
         "changelog": "Settings page: the tabs now match the Concierge plugin's \u2014 text with an underline instead of eight raised pills competing with the Save button beneath them \u2014 and the model configurator puts the profile picker and its buttons on one line, with every per-profile setting inside a box of its own so it is clear which settings belong to the selected profile and which do not. Fixes the Runs tab losing its scope highlight when you switch tabs, and stops two startup refreshes buying the same context row titles twice.",
         "targetAbi": "10.11.0.0",
@@ -39,14 +47,6 @@
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.3.0/curator_0.7.3.0.zip",
         "checksum": "d25b86e014b5030b061f15a0cce98078",
         "timestamp": "2026-08-12T09:58:06Z"
-      },
-      {
-        "version": "0.7.2.0",
-        "changelog": "Fixes the weather test button reporting failure for lookups that had actually succeeded, and makes it report the real reason when one genuinely fails.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.2.0/curator_0.7.2.0.zip",
-        "checksum": "787770c3c2f0a3a9a89380846eed51e7",
-        "timestamp": "2026-08-12T09:22:37Z"
       }
     ]
   }

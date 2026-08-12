@@ -275,8 +275,23 @@ namespace Jellyfin.Plugin.Curator.Services.Health
 
             try
             {
-                var name = config.RecommendationPlaylistName?.Trim();
-                if (string.IsNullOrEmpty(name))
+                // Every name the owner has switched on, not only the combined one:
+                // with the split on, two of the three lists a viewer actually has
+                // would otherwise go uncounted and the panel would understate what
+                // is there.
+                var names = new List<string?> { config.RecommendationPlaylistName };
+                if (config.SplitRecommendationsByType)
+                {
+                    names.Add(config.RecommendationMoviePlaylistName);
+                    names.Add(config.RecommendationShowPlaylistName);
+                }
+
+                var wanted = names
+                    .Select(n => n?.Trim())
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                if (wanted.Count == 0)
                 {
                     return 0;
                 }
@@ -292,7 +307,7 @@ namespace Jellyfin.Plugin.Curator.Services.Health
                     Recursive = true,
                 }).Items
                     .OfType<Playlist>()
-                    .Count(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+                    .Count(p => p.Name is not null && wanted.Contains(p.Name));
             }
             catch (Exception ex)
             {

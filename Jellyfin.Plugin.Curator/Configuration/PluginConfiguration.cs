@@ -520,6 +520,39 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public string RecommendationPlaylistName { get; set; } = "Recommended for You";
 
         /// <summary>
+        /// Gets or sets a value indicating whether each viewer also gets a films-only
+        /// and a television-only recommendation list beside the combined one.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The combined list is built either way and never stops being built. That is
+        /// deliberate: consumers that take a single playlist name — the Media Bar
+        /// plugin at the top of the page, Collection Sections — have one slot, and a
+        /// split that quietly emptied it would take the feature away from the place
+        /// it is most visible. So this adds two lists rather than replacing one.
+        /// </para>
+        /// <para>
+        /// It costs no extra model call. The ranking is done once and the per-type
+        /// lists are filters over that one order, so hard rule 15 holds unchanged:
+        /// the re-rank, when it is on at all, is still one call per viewer.
+        /// </para>
+        /// </remarks>
+        public bool SplitRecommendationsByType { get; set; }
+
+        /// <summary>
+        /// Gets or sets the name given to every viewer's films-only recommendation
+        /// playlist. Used only when <see cref="SplitRecommendationsByType"/> is on.
+        /// </summary>
+        public string RecommendationMoviePlaylistName { get; set; } = "Recommended Movies for You";
+
+        /// <summary>
+        /// Gets or sets the name given to every viewer's television-only
+        /// recommendation playlist. Used only when
+        /// <see cref="SplitRecommendationsByType"/> is on.
+        /// </summary>
+        public string RecommendationShowPlaylistName { get; set; } = "Recommended Shows for You";
+
+        /// <summary>
         /// Gets or sets how many items a recommendation playlist may hold. 0 means
         /// no cap.
         /// </summary>

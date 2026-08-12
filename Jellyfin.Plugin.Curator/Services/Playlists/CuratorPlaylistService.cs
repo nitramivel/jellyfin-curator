@@ -189,15 +189,22 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         /// <inheritdoc />
         public async Task<Guid?> SyncRecommendationsAsync(
             Guid userId,
+            RecommendationScope scope,
             string name,
             IReadOnlyList<Guid> memberIds,
             CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(memberIds);
 
-            if (string.IsNullOrWhiteSpace(name))
+            // A name is needed to build a list and not to take one away. Guarding the
+            // whole method on it would strand a per-type playlist forever the moment
+            // its name box was cleared: the sweep will not delete it (it is a
+            // recommendation playlist, and those self-identify) and this method would
+            // no longer reach the decision table that would.
+            if (memberIds.Count > 0 && string.IsNullOrWhiteSpace(name))
             {
-                _logger.LogWarning("Curator: no recommendation playlist name configured; skipping");
+                _logger.LogWarning(
+                    "Curator: no {Scope} recommendation playlist name configured; skipping", scope);
                 return null;
             }
 
@@ -213,9 +220,16 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
             // parallel copy of it that could drift on the rules that matter.
             var definition = new CategoryDefinition
             {
-                Id = RecommendationRanker.IdentityFor(userId),
-                Name = name.Trim(),
-                Description = "Ranked recommendations, most recommended first. Built by Curator.",
+                Id = RecommendationRanker.IdentityFor(userId, scope),
+                Name = name?.Trim() ?? string.Empty,
+                Description = scope switch
+                {
+                    RecommendationScope.Movies =>
+                        "Ranked film recommendations, most recommended first. Built by Curator.",
+                    RecommendationScope.Shows =>
+                        "Ranked television recommendations, most recommended first. Built by Curator.",
+                    _ => "Ranked recommendations, most recommended first. Built by Curator.",
+                },
                 Members = [.. memberIds],
                 OwnerUserId = userId,
                 ModelId = "curator-ranked",
@@ -246,7 +260,9 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
 
                 case SyncAction.Delete:
                     _logger.LogInformation(
-                        "Curator: no recommendations for user {UserId}; removing their playlist", userId);
+                        "Curator: no {Scope} recommendations for user {UserId}; removing their playlist",
+                        scope,
+                        userId);
                     _libraryManager.DeleteItem(playlist!, new DeleteOptions { DeleteFileLocation = true }, true);
                     return null;
 
@@ -505,6 +521,15 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         /// user, so a playlist can be recognised without consulting anything else.
         /// A playlist belonging to a different user cannot match, so one viewer's
         /// list can never shield another's.
+        /// <para>
+        /// Every scope is checked, not only the one currently being built. These
+        /// playlists have no stored definition, so nothing else claims them against
+        /// the orphan sweep — a scope missing from this test is a playlist deleted
+        /// on the next maintenance pass, which for the per-type lists would happen
+        /// the moment the owner switched the split off and on again. It is also why
+        /// this reads the identity rather than the name: the name is the owner's to
+        /// change, the tether is not.
+        /// </para>
         /// </remarks>
         private static bool IsRecommendationPlaylist(Playlist playlist)
         {
@@ -514,10 +539,10 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
                 return false;
             }
 
-            return string.Equals(
+            return RecommendationRanker.AllScopes.Any(scope => string.Equals(
                 tether,
-                RecommendationRanker.IdentityFor(playlist.OwnerUserId).ToString("N"),
-                StringComparison.OrdinalIgnoreCase);
+                RecommendationRanker.IdentityFor(playlist.OwnerUserId, scope).ToString("N"),
+                StringComparison.OrdinalIgnoreCase));
         }
 
         private static bool HasOwnershipTag(Playlist playlist)

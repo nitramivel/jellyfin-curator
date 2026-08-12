@@ -96,6 +96,9 @@ namespace Jellyfin.Plugin.Curator.Tests
 
             public LibraryHealth Inspect() => new(_items.Count, 0);
 
+            public IReadOnlyDictionary<Guid, MediaKind> GetKinds(IReadOnlyCollection<Guid> itemIds) =>
+                _items.Where(i => itemIds.Contains(i.Id)).ToDictionary(i => i.Id, i => i.Kind);
+
             public IReadOnlyList<MediaItemRecord> ScanLibrary(
                 bool includeEpisodes,
                 string? surfacedCollections = null,
