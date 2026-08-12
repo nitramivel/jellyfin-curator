@@ -23,6 +23,51 @@
                    otherwise read as a caption to the button. */
                 .curatorSaveRow { margin-bottom: 1.6em; }
 
+                /* The profile picker and the buttons that act on it sit on one line,
+                   as they do in Concierge. Add/Duplicate/Remove all operate on
+                   whatever the dropdown is showing, so putting them beside it says
+                   that; stacked underneath they read as page-level actions. */
+                .curatorProfileBar {
+                    display: flex; align-items: flex-end; gap: 0.6em; flex-wrap: wrap;
+                    margin-bottom: 0.6em;
+                }
+                .curatorProfileBar .selectContainer { flex: 1 1 22em; margin-bottom: 0; }
+                .curatorProfileBar .raised { margin: 0; }
+
+                /* Everything inside the box belongs to the profile named in the
+                   dropdown above it, and nothing outside it does. That boundary is
+                   load-bearing rather than decorative: the editor shows one profile
+                   at a time out of an in-memory list, so a field that looks like a
+                   page setting but is really a per-profile one is how somebody
+                   changes a price and finds it applied to the wrong model. */
+                .curatorEditor {
+                    margin-top: 1em; padding: 1em 1.2em 0.4em;
+                    border: 1px solid rgba(127,127,127,0.28); border-radius: 10px;
+                }
+                .curatorEditorEmpty { margin-top: 1em; opacity: 0.75; }
+
+                /* The page tabs, matching Concierge's so the two plugins' settings
+                   read as one dashboard. Text with an underline rather than a row of
+                   raised pills: eight filled buttons read as eight actions competing
+                   with Save, when a tab bar is a place indicator and not a thing to
+                   press. `currentColor` rather than the accent so the marker follows
+                   whatever theme the server is wearing. */
+                .curatorTabs {
+                    display: flex; flex-wrap: wrap; gap: 0.3em;
+                    margin: 1.4em 0 1.2em; border-bottom: 1px solid rgba(127,127,127,0.3);
+                }
+                .curatorTab {
+                    background: none; border: 0; border-bottom: 2px solid transparent;
+                    color: inherit; font: inherit; font-size: 1.02em;
+                    padding: 0.5em 0.9em; cursor: pointer; opacity: 0.6;
+                    transition: opacity 0.15s, border-color 0.15s;
+                }
+                .curatorTab:hover { opacity: 0.9; }
+                .curatorTab.is-active { opacity: 1; border-bottom-color: currentColor; }
+
+                /* The Runs tab's scope filter still uses buttons, and should: those
+                   are a filter over one panel's contents rather than a second set of
+                   tabs, and reading as pressable is the point. */
                 .curatorTabBar { display: flex; flex-wrap: wrap; gap: 0.4em; margin: 1em 0 1.5em 0; }
                 .curatorTabBar .curatorTabButton { margin: 0; }
                 .curatorTabButton.curatorTabActive { background: #00a4dc; color: #fff; }
@@ -537,23 +582,18 @@
                 </p>
             </div>
 
-            <div class="curatorTabBar">
-                <button is="emby-button" type="button" class="raised curatorTabButton curatorTabActive"
-                        data-target="model"><span>Model</span></button>
-                <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="library"><span>Library</span></button>
-                <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="categories-settings"><span>Categories</span></button>
-                <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="home"><span>Home screen</span></button>
-                <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="summaries"><span>Summaries</span></button>
-                <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="schedule"><span>Schedule</span></button>
-                <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="categories"><span>Runs</span></button>
-                <button is="emby-button" type="button" class="raised curatorTabButton"
-                        data-target="usage"><span>Usage</span></button>
+            <!-- Plain buttons, not is="emby-button": the whole point of this style is
+                 that a tab is not a raised control, and Jellyfin's button theming
+                 fights that at every turn. -->
+            <div class="curatorTabs" role="tablist">
+                <button type="button" class="curatorTab is-active" role="tab" data-target="model">Model</button>
+                <button type="button" class="curatorTab" role="tab" data-target="library">Library</button>
+                <button type="button" class="curatorTab" role="tab" data-target="categories-settings">Categories</button>
+                <button type="button" class="curatorTab" role="tab" data-target="home">Home screen</button>
+                <button type="button" class="curatorTab" role="tab" data-target="summaries">Summaries</button>
+                <button type="button" class="curatorTab" role="tab" data-target="schedule">Schedule</button>
+                <button type="button" class="curatorTab" role="tab" data-target="categories">Runs</button>
+                <button type="button" class="curatorTab" role="tab" data-target="usage">Usage</button>
             </div>
 
             <form id="CuratorConfigForm">
@@ -579,15 +619,12 @@
                             and its own prices. Pick which one runs; the rest stay saved so you can switch back
                             without retyping a key.
                         </p>
-                        <div class="selectContainer">
-                            <label class="selectLabel" for="ModelProfileSelect">Profile used for runs</label>
-                            <select is="emby-select" id="ModelProfileSelect" name="ModelProfileSelect"
-                                    class="emby-select-withcolor emby-select"></select>
-                            <div class="fieldDescription" id="ModelProfileHint">
-                                The selected profile is the default every run uses.
+                        <div class="curatorProfileBar">
+                            <div class="selectContainer">
+                                <label class="selectLabel" for="ModelProfileSelect">Profile used for runs</label>
+                                <select is="emby-select" id="ModelProfileSelect" name="ModelProfileSelect"
+                                        class="emby-select-withcolor emby-select"></select>
                             </div>
-                        </div>
-                        <div style="margin:0 0 1.4em;">
                             <button is="emby-button" type="button" id="ModelProfileAdd" class="raised">
                                 <span>Add profile</span>
                             </button>
@@ -598,8 +635,16 @@
                                 <span>Remove</span>
                             </button>
                         </div>
+                        <div class="fieldDescription" id="ModelProfileHint">
+                            The selected profile is the default every run uses. Each pass may be pointed at a
+                            different one below.
+                        </div>
 
-                        <div id="ModelProfileEditor">
+                        <p class="fieldDescription curatorEditorEmpty hide" id="ModelProfileEmpty">
+                            No profiles yet — add one to tell Curator which model to call.
+                        </p>
+
+                        <div id="ModelProfileEditor" class="curatorEditor">
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="ProfileName">Profile name</label>
                                 <input id="ProfileName" name="ProfileName" type="text" class="emby-input" />
@@ -698,11 +743,7 @@
                                 </div>
                             </div>
                         </div>
-                        <p class="fieldDescription" id="ModelProfileEmpty" style="margin:0 0 1.2em;">
-                            No profiles yet — add one to tell Curator which model to call.
-                        </p>
-
-                        <h3 class="sectionTitle">Which model runs which pass</h3>
+                        <h3 class="sectionTitle" style="margin-top:1.8em;">Which model runs which pass</h3>
                         <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
                             A run is two different jobs, and they need not use the same model. Leave both on
                             <em>the default profile</em> and a run behaves exactly as it always has.
@@ -3577,9 +3618,14 @@
                     panels[i].classList.toggle('hide', panels[i].getAttribute('data-panel') !== name);
                 }
 
-                var buttons = page.querySelectorAll('.curatorTabButton');
+                // Only the page tabs. This used to walk every .curatorTabButton,
+                // which also matched the Runs tab's scope filter — so switching tab
+                // cleared the highlight from whichever scope was selected.
+                var buttons = page.querySelectorAll('.curatorTab');
                 for (var j = 0; j < buttons.length; j++) {
-                    buttons[j].classList.toggle('curatorTabActive', buttons[j].getAttribute('data-target') === name);
+                    var active = buttons[j].getAttribute('data-target') === name;
+                    buttons[j].classList.toggle('is-active', active);
+                    buttons[j].setAttribute('aria-selected', active ? 'true' : 'false');
                 }
 
                 // Save applies to the settings form only. Runs, Schedule and Usage
@@ -4889,7 +4935,7 @@
                 categories.addEventListener('click', onCategoriesClick);
                 categories.addEventListener('change', onCategoriesChange);
 
-                var tabButtons = page.querySelectorAll('.curatorTabButton');
+                var tabButtons = page.querySelectorAll('.curatorTab');
                 for (var i = 0; i < tabButtons.length; i++) {
                     tabButtons[i].addEventListener('click', function () {
                         showTab(this.getAttribute('data-target'));
