@@ -54,7 +54,7 @@ flowchart LR
 
 > Categories are recognised across runs by their **members as well as their name**. Models reword the same theme every run — "Reality Coming Undone" becomes "Reality Is Optional" becomes "Glitch in the Reality Engine" — and matching on the name alone made every run tear down and rebuild every home screen row. A renamed category now keeps its playlist, its position and its watch state, and simply changes its label.
 
-Curator also sets each row's placement in Home Screen Sections: **order index 500** for every row — one lane, leaving the arrangement around it to you — and a card shape from the category's size, landscape below the **portrait row threshold** and portrait at or above it (default 10). Everything else about a row (enabled, limits, hide-watched) is left as you set it.
+Curator also sets each row's placement in Home Screen Sections: an **order index** you choose (500 by default — one lane, leaving the arrangement around it to you), and a card shape from the category's size, landscape below the **portrait row threshold** and portrait at or above it (default 10). Rows sharing an index are shuffled by Home Screen Sections on every load, which is why the weather and time-of-day rows can be given a lane of their own. Everything else about a row (enabled, limits, hide-watched) is left as you set it.
 
 **5. Build.** Each surviving category becomes a Jellyfin playlist, ordered by the model's confidence ranking. Curator then registers a matching home screen section and enables it for your users.
 
@@ -175,12 +175,28 @@ Weather comes from [Open-Meteo](https://open-meteo.com) — no account, no API k
 | **Whose weather** | One place for the whole server, or each viewer's own. Per-viewer also moves the *time-of-day* row onto each viewer's own clock, since the timezone comes back with the forecast |
 | **Location** | A place name — `Pittsburgh`, or `Pittsburgh, Pennsylvania` if the plain name is ambiguous. Also the fallback for any viewer without one of their own |
 | **Row length** | 20 by default, and shorter than the recommendation playlist on purpose: these rows make a narrow claim, and a long one dilutes it with everything that merely qualifies |
+| **Row titles** | Keep the names you typed, or let a model write them. See below |
+| **Row order index** | Which lane the rows sit in. The context rows can have one of their own — worth doing, since rows sharing a lane get shuffled on every load |
+
+Press **Test the weather lookup** on the Home screen tab to confirm the requests are getting through: it calls Open-Meteo right then, bypassing the cache, and reports the place it matched, the conditions, the temperature and the local time. Without it, "the server has no outbound internet" and "nothing in the library suits today" look identical from the settings page.
+
+#### Model-written row titles
+
+Optional, and off by default. Instead of a fixed *Picks for the Weather*, a model names the row for the conditions — and the mistake it has to avoid is restating them, because "Rainy Evening Picks" is not a title, it is the label it replaced. The prompt spends most of its length on that: reach for what the weather *does* to a person, not what it is.
+
+**The cost is bounded by your weather, not by time.** Titles are bought once per set of conditions — `rain + cold` is a key — several at a time, cached, and rotated on each use. A place produces on the order of thirty distinct conditions, so spending flattens within a few weeks and then effectively stops. Two viewers under the same sky are offset in the rotation so they do not read the same words, and a failed call or an unseen condition falls back to the name you typed.
+
+Unused sets are **culled automatically** after a year, and sets naming a condition Curator no longer recognises go immediately. The retention is a year rather than a month because these conditions are seasonal: culling the snowy-evening titles every July would re-buy them every December, which is exactly what the cache exists to prevent.
+
+When each viewer has their own location, each gets their **own pair of rows** — their own sections, enabled only for them, titled for their own sky. That is the only way two people can read two different titles: Home Screen Sections keeps no per-user display text, so two titles means two sections.
 
 A row with fewer than three matching items is not drawn at all — a single card reads less like a thin row than a broken one. If the weather cannot be read the weather row is simply left out rather than quietly falling back to the clock, and the health check tells you if you have switched the rows on without switching on the judgement that fills them.
 
+One design note worth knowing, because it explains the scheduled task: a row's **title belongs to its registration**, so a name that tracks the sky has to be re-registered when the sky turns over — that is what **Refresh Context Rows** does, hourly. Its *contents* are still assembled when the home screen asks, but from the conditions the task pinned, so the title and the cards can never contradict each other.
+
 ### Scheduled tasks
 
-Six tasks, one job each, all editable from the **Schedule** tab (which writes through Jellyfin's own task manager, so **Dashboard → Scheduled Tasks** shows the same values and either page can edit them):
+Seven tasks, one job each, all editable from the **Schedule** tab (which writes through Jellyfin's own task manager, so **Dashboard → Scheduled Tasks** shows the same values and either page can edit them):
 
 | Task | Default | Costs money |
 |---|---|---|
@@ -190,6 +206,7 @@ Six tasks, one job each, all editable from the **Schedule** tab (which writes th
 | **Clean Up and Sync** | Daily | No |
 | **Health Check** | Daily | No |
 | **Publish Home Screen Rows** | Every server start | No |
+| **Refresh Context Rows** | Hourly, and every server start | Only the first time a set of weather conditions is seen, and only with model-written titles on |
 
 All of them skip or no-op while a run is in progress — a run rewrites the same playlists and definitions, and racing it loses work.
 

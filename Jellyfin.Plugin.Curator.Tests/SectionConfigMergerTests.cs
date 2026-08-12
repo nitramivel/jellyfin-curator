@@ -511,5 +511,165 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.Equal(500, entry["orderIndex"]!.GetValue<int>());
             Assert.Equal("Portrait", entry["viewMode"]!.GetValue<string>());
         }
+
+        // ---- category rows and context rows must not delete each other ----
+
+        /// <summary>
+        /// The failure this pair exists for. Both merges REMOVE Curator entries
+        /// absent from the list they were handed. Category rows are published by a
+        /// run; the context rows are republished several times a day. Scoped to the
+        /// whole "curator-" prefix, the frequent one would delete every category row
+        /// from the section settings — and from every viewer's enabled list — several
+        /// times a day, with nothing anywhere reporting it.
+        /// </summary>
+        [Fact]
+        public void AContextOnlySyncLeavesTheCategoryRowsAlone()
+        {
+            var config = JsonNode.Parse("""
+            {
+              "SectionSettings": [
+                { "SectionId": "curator-aaaa", "OrderIndex": 500, "Enabled": true, "LowerLimit": 1, "UpperLimit": 1 },
+                { "SectionId": "curator-context-weather", "OrderIndex": 500, "Enabled": true, "LowerLimit": 1, "UpperLimit": 1 }
+              ]
+            }
+            """)!;
+
+            SectionConfigMerger.MergeSectionSettings(
+                config,
+                [new DesiredSection("curator-context-weather", "Rain-Soaked", 20, 100)],
+                SectionConfigMerger.DefaultPortraitThreshold,
+                SectionConfigMerger.SectionScope.Context);
+
+            var ids = config["SectionSettings"]!.AsArray()
+                .Select(e => (string?)e!["SectionId"]).ToList();
+
+            Assert.Contains("curator-aaaa", ids);
+            Assert.Contains("curator-context-weather", ids);
+        }
+
+        [Fact]
+        public void ACategorySyncLeavesTheContextRowsAlone()
+        {
+            // The mirror image: a run must not delete the two rows the other pass owns.
+            var config = JsonNode.Parse("""
+            {
+              "SectionSettings": [
+                { "SectionId": "curator-aaaa", "OrderIndex": 500, "Enabled": true, "LowerLimit": 1, "UpperLimit": 1 },
+                { "SectionId": "curator-context-daypart", "OrderIndex": 100, "Enabled": true, "LowerLimit": 1, "UpperLimit": 1 }
+              ]
+            }
+            """)!;
+
+            SectionConfigMerger.MergeSectionSettings(
+                config,
+                [new DesiredSection("curator-aaaa", "Kept", 12)],
+                SectionConfigMerger.DefaultPortraitThreshold,
+                SectionConfigMerger.SectionScope.Categories);
+
+            var ids = config["SectionSettings"]!.AsArray()
+                .Select(e => (string?)e!["SectionId"]).ToList();
+
+            Assert.Contains("curator-context-daypart", ids);
+            Assert.Contains("curator-aaaa", ids);
+        }
+
+        [Fact]
+        public void AContextOnlyEnableDoesNotUnenrolTheCategoryRows()
+        {
+            var settings = JsonNode.Parse("""
+            {
+              "UserId": "11111111-1111-1111-1111-111111111111",
+              "EnabledSections": ["curator-aaaa", "curator-context-weather", "somebody-elses-row"]
+            }
+            """)!;
+
+            SectionConfigMerger.MergeEnabledSections(
+                settings,
+                ["curator-context-weather"],
+                SectionConfigMerger.SectionScope.Context);
+
+            var enabled = settings["EnabledSections"]!.AsArray()
+                .Select(e => e!.GetValue<string>()).ToList();
+
+            Assert.Contains("curator-aaaa", enabled);
+            Assert.Contains("curator-context-weather", enabled);
+            Assert.Contains("somebody-elses-row", enabled);
+        }
+
+        [Fact]
+        public void AContextOnlyEnableStillRemovesAStaleContextRow()
+        {
+            // Scoping must not become "never remove anything": switching from
+            // per-viewer to shared locations leaves per-viewer rows behind.
+            var settings = JsonNode.Parse("""
+            {
+              "EnabledSections": ["curator-context-weather-abc", "curator-context-weather"]
+            }
+            """)!;
+
+            SectionConfigMerger.MergeEnabledSections(
+                settings,
+                ["curator-context-weather"],
+                SectionConfigMerger.SectionScope.Context);
+
+            var enabled = settings["EnabledSections"]!.AsArray()
+                .Select(e => e!.GetValue<string>()).ToList();
+
+            Assert.Equal(["curator-context-weather"], enabled);
+        }
+
+        [Theory]
+        [InlineData("curator-aaaa", SectionConfigMerger.SectionScope.Categories, true)]
+        [InlineData("curator-aaaa", SectionConfigMerger.SectionScope.Context, false)]
+        [InlineData("curator-context-weather", SectionConfigMerger.SectionScope.Categories, false)]
+        [InlineData("curator-context-weather", SectionConfigMerger.SectionScope.Context, true)]
+        [InlineData("curator-context-daypart-abc", SectionConfigMerger.SectionScope.Context, true)]
+        [InlineData("curator-anything", SectionConfigMerger.SectionScope.All, true)]
+        [InlineData("curator-context-weather", SectionConfigMerger.SectionScope.All, true)]
+        [InlineData("somebody-elses-row", SectionConfigMerger.SectionScope.All, false)]
+        [InlineData(null, SectionConfigMerger.SectionScope.All, false)]
+        public void TheTwoScopesAreDisjointAndNeverClaimForeignRows(
+            string? sectionId,
+            SectionConfigMerger.SectionScope scope,
+            bool expected)
+        {
+            Assert.Equal(expected, SectionConfigMerger.InScope(sectionId, scope));
+        }
+
+        // ---- the order index ----
+
+        [Fact]
+        public void EachSectionCarriesItsOwnLane()
+        {
+            var config = JsonNode.Parse("""{"SectionSettings":[]}""")!;
+
+            SectionConfigMerger.MergeSectionSettings(
+                config,
+                [
+                    new DesiredSection("curator-aaaa", "Category", 12, 500),
+                    new DesiredSection("curator-context-weather", "Weather", 20, 100),
+                ]);
+
+            var byId = config["SectionSettings"]!.AsArray()
+                .ToDictionary(e => (string)e!["SectionId"]!, e => (int)e!["OrderIndex"]!);
+
+            Assert.Equal(500, byId["curator-aaaa"]);
+            Assert.Equal(100, byId["curator-context-weather"]);
+        }
+
+        [Fact]
+        public void AnExistingEntryHasItsLaneUpdated()
+        {
+            var config = JsonNode.Parse("""
+            {"SectionSettings":[{"SectionId":"curator-aaaa","OrderIndex":500,"Enabled":true,"LowerLimit":1,"UpperLimit":1}]}
+            """)!;
+
+            var changed = SectionConfigMerger.MergeSectionSettings(
+                config, [new DesiredSection("curator-aaaa", "Category", 12, 220)]);
+
+            Assert.True(changed);
+            Assert.Equal(220, (int)config["SectionSettings"]![0]!["OrderIndex"]!);
+        }
+
     }
 }

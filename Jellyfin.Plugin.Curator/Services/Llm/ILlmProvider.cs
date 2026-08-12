@@ -65,6 +65,11 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
         /// produce them, which is the same mismatch in the other direction.
         /// </remarks>
         SummariesWithTagsAndContext = 6,
+
+        /// <summary>
+        /// {"titles":[string]} — names for one context row, for one set of conditions.
+        /// </summary>
+        ContextTitles = 7,
     }
 
     /// <summary>

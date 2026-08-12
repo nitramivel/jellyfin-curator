@@ -299,6 +299,7 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                             ResponseShape.SummariesWithContext => "curator_summaries_context",
                             ResponseShape.SummariesWithTagsAndContext => "curator_summaries_tagged_context",
                             ResponseShape.RecommendationOrder => "curator_recommendation_order",
+                            ResponseShape.ContextTitles => "curator_context_titles",
                             _ => "curator_categories",
                         },
                         strict = true,
@@ -349,6 +350,25 @@ namespace Jellyfin.Plugin.Curator.Services.Llm
                         },
                     },
                     required = new[] { "order" },
+                    additionalProperties = false,
+                };
+            }
+
+            if (shape == ResponseShape.ContextTitles)
+            {
+                return new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        titles = new
+                        {
+                            type = "array",
+                            description = "Row titles for the conditions, each at most 40 characters.",
+                            items = new { type = "string" },
+                        },
+                    },
+                    required = new[] { "titles" },
                     additionalProperties = false,
                 };
             }

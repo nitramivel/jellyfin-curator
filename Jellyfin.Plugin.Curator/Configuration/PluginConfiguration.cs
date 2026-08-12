@@ -1,4 +1,5 @@
 using System;
+using Jellyfin.Plugin.Curator.Core.Context;
 using Jellyfin.Plugin.Curator.Core.HomeScreen;
 using MediaBrowser.Model.Plugins;
 
@@ -35,6 +36,25 @@ namespace Jellyfin.Plugin.Curator.Configuration
 
         /// <summary>Server-wide collections (no ordering control in Collection Sections).</summary>
         Collection = 1,
+    }
+
+    /// <summary>
+    /// Where a context row's title comes from.
+    /// </summary>
+    /// <remarks>
+    /// Option order is load-bearing — relabel freely, never reorder.
+    /// </remarks>
+    public enum ContextRowTitleMode
+    {
+        /// <summary>The name typed into the settings, unchanged. Free.</summary>
+        Fixed = 0,
+
+        /// <summary>
+        /// A model writes a few titles for each set of conditions, cached and
+        /// rotated. Costs one call the first time a condition is seen and nothing
+        /// afterwards.
+        /// </summary>
+        Model = 1,
     }
 
     /// <summary>
@@ -727,24 +747,70 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public bool ContextRows { get; set; } = false;
 
         /// <summary>
-        /// Gets or sets the name of the weather row.
+        /// Gets or sets the name of the weather row under
+        /// <see cref="ContextRowTitleMode.Fixed"/>, and the fallback under
+        /// <see cref="ContextRowTitleMode.Model"/>.
         /// </summary>
         /// <remarks>
-        /// A fixed name rather than one that tracks the sky, and the reason is a
-        /// constraint of the other plugin: a row's display text is fixed when the
-        /// section is registered, and registration happens at startup and on sync.
-        /// A title reading "For a rainy night" would therefore be a claim about the
-        /// weather several hours ago, which is worse than a general one — the row's
-        /// contents are exact, and its name should not promise more precision than
-        /// the name can keep.
+        /// Still load-bearing when a model is writing the titles: a failed call, a
+        /// condition never yet seen, or an answer that would not parse all fall back
+        /// to this rather than leaving a row unlabelled.
         /// </remarks>
         public string WeatherRowName { get; set; } = "Picks for the Weather";
 
         /// <summary>
-        /// Gets or sets the name of the time-of-day row. Fixed for the reason
-        /// <see cref="WeatherRowName"/> gives.
+        /// Gets or sets the name of the time-of-day row, on the same terms as
+        /// <see cref="WeatherRowName"/>.
         /// </summary>
         public string DaypartRowName { get; set; } = "Picks for the Hour";
+
+        /// <summary>
+        /// Gets or sets whether a model writes the context row titles.
+        /// </summary>
+        /// <remarks>
+        /// A row's display text is fixed when its section is registered — Home Screen
+        /// Sections keeps no per-user or per-request title — so a title that tracks
+        /// the sky means <em>re-registering the section</em> whenever conditions turn
+        /// over. That is what the Refresh Context Rows task is for, and it is why
+        /// this cannot be decided on the render path with everything else about
+        /// these rows.
+        /// </remarks>
+        public ContextRowTitleMode ContextRowTitleMode { get; set; } = ContextRowTitleMode.Fixed;
+
+        /// <summary>
+        /// Gets or sets the <see cref="ModelProfile.Id"/> used to write row titles.
+        /// Blank uses <see cref="DefaultModelProfileId"/>.
+        /// </summary>
+        /// <remarks>
+        /// Worth pointing somewhere cheap. Naming a shelf is the smallest job any
+        /// pass here asks for — a few dozen words in, a few dozen out — and it is
+        /// bought once per set of conditions rather than per refresh.
+        /// </remarks>
+        public string ContextTitleModelProfileId { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets how many titles are bought for each set of conditions.
+        /// </summary>
+        /// <remarks>
+        /// The whole set arrives in one call, so this is variety per unit of spend
+        /// rather than a multiplier on it. Above about eight the model starts
+        /// reaching and the last few are noticeably worse than the first.
+        /// </remarks>
+        public int ContextTitlesPerCondition { get; set; } = ContextTitles.DefaultTitlesPerCondition;
+
+        /// <summary>
+        /// Gets or sets how many days an unused set of titles is kept before it is
+        /// culled. 0 keeps them forever.
+        /// </summary>
+        /// <remarks>
+        /// A year by default, because these conditions are seasonal: culling the
+        /// snowy-evening titles in July because they have gone six months unused
+        /// would re-buy them every winter, which is exactly what the cache exists to
+        /// prevent. Titles naming a word the vocabulary no longer has are dropped
+        /// immediately regardless — those can never match again, so waiting a year
+        /// serves nobody.
+        /// </remarks>
+        public int ContextTitleRetentionDays { get; set; } = ContextTitles.DefaultRetentionDays;
 
         /// <summary>
         /// Gets or sets how many items a context row may hold.
@@ -781,6 +847,44 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// falls back to <see cref="WeatherLocation"/>.
         /// </summary>
         public UserWeatherLocation[] UserWeatherLocations { get; set; } = Array.Empty<UserWeatherLocation>();
+
+        /// <summary>
+        /// Gets or sets the Home Screen Sections order index Curator's category rows
+        /// claim. 500 by default.
+        /// </summary>
+        /// <remarks>
+        /// Worth knowing what this number does, because it is not only position:
+        /// Home Screen Sections <b>shuffles the rows sharing an order index</b> before
+        /// returning them, so every Curator row in one lane lands somewhere different
+        /// on every home screen load. That is the cost of the one-lane default — it
+        /// keeps Curator out of the way of your other rows, at the price of its own
+        /// order being arbitrary.
+        /// </remarks>
+        public int SectionOrderIndex { get; set; } = SectionConfigMerger.OrderIndex;
+
+        /// <summary>
+        /// Gets or sets the order index the two context rows claim. 0 inherits
+        /// <see cref="SectionOrderIndex"/>.
+        /// </summary>
+        /// <remarks>
+        /// Separate because these two are not like the others. They are about right
+        /// now, they are the same two rows every day, and there are exactly two — so
+        /// putting them in their own lane is the one case where Curator has a real
+        /// basis for ranking its own rows, and it stops them being shuffled into the
+        /// middle of fifty category rows where nobody scrolls.
+        /// </remarks>
+        public int ContextRowOrderIndex { get; set; }
+
+        /// <summary>
+        /// The order index the context rows should actually use.
+        /// </summary>
+        /// <remarks>
+        /// Read this rather than the raw setting, so an inherited lane tracks
+        /// <see cref="SectionOrderIndex"/> instead of freezing a copy of whatever it
+        /// was when the box was last saved.
+        /// </remarks>
+        public int EffectiveContextRowOrderIndex
+            => ContextRowOrderIndex > 0 ? ContextRowOrderIndex : SectionOrderIndex;
 
         /// <summary>
         /// The place name to use for one viewer.
