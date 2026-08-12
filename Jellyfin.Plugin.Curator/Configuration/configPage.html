@@ -27,6 +27,18 @@
                 /* Plain inputs rather than is="emby-checkbox": customized built-in
                    elements upgrade unreliably inside innerHTML, which left the first
                    generated row styled-but-unwired and the rest bare. */
+                /* The version badge. Its ABSENCE is the diagnostic: a config page
+                   cached from before this existed cannot render it, so a blank space
+                   next to the title means you are looking at an old page rather than
+                   at an old server. */
+                .curatorVersion {
+                    font-size: 0.6em;
+                    font-weight: normal;
+                    opacity: 0.6;
+                    vertical-align: middle;
+                    margin-left: 0.5em;
+                }
+
                 .curatorCheck {
                     width: 1.15em; height: 1.15em; margin: 0; flex: 0 0 auto;
                     cursor: pointer; accent-color: #00a4dc;
@@ -466,7 +478,7 @@
 </style>
 
             <div class="verticalSection">
-                <h2 class="sectionTitle">Curator</h2>
+                <h2 class="sectionTitle">Curator <span id="CuratorVersion" class="curatorVersion"></span></h2>
                 <p class="fieldDescription">
                     Sends your library to an LLM, asks what threads run through it, and builds the answers
                     into ordered playlists surfaced as home screen rows.
@@ -1901,6 +1913,29 @@
                         return '<option value="' + user.Id + '"' + selected + '>' + escapeHtml(user.Name) + '</option>';
                     }).join('');
                 });
+            }
+
+            /**
+             * Shows which plugin version is actually running.
+             *
+             * The point is not the number, it is that a page cached from before this
+             * existed renders nothing here — so a missing version badge says "you are
+             * looking at a stale page", which is otherwise invisible and has cost
+             * several rounds of chasing server-side ghosts. Silent on failure: an
+             * older server without the endpoint is not worth an error on a page that
+             * otherwise works.
+             */
+            function showVersion() {
+                ApiClient.ajax({
+                    type: 'GET',
+                    url: ApiClient.getUrl('Curator/Version'),
+                    dataType: 'text'
+                }).then(function (version) {
+                    if (version) {
+                        page.querySelector('#CuratorVersion').innerHTML =
+                            'v' + escapeHtml(String(version).replace(/"/g, ''));
+                    }
+                }).catch(function () { });
             }
 
             /**
@@ -4498,6 +4533,7 @@
                     Dashboard.hideLoadingMsg();
                     refreshStatus();
                     loadRuns(false);
+                    showVersion();
                 });
             }
 

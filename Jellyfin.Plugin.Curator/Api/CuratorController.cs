@@ -484,6 +484,32 @@ namespace Jellyfin.Plugin.Curator.Api
         }
 
         /// <summary>
+        /// The plugin version currently loaded, for the config page to display.
+        /// </summary>
+        /// <remarks>
+        /// Exists to make a stale config page visible. The page is an embedded
+        /// resource served from a URL that never changes between versions and sent
+        /// with no cache headers, so a browser may hold an old copy indefinitely —
+        /// and an old page against a new server fails in whatever way that release
+        /// happened to fix, while the owner reasonably believes they are testing the
+        /// fix. That has cost several sessions.
+        /// <para>
+        /// The page carries no version of its own to compare against, and stamping
+        /// one in at build time would be a build step to get wrong. Instead the page
+        /// simply <em>displays</em> this: a page too old to know about this endpoint
+        /// shows nothing at all, so an empty version is itself the tell.
+        /// </para>
+        /// </remarks>
+        /// <response code="200">The version.</response>
+        /// <returns>The assembly version.</returns>
+        [HttpGet("Version")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public ActionResult<string> GetVersion()
+        {
+            return Plugin.Instance?.Version.ToString() ?? "unknown";
+        }
+
+        /// <summary>
         /// Reads the weather for a location right now, and says what Curator would
         /// make of it.
         /// </summary>
@@ -525,14 +551,28 @@ namespace Jellyfin.Plugin.Curator.Api
 
             if (probe.Error is not null || !reading.IsUsable)
             {
-                // The reason is carried out rather than logged and swallowed. A wrong
-                // place name, no outbound DNS, a proxy answering 403 and a rate limit
-                // are four problems with four fixes, and they are indistinguishable
-                // from the config page unless the reason survives the trip.
+                // Logged AND returned, which the first version of this got wrong. The
+                // reason was moved onto the response so the page could show it, and
+                // ProbeAsync deliberately does not log — so when the page itself was
+                // the broken part, the only copy of the answer went somewhere nobody
+                // could read, and the log this message points at had nothing in it.
+                // A diagnostic must leave a trace on the server whatever the client
+                // does with it.
+                _logger.LogWarning(
+                    "Curator: weather probe for '{Place}' failed — {Reason}",
+                    place,
+                    probe.Error ?? "nothing came back");
+
                 return new WeatherProbe(
                     false, place, string.Empty, [], null, null, string.Empty, string.Empty,
                     probe.Error ?? "Nothing came back for that place.");
             }
+
+            _logger.LogInformation(
+                "Curator: weather probe for '{Place}' resolved to {Resolved} — {Conditions}",
+                place,
+                reading.Place,
+                string.Join(", ", reading.Words));
 
             var utcNow = DateTime.UtcNow;
             var localTime = reading.LocalTimeOfDay(utcNow) ?? DateTime.Now.TimeOfDay;
