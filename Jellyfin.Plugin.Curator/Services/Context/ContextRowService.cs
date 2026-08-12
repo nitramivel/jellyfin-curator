@@ -62,6 +62,27 @@ namespace Jellyfin.Plugin.Curator.Services.Context
         private readonly IRunLogStore _runLogStore;
         private readonly ILogger<ContextRowService> _logger;
 
+        /// <summary>
+        /// Serializes refreshes, because two of them racing spends twice for nothing.
+        /// </summary>
+        /// <remarks>
+        /// Both Curator tasks that publish rows carry a startup trigger — this one,
+        /// and Publish Home Screen Rows, which refreshes context rows too because it
+        /// is the one that retries while the other plugin finishes starting. At
+        /// startup they therefore run at the same moment, and without this they both
+        /// read the title store, both miss the cache for the current conditions, and
+        /// both buy the same set of titles. Measured on the owner's server: two runs
+        /// logged at the identical millisecond, $0.0026 and $0.0034, for one
+        /// condition that should have cost $0.0034 once.
+        /// <para>
+        /// The second caller <em>waits</em> rather than backing out, and then finds
+        /// the titles the first one cached and spends nothing. Backing out would be
+        /// cheaper by one registration write and would lose the retry the redundancy
+        /// exists for.
+        /// </para>
+        /// </remarks>
+        private readonly SemaphoreSlim _refreshLock = new(1, 1);
+
         public ContextRowService(
             IWeatherService weatherService,
             IContextRowStore store,
@@ -89,6 +110,19 @@ namespace Jellyfin.Plugin.Curator.Services.Context
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>What it did.</returns>
         public async Task<ContextRowRefreshResult> RefreshAsync(CancellationToken cancellationToken)
+        {
+            await _refreshLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await RefreshCoreAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _refreshLock.Release();
+            }
+        }
+
+        private async Task<ContextRowRefreshResult> RefreshCoreAsync(CancellationToken cancellationToken)
         {
             var config = Plugin.Instance?.Configuration;
             if (config is null || !config.ContextRows)
