@@ -7,11 +7,22 @@ using Xunit;
 namespace Jellyfin.Plugin.Curator.Tests
 {
     /// <summary>
-    /// Turning cached affinities plus "it is raining and it is evening" into a row.
+    /// Turning cached affinities plus "it is raining and it is evening" into one row.
     ///
-    /// This runs inside the request that draws the home screen, so everything here
-    /// is arithmetic over data already bought — the same bargain hard rule 15 makes
+    /// <para>
+    /// The grading is the subject of most of these. A strict row demanding both the
+    /// sky and the hour was measured against a real 202-item library and found to
+    /// describe <b>one</b> film for "cloudy and morning" and none for "rain and
+    /// morning" — so it would have been absent every morning. What the grading has
+    /// to buy is drawability without dishonesty: the row may include an item that
+    /// only suits the hour, but such an item must never lead over one that suits both.
+    /// </para>
+    ///
+    /// <para>
+    /// It also runs inside the request that draws the home screen, so everything
+    /// here is arithmetic over data already bought — the bargain hard rule 15 makes
     /// for recommendations.
+    /// </para>
     /// </summary>
     public class ContextRankerTests
     {
@@ -21,49 +32,81 @@ namespace Jellyfin.Plugin.Curator.Tests
         private static readonly Guid D = Guid.Parse("dddddddd-0000-0000-0000-000000000004");
         private static readonly Guid E = Guid.Parse("eeeeeeee-0000-0000-0000-000000000005");
 
+        private static ItemContextAffinity Suits(string[] weather, string[] dayparts)
+            => new(weather, dayparts);
+
         private static ItemContextAffinity Weather(params string[] words) => new(words, []);
 
         private static ItemContextAffinity Dayparts(params string[] words) => new([], words);
 
-        private static ViewingContext RainyEvening()
-            => new(["rain"], Daypart.Evening);
+        private static ViewingContext RainyEvening() => new(["rain"], Daypart.Evening);
 
         [Fact]
-        public void OnlyItemsClaimingTheCurrentWeatherAppear()
+        public void SomethingSuitingBothLeadsTheRow()
         {
             var affinities = new Dictionary<Guid, ItemContextAffinity>
             {
                 [A] = Weather("rain"),
-                [B] = Weather("clear"),
-                [C] = Weather("rain", "cold"),
-                [D] = Weather("rain"),
-                [E] = ItemContextAffinity.None,
+                [B] = Dayparts("evening"),
+                [C] = Suits(["rain"], ["evening"]),
             };
 
-            var row = ContextRanker.Rank([A, B, C, D, E], affinities, RainyEvening(), ContextRowKind.Weather, 0);
+            var row = ContextRanker.Rank([A, B, C], affinities, RainyEvening(), 0);
 
-            Assert.Equal([A, C, D], row);
+            Assert.Equal(C, row.First());
+            Assert.Equal(3, row.Count);
         }
 
         [Fact]
-        public void AStrongerMatchLeadsTheRowHoweverTheViewerRanksIt()
+        public void WeatherOutranksTheHourOnItsOwn()
         {
-            // Cold AND snowy beats merely snowy, even from further down the list.
+            // Four dayparts, and the busiest holds a third of a library — so suiting
+            // the evening says less about the moment than suiting the rain does.
             var affinities = new Dictionary<Guid, ItemContextAffinity>
             {
-                [A] = Weather("snow"),
-                [B] = Weather("snow"),
-                [C] = Weather("snow", "cold"),
+                [A] = Dayparts("evening"),
+                [B] = Weather("rain"),
+                [C] = Dayparts("evening"),
+            };
+
+            Assert.Equal(B, ContextRanker.Rank([A, B, C], affinities, RainyEvening(), 0).First());
+        }
+
+        [Fact]
+        public void TheMorningRowStillDrawsWhenAlmostNothingSuitsAMorning()
+        {
+            // The measurement that forced the grading: on a real library "cloudy and
+            // morning" described one film. A strict row would be absent every
+            // morning, which is a time somebody plausibly opens Jellyfin.
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Suits(["cloudy"], ["morning"]),
+                [B] = Weather("cloudy"),
+                [C] = Weather("cloudy"),
+                [D] = Dayparts("morning"),
             };
 
             var row = ContextRanker.Rank(
-                [A, B, C],
-                affinities,
-                new ViewingContext(["snow", "cold"], Daypart.LateNight),
-                ContextRowKind.Weather,
-                0);
+                [A, B, C, D], affinities, new ViewingContext(["cloudy"], Daypart.Morning), 0);
 
-            Assert.Equal([C, A, B], row);
+            Assert.Equal(A, row.First());
+            Assert.Equal(4, row.Count);
+        }
+
+        [Fact]
+        public void MoreWeatherWordsMatchedRanksHigher()
+        {
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Weather("rain"),
+                [B] = Weather("rain", "cold"),
+                [C] = Weather("cold"),
+            };
+
+            var row = ContextRanker.Rank(
+                [A, B, C], affinities, new ViewingContext(["rain", "cold"], Daypart.Evening), 0);
+
+            Assert.Equal(B, row.First());
         }
 
         [Fact]
@@ -76,32 +119,32 @@ namespace Jellyfin.Plugin.Curator.Tests
                 [C] = Weather("rain"),
             };
 
-            Assert.Equal([C, A, B], ContextRanker.Rank([C, A, B], affinities, RainyEvening(), ContextRowKind.Weather, 0));
-            Assert.Equal([B, C, A], ContextRanker.Rank([B, C, A], affinities, RainyEvening(), ContextRowKind.Weather, 0));
+            Assert.Equal([C, A, B], ContextRanker.Rank([C, A, B], affinities, RainyEvening(), 0));
+            Assert.Equal([B, C, A], ContextRanker.Rank([B, C, A], affinities, RainyEvening(), 0));
         }
 
         [Fact]
-        public void TheDaypartRowMatchesTheHourAndIgnoresTheWeather()
+        public void AnItemSuitingNeitherIsLeftOut()
         {
             var affinities = new Dictionary<Guid, ItemContextAffinity>
             {
-                [A] = Dayparts("evening", "latenight"),
-                [B] = Dayparts("morning"),
+                [A] = Weather("rain"),
+                [B] = Weather("rain"),
                 [C] = Dayparts("evening"),
-                [D] = Dayparts("evening"),
-                [E] = Weather("rain"),
+                [D] = Suits(["snow"], ["morning"]),
+                [E] = ItemContextAffinity.None,
             };
 
-            var row = ContextRanker.Rank([A, B, C, D, E], affinities, RainyEvening(), ContextRowKind.Daypart, 0);
+            var row = ContextRanker.Rank([A, B, C, D, E], affinities, RainyEvening(), 0);
 
-            Assert.Equal([A, C, D], row);
+            Assert.Equal([A, B, C], row);
         }
 
         [Fact]
-        public void AWeatherRowWithNoReadingIsNotDrawnAtAll()
+        public void AnItemWithNoStoredAffinityIsNeverInvented()
         {
-            // It must not quietly fall back to the clock. A row claiming to answer
-            // the weather while answering something else is worse than no row.
+            // The library is only partly classified while the condensing pass works
+            // through it. Unclassified is unknown, not a match.
             var affinities = new Dictionary<Guid, ItemContextAffinity>
             {
                 [A] = Weather("rain"),
@@ -109,35 +152,87 @@ namespace Jellyfin.Plugin.Curator.Tests
                 [C] = Weather("rain"),
             };
 
-            var row = ContextRanker.Rank(
-                [A, B, C],
-                affinities,
-                ViewingContext.ClockOnly(Daypart.Evening),
-                ContextRowKind.Weather,
-                0);
-
-            Assert.Empty(row);
+            Assert.Equal([A, B, C], ContextRanker.Rank([D, E, A, B, C], affinities, RainyEvening(), 0));
         }
 
+        // ---- the row survives a missing weather reading ----
+
         [Fact]
-        public void TheDaypartRowStillWorksWithNoWeatherReading()
+        public void WithNoReadingTheRowIsDrawnFromTheClockAlone()
         {
+            // Unlike the weather row it replaced, this one has a second half to stand
+            // on. A server that cannot reach Open-Meteo loses precision, not the row.
             var affinities = new Dictionary<Guid, ItemContextAffinity>
             {
                 [A] = Dayparts("evening"),
                 [B] = Dayparts("evening"),
                 [C] = Dayparts("evening"),
+                [D] = Weather("rain"),
             };
 
             var row = ContextRanker.Rank(
-                [A, B, C],
-                affinities,
-                ViewingContext.ClockOnly(Daypart.Evening),
-                ContextRowKind.Daypart,
-                0);
+                [A, B, C, D], affinities, ViewingContext.ClockOnly(Daypart.Evening), 0);
 
+            Assert.Equal([A, B, C], row);
+        }
+
+        // ---- stand-ins, so a rare sky still contributes ----
+
+        [Fact]
+        public void ThunderFallsBackToRainSuitedTitles()
+        {
+            // "storm" is a word few films earn. Without a stand-in a thunderstorm
+            // would contribute nothing at all to the row.
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Weather("rain"),
+                [B] = Weather("rain"),
+                [C] = Weather("storm"),
+            };
+
+            var row = ContextRanker.Rank(
+                [A, B, C], affinities, new ViewingContext(["storm"], Daypart.Evening), 0);
+
+            Assert.Equal(C, row.First());
             Assert.Equal(3, row.Count);
         }
+
+        [Fact]
+        public void AStandInNeverOutranksTheHour()
+        {
+            // Rain standing in for thunder is worth less than genuinely suiting the
+            // evening, because the stand-in is a guess and the daypart is not.
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Weather("rain"),
+                [B] = Dayparts("evening"),
+                [C] = Dayparts("evening"),
+            };
+
+            var row = ContextRanker.Rank(
+                [A, B, C], affinities, new ViewingContext(["storm"], Daypart.Evening), 0);
+
+            Assert.Equal(A, row.Last());
+        }
+
+        [Fact]
+        public void AWordAlreadyInTheReadingIsAnExactMatchNotAStandIn()
+        {
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Weather("cold"),
+                [B] = Weather("snow"),
+                [C] = Weather("snow", "cold"),
+            };
+
+            var row = ContextRanker.Rank(
+                [A, B, C], affinities, new ViewingContext(["snow", "cold"], Daypart.Evening), 0);
+
+            Assert.Equal(C, row.First());
+            Assert.Equal(3, row.Count);
+        }
+
+        // ---- length ----
 
         [Fact]
         public void TooFewMatchesDrawNoRowRatherThanAStub()
@@ -148,7 +243,7 @@ namespace Jellyfin.Plugin.Curator.Tests
                 [B] = Weather("rain"),
             };
 
-            Assert.Empty(ContextRanker.Rank([A, B], affinities, RainyEvening(), ContextRowKind.Weather, 0));
+            Assert.Empty(ContextRanker.Rank([A, B], affinities, RainyEvening(), 0));
         }
 
         [Fact]
@@ -163,7 +258,7 @@ namespace Jellyfin.Plugin.Curator.Tests
 
             Assert.Equal(
                 ContextRanker.MinimumRowLength,
-                ContextRanker.Rank([A, B, C], affinities, RainyEvening(), ContextRowKind.Weather, 0).Count);
+                ContextRanker.Rank([A, B, C], affinities, RainyEvening(), 0).Count);
         }
 
         [Fact]
@@ -172,37 +267,15 @@ namespace Jellyfin.Plugin.Curator.Tests
             var affinities = new Dictionary<Guid, ItemContextAffinity>
             {
                 [A] = Weather("rain"),
-                [B] = Weather("rain"),
-                [C] = Weather("rain", "cold"),
+                [B] = Dayparts("evening"),
+                [C] = Suits(["rain"], ["evening"]),
                 [D] = Weather("rain"),
             };
 
-            var row = ContextRanker.Rank(
-                [A, B, C, D],
-                affinities,
-                new ViewingContext(["rain", "cold"], Daypart.Evening),
-                ContextRowKind.Weather,
-                maxItems: 2);
+            var row = ContextRanker.Rank([A, B, C, D], affinities, RainyEvening(), maxItems: 2);
 
-            // C is the strongest fit, so the cap must not cut it in favour of A and B.
+            // The best fit must survive the cut.
             Assert.Equal([C, A], row);
-        }
-
-        [Fact]
-        public void AnItemWithNoStoredAffinityIsNeverInvented()
-        {
-            // The library is only partly classified while the condensing pass works
-            // through it. An unclassified item is unknown, not a match.
-            var affinities = new Dictionary<Guid, ItemContextAffinity>
-            {
-                [A] = Weather("rain"),
-                [B] = Weather("rain"),
-                [C] = Weather("rain"),
-            };
-
-            var row = ContextRanker.Rank([D, E, A, B, C], affinities, RainyEvening(), ContextRowKind.Weather, 0);
-
-            Assert.Equal([A, B, C], row);
         }
 
         [Fact]
@@ -210,177 +283,19 @@ namespace Jellyfin.Plugin.Curator.Tests
         {
             var affinities = new Dictionary<Guid, ItemContextAffinity>
             {
-                [A] = Weather("RAIN"),
+                [A] = new(["RAIN"], ["EVENING"]),
                 [B] = Weather("Rain"),
                 [C] = Weather("rain"),
             };
 
-            Assert.Equal(3, ContextRanker.Rank([A, B, C], affinities, RainyEvening(), ContextRowKind.Weather, 0).Count);
-        }
-
-        [Fact]
-        public void AnItemIsNeverCountedTwiceForOneWord()
-        {
-            // A duplicated word in a stored affinity must not outrank a genuine
-            // two-word match.
-            var affinities = new Dictionary<Guid, ItemContextAffinity>
-            {
-                [A] = Weather("rain", "rain", "rain"),
-                [B] = Weather("rain", "cold"),
-                [C] = Weather("rain"),
-            };
-
-            var row = ContextRanker.Rank(
-                [A, B, C],
-                affinities,
-                new ViewingContext(["rain", "cold"], Daypart.Evening),
-                ContextRowKind.Weather,
-                0);
-
-            Assert.Equal(B, row.First());
+            Assert.Equal(3, ContextRanker.Rank([A, B, C], affinities, RainyEvening(), 0).Count);
         }
 
         [Fact]
         public void AnEmptyLibraryDrawsNothing()
         {
             Assert.Empty(ContextRanker.Rank(
-                [],
-                new Dictionary<Guid, ItemContextAffinity>(),
-                RainyEvening(),
-                ContextRowKind.Weather,
-                0));
+                [], new Dictionary<Guid, ItemContextAffinity>(), RainyEvening(), 0));
         }
-
-        // ---- stand-ins, so a rare condition still draws a row ----
-
-        [Fact]
-        public void AThunderstormFallsBackToRainWhenTooFewFilmsSuitThunder()
-        {
-            // The case this exists for. "storm" is a word few films earn, so a strict
-            // row would be empty exactly when the weather is most dramatic.
-            var affinities = new Dictionary<Guid, ItemContextAffinity>
-            {
-                [A] = Weather("storm"),
-                [B] = Weather("rain"),
-                [C] = Weather("rain"),
-                [D] = Weather("clear"),
-            };
-
-            var row = ContextRanker.Rank(
-                [A, B, C, D],
-                affinities,
-                new ViewingContext(["storm"], Daypart.Evening),
-                ContextRowKind.Weather,
-                0);
-
-            // Thunder leads; rain stands in behind it; a clear-sky film is not weather.
-            Assert.Equal([A, B, C], row);
-        }
-
-        [Fact]
-        public void StandInsNeverOutrankAGenuineMatch()
-        {
-            // Rain may stand in for thunder. It may not lead a thunderstorm row.
-            var affinities = new Dictionary<Guid, ItemContextAffinity>
-            {
-                [A] = Weather("rain"),
-                [B] = Weather("rain"),
-                [C] = Weather("storm"),
-            };
-
-            var row = ContextRanker.Rank(
-                [A, B, C],
-                affinities,
-                new ViewingContext(["storm"], Daypart.Evening),
-                ContextRowKind.Weather,
-                0);
-
-            Assert.Equal(C, row.First());
-        }
-
-        [Fact]
-        public void AWellStockedConditionIsNeverDiluted()
-        {
-            // Stand-ins are consulted only when the exact matches cannot fill a row.
-            var affinities = new Dictionary<Guid, ItemContextAffinity>
-            {
-                [A] = Weather("rain"),
-                [B] = Weather("rain"),
-                [C] = Weather("rain"),
-                [D] = Weather("cloudy"),
-                [E] = Weather("cloudy"),
-            };
-
-            var row = ContextRanker.Rank(
-                [A, B, C, D, E],
-                affinities,
-                new ViewingContext(["rain"], Daypart.Evening),
-                ContextRowKind.Weather,
-                0);
-
-            Assert.Equal([A, B, C], row);
-        }
-
-        [Fact]
-        public void AStandInCannotRescueARowThatIsStillTooShort()
-        {
-            var affinities = new Dictionary<Guid, ItemContextAffinity>
-            {
-                [A] = Weather("storm"),
-                [B] = Weather("rain"),
-            };
-
-            Assert.Empty(ContextRanker.Rank(
-                [A, B],
-                affinities,
-                new ViewingContext(["storm"], Daypart.Evening),
-                ContextRowKind.Weather,
-                0));
-        }
-
-        [Fact]
-        public void AWordAlreadyInTheReadingIsAnExactMatchNotAStandIn()
-        {
-            // A cold snowy evening wants "cold" as a match in its own right, not as
-            // snow's stand-in, or an item claiming only cold would rank below one
-            // claiming nothing relevant at all.
-            var affinities = new Dictionary<Guid, ItemContextAffinity>
-            {
-                [A] = Weather("cold"),
-                [B] = Weather("snow"),
-                [C] = Weather("snow", "cold"),
-            };
-
-            var row = ContextRanker.Rank(
-                [A, B, C],
-                affinities,
-                new ViewingContext(["snow", "cold"], Daypart.Evening),
-                ContextRowKind.Weather,
-                0);
-
-            Assert.Equal(C, row.First());
-            Assert.Equal(3, row.Count);
-        }
-
-        [Fact]
-        public void TheDaypartRowNeverUsesStandIns()
-        {
-            // There is no "nearly evening". The four dayparts are exhaustive and
-            // adjacent ones mean genuinely different things.
-            var affinities = new Dictionary<Guid, ItemContextAffinity>
-            {
-                [A] = Dayparts("morning"),
-                [B] = Dayparts("morning"),
-                [C] = Dayparts("morning"),
-            };
-
-            Assert.Empty(ContextRanker.Rank(
-                [A, B, C],
-                affinities,
-                ViewingContext.ClockOnly(Daypart.LateNight),
-                ContextRowKind.Daypart,
-                0));
-        }
-
     }
 }

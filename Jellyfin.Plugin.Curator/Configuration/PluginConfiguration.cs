@@ -756,20 +756,29 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// <see cref="SendConsolidatedTags"/> is separate from
         /// <see cref="ConsolidateTags"/>: buying the judgement and acting on it are
         /// different decisions, and the useful order is to classify, look at what came
-        /// back, and only then put rows on everybody's home screen.
+        /// back, and only then put a row on everybody's home screen.
         /// <para>
-        /// These rows only exist under <see cref="SectionDelivery.Integrated"/>. They
-        /// are computed when the home screen asks for them, from the cached
-        /// affinities and the last weather reading, so they always match the actual
-        /// hour — and there is no playlist behind them to hand to Collection
-        /// Sections, which resolves a row by playlist name.
+        /// <b>One</b> row, answering the weather and the hour together — one per
+        /// viewer when each has their own location, otherwise one shared. It was two,
+        /// and the reason it is not is measured rather than aesthetic: on a 202-item
+        /// library "cloudy and morning" described a single film and "rain and
+        /// morning" described none, so a pair of strict rows was absent every
+        /// morning. One graded row is drawable whenever either half has something.
+        /// </para>
+        /// <para>
+        /// It exists only under <see cref="SectionDelivery.Integrated"/>: its
+        /// contents are assembled when the home screen asks, and there is no playlist
+        /// behind it to hand to Collection Sections, which resolves a row by name.
         /// </para>
         /// </remarks>
         public bool ContextRows { get; set; } = false;
 
+        /// <summary>The name the single context row falls back to.</summary>
+        public const string DefaultContextRowName = "Right For Now";
+
         /// <summary>
-        /// Gets or sets the name of the weather row under
-        /// <see cref="ContextRowTitleMode.Fixed"/>, and the fallback under
+        /// Gets or sets the context row's name under
+        /// <see cref="ContextRowTitleMode.Fixed"/>, and its fallback under
         /// <see cref="ContextRowTitleMode.Model"/>.
         /// </summary>
         /// <remarks>
@@ -777,12 +786,22 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// condition never yet seen, or an answer that would not parse all fall back
         /// to this rather than leaving a row unlabelled.
         /// </remarks>
+        public string ContextRowName { get; set; } = DefaultContextRowName;
+
+        // ---------------------------------------------------------------------
+        // The two row names from when weather and time of day were separate rows.
+        //
+        // Superseded by ContextRowName and NOT dead code: XmlSerializer silently
+        // drops elements it has no property for, so deleting these would discard
+        // whatever the owner had typed into them the first time the config page
+        // saved after an upgrade. They cost nothing to keep; see hard rule 13 for
+        // the expensive version of this lesson.
+        // ---------------------------------------------------------------------
+
+        /// <summary>Gets or sets the pre-merge weather row name. Migration source only.</summary>
         public string WeatherRowName { get; set; } = "Picks for the Weather";
 
-        /// <summary>
-        /// Gets or sets the name of the time-of-day row, on the same terms as
-        /// <see cref="WeatherRowName"/>.
-        /// </summary>
+        /// <summary>Gets or sets the pre-merge time-of-day row name. Migration source only.</summary>
         public string DaypartRowName { get; set; } = "Picks for the Hour";
 
         /// <summary>

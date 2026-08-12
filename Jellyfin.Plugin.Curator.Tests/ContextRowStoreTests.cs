@@ -63,9 +63,8 @@ namespace Jellyfin.Plugin.Curator.Tests
             // clear sky, so every field of the context has to survive the trip.
             var store = NewStore();
             var snapshot = new ContextRowSnapshot(
-                "curator-context-weather",
+                "curator-context-now",
                 Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                ContextRowKind.Weather,
                 ["rain", "cold"],
                 Daypart.Evening,
                 "Rain-Soaked and Restless",
@@ -91,7 +90,7 @@ namespace Jellyfin.Plugin.Curator.Tests
             store.SaveTitles([new ContextTitleSet("weather:rain", ["A"], 0, DateTime.UtcNow)]);
             store.SaveSnapshots([
                 new ContextRowSnapshot(
-                    "curator-context-daypart", Guid.Empty, ContextRowKind.Daypart,
+                    "curator-context-now", Guid.Empty,
                     [], Daypart.Morning, "Morning", "Pittsburgh", DateTime.UtcNow),
             ]);
 
@@ -107,12 +106,12 @@ namespace Jellyfin.Plugin.Curator.Tests
             // How a viewer who is no longer targeted stops having a row on file.
             var store = NewStore();
             store.SaveSnapshots([
-                new ContextRowSnapshot("a", Guid.Empty, ContextRowKind.Weather, ["rain"], Daypart.Evening, "A", "P", DateTime.UtcNow),
-                new ContextRowSnapshot("b", Guid.Empty, ContextRowKind.Daypart, [], Daypart.Evening, "B", "P", DateTime.UtcNow),
+                new ContextRowSnapshot("a", Guid.Empty, ["rain"], Daypart.Evening, "A", "P", DateTime.UtcNow),
+                new ContextRowSnapshot("b", Guid.Empty, [], Daypart.Evening, "B", "P", DateTime.UtcNow),
             ]);
 
             store.SaveSnapshots([
-                new ContextRowSnapshot("a", Guid.Empty, ContextRowKind.Weather, ["snow"], Daypart.Morning, "A2", "P", DateTime.UtcNow),
+                new ContextRowSnapshot("a", Guid.Empty, ["snow"], Daypart.Morning, "A2", "P", DateTime.UtcNow),
             ]);
 
             var read = NewStore().GetSnapshots();

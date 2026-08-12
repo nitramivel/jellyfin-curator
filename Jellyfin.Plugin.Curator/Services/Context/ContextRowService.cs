@@ -146,23 +146,20 @@ namespace Jellyfin.Plugin.Curator.Services.Context
 
                 foreach (var (owner, audience) in audiences)
                 {
-                    foreach (var kind in new[] { ContextRowKind.Weather, ContextRowKind.Daypart })
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var built = await BuildRowAsync(
+                        config, owner, audience, perUser, titles, titler, utcNow, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (built is not { } row)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-
-                        var built = await BuildRowAsync(
-                            config, kind, owner, audience, perUser, titles, titler, utcNow, cancellationToken)
-                            .ConfigureAwait(false);
-
-                        if (built is not { } row)
-                        {
-                            continue;
-                        }
-
-                        bought += row.Bought ? 1 : 0;
-                        snapshots.Add(row.Snapshot);
-                        registrations.Add(row.Registration);
+                        continue;
                     }
+
+                    bought += row.Bought ? 1 : 0;
+                    snapshots.Add(row.Snapshot);
+                    registrations.Add(row.Registration);
                 }
             }
             finally
@@ -215,7 +212,6 @@ namespace Jellyfin.Plugin.Curator.Services.Context
         /// </summary>
         private async Task<BuiltRow?> BuildRowAsync(
             PluginConfiguration config,
-            ContextRowKind kind,
             Guid owner,
             IReadOnlyList<Guid> audience,
             bool perUser,
@@ -230,33 +226,25 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             var localTime = reading.LocalTimeOfDay(utcNow) ?? DateTime.Now.TimeOfDay;
             var daypart = ContextVocabulary.DaypartFor(localTime);
 
+            // Unlike the weather row it replaced, this one is still drawn without a
+            // reading. It has a second half to stand on — the hour is always known —
+            // so a server that cannot reach Open-Meteo loses precision here rather
+            // than losing the row.
             var context = reading.IsUsable
                 ? new ViewingContext(reading.Words, daypart)
                 : ViewingContext.ClockOnly(daypart);
 
-            // A weather row with no reading is not published at all. Registering it
-            // would put a row on the home screen that answers nothing, and the
-            // handler would return empty anyway.
-            if (kind == ContextRowKind.Weather && !context.HasWeather)
-            {
-                return null;
-            }
-
-            var fallback = kind == ContextRowKind.Weather
-                ? Named(config.WeatherRowName, "Picks for the Weather")
-                : Named(config.DaypartRowName, "Picks for the Hour");
-
-            var title = fallback;
+            var title = Named(config.ContextRowName, PluginConfiguration.DefaultContextRowName);
             var bought = false;
 
             if (titler is not null)
             {
-                var condition = ContextTitles.ConditionKey(kind, context);
+                var condition = ContextTitles.ConditionKey(context);
 
                 if (!titles.TryGetValue(condition, out var set))
                 {
                     var written = await titler
-                        .WriteAsync(kind, context, config.ContextTitlesPerCondition, cancellationToken)
+                        .WriteAsync(context, config.ContextTitlesPerCondition, cancellationToken)
                         .ConfigureAwait(false);
 
                     if (written.Count > 0)
@@ -273,12 +261,9 @@ namespace Jellyfin.Plugin.Curator.Services.Context
                 }
             }
 
-            var kindKey = kind == ContextRowKind.Weather ? "weather" : "daypart";
             var sectionId = perUser
-                ? SectionConfigMerger.ContextSectionIdFor(kindKey, owner)
-                : kind == ContextRowKind.Weather
-                    ? SectionConfigMerger.WeatherSectionId
-                    : SectionConfigMerger.DaypartSectionId;
+                ? SectionConfigMerger.ContextSectionIdFor(owner)
+                : SectionConfigMerger.ContextSectionId;
 
             var section = new DesiredSection(
                 sectionId,
@@ -289,7 +274,6 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             var snapshot = new ContextRowSnapshot(
                 sectionId,
                 owner,
-                kind,
                 context.Weather,
                 context.Daypart,
                 title,
@@ -299,9 +283,7 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             var registration = new ContextRowRegistration(
                 new SectionRegistrationRequest(
                     section,
-                    kind == ContextRowKind.Weather
-                        ? CuratorContextSectionResults.WeatherRowKey
-                        : CuratorContextSectionResults.DaypartRowKey,
+                    CuratorContextSectionResults.ContextRowKey,
                     typeof(CuratorContextSectionResults)),
                 audience);
 
@@ -332,7 +314,6 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             public string ModelId => Provider.ModelId;
 
             public async Task<IReadOnlyList<string>> WriteAsync(
-                ContextRowKind kind,
                 ViewingContext context,
                 int count,
                 CancellationToken cancellationToken)
@@ -340,7 +321,7 @@ namespace Jellyfin.Plugin.Curator.Services.Context
                 var wanted = Math.Clamp(count, 1, 12);
                 var request = new LlmRequest(
                     ContextTitlePromptBuilder.BuildSystemPrompt(wanted),
-                    ContextTitlePromptBuilder.BuildUserPrompt(kind, context, wanted),
+                    ContextTitlePromptBuilder.BuildUserPrompt(context, wanted),
                     string.Empty,
 
                     // Small answer, small cap. Thinking counts against this, so it is

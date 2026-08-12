@@ -43,28 +43,16 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         }
 
         /// <summary>
-        /// Builds the user prompt for one set of conditions.
+        /// Builds the user prompt for one moment.
         /// </summary>
-        /// <param name="kind">Which row is being titled.</param>
         /// <param name="context">The conditions.</param>
         /// <param name="count">How many titles to ask for.</param>
         /// <returns>The user prompt.</returns>
-        public static string BuildUserPrompt(ContextRowKind kind, ViewingContext context, int count)
+        public static string BuildUserPrompt(ViewingContext context, int count)
         {
             ArgumentNullException.ThrowIfNull(context);
 
-            var conditions = ContextTitles.Describe(kind, context);
-
-            var subject = kind == ContextRowKind.Weather
-                ? string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"Outside the window right now: {conditions}.")
-                : string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"The time of day right now: {conditions}.");
-
-            return subject
-                + "\n\nWrite "
+            return "Right now, where the viewer is: " + ContextTitles.Describe(context) + ".\n\nWrite "
                 + count.ToString(CultureInfo.InvariantCulture)
                 + " titles for the row of films and shows that suits it. Return the JSON object and nothing else.";
         }
@@ -72,23 +60,28 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         private const string SystemPromptTemplate =
             """
             You name a single row on a home screen full of films and television. The row holds things that
-            suit the moment described — the weather outside, or the hour of the day.
+            suit this exact moment — both the weather outside and the hour of the day, together.
 
             Write {COUNT} different titles for it.
 
-            What makes a good one: it should read like the name of a shelf someone browses, and it should
-            make the reader recognise the mood before they have looked at a single poster. Evocative, a
-            little atmospheric, confident.
+            A good one names the MOOD the two make between them. Weather and hour are not two facts to
+            list, they are one feeling: rain at eleven at night is not rain at eight in the morning, and
+            the title should be recognisable as one and not the other.
 
-            The mistake to avoid is restating the conditions. "Rainy Evening Picks" is not a title, it is a
-            label — the reader can see it is raining, they are standing in it. Reach for what the weather or
-            the hour DOES to a person: what they want to sink into, hide from, stay up for. Name that
-            instead.
+            Aim for something like "Rainy Night Cozy Vibes" or "Cloudy Morning Stories" — plain enough to
+            read at a glance, specific enough that it could not describe a different sky or a different
+            hour.
+
+            The mistake to avoid is the bare label. "Rainy Evening Picks" is not a title — the reader can
+            see it is raining, they are standing in it. Reach past the conditions to what they DO to a
+            person: what they make someone want to sink into, hide from, stay up for, wake up gently with.
 
             Rules:
             - At most {MAX} characters. Rows clip rather than wrap, so a long title is a cut-off one.
             - Title Case. No full stops, no colons, no quotation marks, no emoji.
             - Never use the words "picks", "selection", "curated", "for you", "recommended", or "row".
+            - Let BOTH the weather and the hour show, in the words or in the feeling. A title that would
+              read the same at any hour has only done half the job.
             - Do not begin more than one of them the same way, and do not return near-duplicates —
               {COUNT} titles that all say the same thing is one title and a wasted call.
             - No second person. Name the mood, do not instruct the reader.
