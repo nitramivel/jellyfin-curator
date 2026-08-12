@@ -24,12 +24,26 @@ namespace Jellyfin.Plugin.Curator.Core.Context
     /// forever.
     /// </param>
     /// <param name="ModelId">The model that wrote them, for the settings snapshot.</param>
+    /// <param name="Style">
+    /// Which generation of the title prompt wrote these. Bought titles outlive the
+    /// prompt that asked for them — a set is cached per condition and kept for a
+    /// year — so without this, changing what a title should sound like changes
+    /// nothing a viewer sees until the conditions themselves expire. Sets stamped
+    /// with anything other than the current
+    /// <see cref="ContextTitlePromptBuilder.StyleVersion"/> are culled and re-bought.
+    /// <para>
+    /// Defaults to 0, which is what every set written before this existed
+    /// deserializes to: the JSON has no such property, so the constructor default
+    /// applies and they read as the legacy generation they are.
+    /// </para>
+    /// </param>
     public sealed record ContextTitleSet(
         string Condition,
         IReadOnlyList<string> Titles,
         int Rotation,
         DateTime LastUsedUtc,
-        string? ModelId = null);
+        string? ModelId = null,
+        int Style = 0);
 
     /// <summary>
     /// Naming the context row for the moment it is drawn in, and keeping the store
@@ -227,11 +241,20 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         /// <param name="sets">The stored sets.</param>
         /// <param name="utcNow">The current time.</param>
         /// <param name="retentionDays">How long an unused set is kept. 0 or less keeps them forever.</param>
+        /// <param name="style">
+        /// The current title style. A set written by an older generation of the
+        /// prompt is obsolete in the same immediate sense as one naming a lost
+        /// vocabulary word: it is not stale, it is wrong, and waiting a year for it
+        /// to age out would mean a rewritten prompt changed nothing the owner could
+        /// see. Defaults to 0 so a caller that does not care about styles keeps
+        /// legacy sets rather than culling everything.
+        /// </param>
         /// <returns>The sets to keep, and why the rest went.</returns>
         public static (IReadOnlyList<ContextTitleSet> Kept, int Expired, int Obsolete) Prune(
             IReadOnlyList<ContextTitleSet> sets,
             DateTime utcNow,
-            int retentionDays = DefaultRetentionDays)
+            int retentionDays = DefaultRetentionDays,
+            int style = 0)
         {
             ArgumentNullException.ThrowIfNull(sets);
 
@@ -241,7 +264,7 @@ namespace Jellyfin.Plugin.Curator.Core.Context
 
             foreach (var set in sets)
             {
-                if (!IsLiveCondition(set.Condition) || set.Titles.Count == 0)
+                if (!IsLiveCondition(set.Condition) || set.Titles.Count == 0 || set.Style != style)
                 {
                     obsolete++;
                     continue;

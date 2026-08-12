@@ -57,6 +57,34 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
+        public void TheStyleStampSurvivesAWriteAndAFileWrittenWithoutOneReadsAsLegacy()
+        {
+            var store = NewStore();
+            store.SaveTitles(
+                [new ContextTitleSet("rain|evening", ["Good for a wet evening"], 0, DateTime.UtcNow, "m", Style: 7)]);
+
+            Assert.Equal(7, Assert.Single(NewStore().GetTitles()).Value.Style);
+
+            // The other half, and the one that decides whether an upgrade actually
+            // re-buys anything: every store already on disk was written before this
+            // property existed, so the JSON has no "Style" and the constructor
+            // default has to be what fills it in. If the serializer threw or filled
+            // it with the current generation instead, stale titles would look
+            // current and the rewritten prompt would reach nobody.
+            File.WriteAllText(
+                Path.Combine(_directory, "context-rows.json"),
+                """
+                {"Titles":[{"Condition":"rain|evening","Titles":["Slate Sky Slow Burns"],
+                "Rotation":0,"LastUsedUtc":"2026-08-01T00:00:00Z","ModelId":"m"}],"Snapshots":[]}
+                """);
+
+            var legacy = Assert.Single(NewStore().GetTitles()).Value;
+
+            Assert.Equal(["Slate Sky Slow Burns"], legacy.Titles);
+            Assert.Equal(0, legacy.Style);
+        }
+
+        [Fact]
         public void SnapshotsRoundTripWithTheirPinnedConditions()
         {
             // The snapshot is what stops a row titled for rain filling itself from a
