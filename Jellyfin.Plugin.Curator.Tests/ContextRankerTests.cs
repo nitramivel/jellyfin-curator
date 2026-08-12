@@ -250,5 +250,137 @@ namespace Jellyfin.Plugin.Curator.Tests
                 ContextRowKind.Weather,
                 0));
         }
+
+        // ---- stand-ins, so a rare condition still draws a row ----
+
+        [Fact]
+        public void AThunderstormFallsBackToRainWhenTooFewFilmsSuitThunder()
+        {
+            // The case this exists for. "storm" is a word few films earn, so a strict
+            // row would be empty exactly when the weather is most dramatic.
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Weather("storm"),
+                [B] = Weather("rain"),
+                [C] = Weather("rain"),
+                [D] = Weather("clear"),
+            };
+
+            var row = ContextRanker.Rank(
+                [A, B, C, D],
+                affinities,
+                new ViewingContext(["storm"], Daypart.Evening),
+                ContextRowKind.Weather,
+                0);
+
+            // Thunder leads; rain stands in behind it; a clear-sky film is not weather.
+            Assert.Equal([A, B, C], row);
+        }
+
+        [Fact]
+        public void StandInsNeverOutrankAGenuineMatch()
+        {
+            // Rain may stand in for thunder. It may not lead a thunderstorm row.
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Weather("rain"),
+                [B] = Weather("rain"),
+                [C] = Weather("storm"),
+            };
+
+            var row = ContextRanker.Rank(
+                [A, B, C],
+                affinities,
+                new ViewingContext(["storm"], Daypart.Evening),
+                ContextRowKind.Weather,
+                0);
+
+            Assert.Equal(C, row.First());
+        }
+
+        [Fact]
+        public void AWellStockedConditionIsNeverDiluted()
+        {
+            // Stand-ins are consulted only when the exact matches cannot fill a row.
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Weather("rain"),
+                [B] = Weather("rain"),
+                [C] = Weather("rain"),
+                [D] = Weather("cloudy"),
+                [E] = Weather("cloudy"),
+            };
+
+            var row = ContextRanker.Rank(
+                [A, B, C, D, E],
+                affinities,
+                new ViewingContext(["rain"], Daypart.Evening),
+                ContextRowKind.Weather,
+                0);
+
+            Assert.Equal([A, B, C], row);
+        }
+
+        [Fact]
+        public void AStandInCannotRescueARowThatIsStillTooShort()
+        {
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Weather("storm"),
+                [B] = Weather("rain"),
+            };
+
+            Assert.Empty(ContextRanker.Rank(
+                [A, B],
+                affinities,
+                new ViewingContext(["storm"], Daypart.Evening),
+                ContextRowKind.Weather,
+                0));
+        }
+
+        [Fact]
+        public void AWordAlreadyInTheReadingIsAnExactMatchNotAStandIn()
+        {
+            // A cold snowy evening wants "cold" as a match in its own right, not as
+            // snow's stand-in, or an item claiming only cold would rank below one
+            // claiming nothing relevant at all.
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Weather("cold"),
+                [B] = Weather("snow"),
+                [C] = Weather("snow", "cold"),
+            };
+
+            var row = ContextRanker.Rank(
+                [A, B, C],
+                affinities,
+                new ViewingContext(["snow", "cold"], Daypart.Evening),
+                ContextRowKind.Weather,
+                0);
+
+            Assert.Equal(C, row.First());
+            Assert.Equal(3, row.Count);
+        }
+
+        [Fact]
+        public void TheDaypartRowNeverUsesStandIns()
+        {
+            // There is no "nearly evening". The four dayparts are exhaustive and
+            // adjacent ones mean genuinely different things.
+            var affinities = new Dictionary<Guid, ItemContextAffinity>
+            {
+                [A] = Dayparts("morning"),
+                [B] = Dayparts("morning"),
+                [C] = Dayparts("morning"),
+            };
+
+            Assert.Empty(ContextRanker.Rank(
+                [A, B, C],
+                affinities,
+                ViewingContext.ClockOnly(Daypart.LateNight),
+                ContextRowKind.Daypart,
+                0));
+        }
+
     }
 }

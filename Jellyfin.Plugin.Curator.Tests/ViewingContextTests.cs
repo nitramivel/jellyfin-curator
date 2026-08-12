@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Jellyfin.Plugin.Curator.Core.Context;
 using Xunit;
 
@@ -145,5 +146,108 @@ namespace Jellyfin.Plugin.Curator.Tests
             Assert.False(context.HasWeather);
             Assert.Contains("no weather reading", context.Describe(), StringComparison.Ordinal);
         }
+
+        /// <summary>
+        /// Every WMO code Open-Meteo documents, so "all weather is handled" is a fact
+        /// rather than a belief. A code that falls through the mapping produces no sky
+        /// word at all, and a reading with no words is treated as no reading — the
+        /// weather row silently disappears in exactly that weather.
+        /// </summary>
+        [Theory]
+        [InlineData(0, "clear")]
+        [InlineData(1, "clear")]
+        [InlineData(2, "cloudy")]
+        [InlineData(3, "cloudy")]
+        [InlineData(45, "fog")]
+        [InlineData(48, "fog")]
+        [InlineData(51, "rain")]
+        [InlineData(53, "rain")]
+        [InlineData(55, "rain")]
+        [InlineData(56, "rain")]
+        [InlineData(57, "rain")]
+        [InlineData(61, "rain")]
+        [InlineData(63, "rain")]
+        [InlineData(65, "rain")]
+        [InlineData(66, "rain")]
+        [InlineData(67, "rain")]
+        [InlineData(71, "snow")]
+        [InlineData(73, "snow")]
+        [InlineData(75, "snow")]
+        [InlineData(77, "snow")]
+        [InlineData(80, "rain")]
+        [InlineData(81, "rain")]
+        [InlineData(82, "rain")]
+        [InlineData(85, "snow")]
+        [InlineData(86, "snow")]
+        [InlineData(95, "storm")]
+        [InlineData(96, "storm")]
+        [InlineData(99, "storm")]
+        public void EveryDocumentedWmoCodeProducesASkyWord(int code, string expected)
+        {
+            Assert.Equal([expected], WeatherCodes.Describe(code, temperatureCelsius: 15));
+        }
+
+        [Fact]
+        public void NoDocumentedWmoCodeIsLeftUnmapped()
+        {
+            // The list Open-Meteo publishes, in full. Freezing drizzle and freezing
+            // rain are rain — what falls is water, and the temperature word carries
+            // the cold separately.
+            int[] documented =
+            [
+                0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67,
+                71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99,
+            ];
+
+            var unmapped = documented
+                .Where(code => WeatherCodes.Describe(code, temperatureCelsius: 15).Count == 0)
+                .ToList();
+
+            Assert.True(unmapped.Count == 0, "unmapped WMO codes: " + string.Join(", ", unmapped));
+        }
+
+        [Fact]
+        public void ExtremeTemperaturesStillCarryTheSkyWord()
+        {
+            // A snowy day is cold by definition; the sky word must not be lost to it.
+            Assert.Equal(["snow", "cold"], WeatherCodes.Describe(75, -8));
+            Assert.Equal(["clear", "hot"], WeatherCodes.Describe(0, 35));
+            Assert.Equal(["storm", "hot"], WeatherCodes.Describe(95, 30));
+        }
+
+        // ---- stand-ins for rare conditions ----
+
+        [Fact]
+        public void EveryVocabularyWordHasAStandInOrDeliberatelyNone()
+        {
+            foreach (var word in ContextVocabulary.Weather)
+            {
+                foreach (var related in ContextVocabulary.RelatedTo(word))
+                {
+                    Assert.True(ContextVocabulary.IsWeather(related), word + " stands in with '" + related + "'");
+                    Assert.NotEqual(word, related);
+                }
+            }
+        }
+
+        [Fact]
+        public void ThunderFallsBackToRainThenCloud()
+        {
+            // The condition a library is least likely to have items for, on the
+            // evening a viewer most wants the row.
+            Assert.Equal(["rain", "cloudy"], ContextVocabulary.RelatedTo("storm"));
+        }
+
+        [Fact]
+        public void TheCommonestSkiesReachForNothing()
+        {
+            // If clear or cloudy cannot fill a row, nothing else will either, and
+            // reaching further would stop the row meaning anything.
+            Assert.Empty(ContextVocabulary.RelatedTo("clear"));
+            Assert.Empty(ContextVocabulary.RelatedTo("cloudy"));
+            Assert.Empty(ContextVocabulary.RelatedTo("nonsense"));
+            Assert.Empty(ContextVocabulary.RelatedTo(null));
+        }
+
     }
 }

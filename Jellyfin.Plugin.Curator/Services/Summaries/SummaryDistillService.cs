@@ -67,6 +67,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
     {
         private readonly ILibraryScanner _libraryScanner;
         private readonly ISummaryStore _store;
+        private readonly IExternalThemeSource _themeSource;
         private readonly ILlmProviderFactory _providerFactory;
         private readonly IRunLogStore _runLogStore;
         private readonly ILogger<SummaryDistillService> _logger;
@@ -76,12 +77,14 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
         public SummaryDistillService(
             ILibraryScanner libraryScanner,
             ISummaryStore store,
+            IExternalThemeSource themeSource,
             ILlmProviderFactory providerFactory,
             IRunLogStore runLogStore,
             ILogger<SummaryDistillService> logger)
         {
             _libraryScanner = libraryScanner;
             _store = store;
+            _themeSource = themeSource;
             _providerFactory = providerFactory;
             _runLogStore = runLogStore;
             _logger = logger;
@@ -108,6 +111,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                 ["consolidateTags"] = config.ConsolidateTags,
                 ["maxConsolidatedTags"] = config.MaxConsolidatedTags,
                 ["classifyViewingContext"] = config.ClassifyViewingContext,
+                ["useExternalThemes"] = config.UseExternalThemes,
                 ["allowInventedTags"] = config.AllowInventedTags,
                 ["itemsToDistil"] = plan.Work.Count,
             };
@@ -268,6 +272,22 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                     0, 0, 0, null, provider.ModelId, profile.Name, DateTime.UtcNow, null));
             }
 
+            // Read once per pass, not per batch. Free when the other plugin is absent,
+            // and an additional input to the prompt rather than a replacement for the
+            // overview — see IExternalThemeSource.
+            var themes = config.UseExternalThemes
+                ? _themeSource.GetThemes()
+                : new Dictionary<Guid, IReadOnlyList<string>>();
+
+            var themed = plan.Work.Count(w => themes.ContainsKey(w.Item.Id));
+            if (themed > 0)
+            {
+                _logger.LogInformation(
+                    "Curator summaries: {Themed} of {Total} item(s) carry tone notes from the Concierge index",
+                    themed,
+                    plan.Work.Count);
+            }
+
             var batches = Batcher.Split([.. plan.Work.Select(w => w.Item)], config.SummaryBatchSize);
             var maxLength = Math.Max(20, config.CondensedSummaryMaxLength);
             var system = SummaryPromptBuilder.BuildSystemPrompt(
@@ -306,7 +326,7 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
                 {
                     var request = new LlmRequest(
                         system,
-                        SummaryPromptBuilder.BuildUserPrompt(pending, wantTags),
+                        SummaryPromptBuilder.BuildUserPrompt(pending, wantTags, themes),
                         string.Empty,
                         config.MaxOutputTokens,
 

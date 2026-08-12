@@ -268,6 +268,11 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             - Keep concrete texture over abstraction — "sun-bleached and cruel" beats "atmospheric".
             - No spoilers for endings, and no character names unless the name IS the point.
             - Plain prose. No markdown, no quotes around the summary, no trailing full stop needed.
+
+            Some items carry a "notes" list: short phrases about tone written by another pass that already
+            read the thing. They describe how it FEELS rather than what happens, which is the part an
+            overview is worst at — use them. They are evidence, not text to copy: do not quote them back,
+            and where a note contradicts the overview, the overview is what the item actually is.
             {TAG_SECTION}{CONTEXT_SECTION}
             Respond with a single JSON object and nothing else — no prose, no code fences:
             {OUTPUT}
@@ -284,8 +289,19 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
         /// </remarks>
         /// <param name="batch">The items to distill.</param>
         /// <param name="includeTags">Whether each item's scraped tag list is sent for consolidation.</param>
+        /// <param name="themes">
+        /// Tone descriptions another plugin has already paid a model for, by item.
+        /// Sent alongside the overview, never instead of it — an overview describes
+        /// the premise, and neither the rewrite nor the context judgement is about
+        /// premise, so a phrase like "lonely and heartbreaking" is worth more to both
+        /// than another sentence of plot. Absent for an item, or empty entirely, and
+        /// the prompt is exactly what it was before.
+        /// </param>
         /// <returns>The user prompt.</returns>
-        public static string BuildUserPrompt(IReadOnlyList<MediaItemRecord> batch, bool includeTags = false)
+        public static string BuildUserPrompt(
+            IReadOnlyList<MediaItemRecord> batch,
+            bool includeTags = false,
+            IReadOnlyDictionary<Guid, IReadOnlyList<string>>? themes = null)
         {
             ArgumentNullException.ThrowIfNull(batch);
 
@@ -293,7 +309,12 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             sb.AppendLine("Descriptions to compress:");
             for (var i = 0; i < batch.Count; i++)
             {
-                sb.AppendLine(WriteItemLine(i, batch[i], includeTags));
+                var item = batch[i];
+                var itemThemes = themes is not null && themes.TryGetValue(item.Id, out var found)
+                    ? found
+                    : null;
+
+                sb.AppendLine(WriteItemLine(i, item, includeTags, itemThemes));
             }
 
             sb.Append("Return the compressed version of all ")
@@ -302,7 +323,11 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
             return sb.ToString();
         }
 
-        private static string WriteItemLine(int index, MediaItemRecord item, bool includeTags)
+        private static string WriteItemLine(
+            int index,
+            MediaItemRecord item,
+            bool includeTags,
+            IReadOnlyList<string>? themes)
         {
             using var buffer = new MemoryStream();
             using (var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions
@@ -348,6 +373,22 @@ namespace Jellyfin.Plugin.Curator.Core.Summaries
                 }
 
                 writer.WriteString("overview", item.Overview ?? string.Empty);
+
+                // Written AFTER the overview so the model reads the source material
+                // first and these as commentary on it, rather than the other way
+                // round — the rewrite must still describe the film, not paraphrase
+                // somebody else's adjectives.
+                if (themes is { Count: > 0 })
+                {
+                    writer.WriteStartArray("notes");
+                    foreach (var theme in themes)
+                    {
+                        writer.WriteStringValue(theme);
+                    }
+
+                    writer.WriteEndArray();
+                }
+
                 writer.WriteEndObject();
             }
 
