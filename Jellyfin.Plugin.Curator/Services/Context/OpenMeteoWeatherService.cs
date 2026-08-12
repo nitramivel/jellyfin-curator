@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -115,10 +116,30 @@ namespace Jellyfin.Plugin.Curator.Services.Context
         /// <inheritdoc />
         public async Task<WeatherReading> RefreshAsync(string? location, CancellationToken cancellationToken)
         {
+            var probe = await ProbeAsync(location, cancellationToken).ConfigureAwait(false);
+
+            if (probe.Error is not null)
+            {
+                // Never fatal, and never louder than a warning. A home screen that
+                // cannot say what the weather is has one row fewer; it is not broken.
+                _logger.LogWarning(
+                    "Curator: could not read the weather for '{Place}' — {Reason}. "
+                    + "The weather row is left out until this succeeds.",
+                    Normalize(location),
+                    probe.Error);
+            }
+
+            return probe.Reading;
+        }
+
+        /// <inheritdoc />
+        public async Task<WeatherProbeResult> ProbeAsync(string? location, CancellationToken cancellationToken)
+        {
             var place = Normalize(location);
             if (place.Length == 0)
             {
-                return WeatherReading.None;
+                return WeatherProbeResult.Failed(
+                    "No location is set. Type a place name on the Home screen tab and save.");
             }
 
             try
@@ -126,33 +147,38 @@ namespace Jellyfin.Plugin.Curator.Services.Context
                 var client = _httpClientFactory.CreateClient(HttpClientName);
                 client.Timeout = TimeSpan.FromSeconds(15);
 
-                var coordinates = await ResolvePlaceAsync(client, place, cancellationToken).ConfigureAwait(false);
-                if (coordinates is not { } resolved)
+                var resolved = await ResolvePlaceAsync(client, place, cancellationToken).ConfigureAwait(false);
+                if (resolved.Coordinates is not { } coordinates)
                 {
-                    return WeatherReading.None;
+                    return WeatherProbeResult.Failed(resolved.Error ?? "The place could not be resolved.");
                 }
 
-                var reading = await ReadConditionsAsync(client, resolved, cancellationToken).ConfigureAwait(false);
-                if (reading.IsUsable)
+                var conditions = await ReadConditionsAsync(client, coordinates, cancellationToken).ConfigureAwait(false);
+                if (conditions.Error is not null)
                 {
-                    _readings[place] = reading;
-                    _logger.LogDebug(
-                        "Curator: weather for {Place} is {Words}",
-                        reading.Place,
-                        string.Join(", ", reading.Words));
+                    return WeatherProbeResult.Failed(conditions.Error);
                 }
 
-                return reading;
+                _readings[place] = conditions.Reading;
+                _logger.LogDebug(
+                    "Curator: weather for {Place} is {Words}",
+                    conditions.Reading.Place,
+                    string.Join(", ", conditions.Reading.Words));
+
+                return WeatherProbeResult.Success(conditions.Reading);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or UriFormatException)
             {
-                // Never fatal, and never louder than a warning. A home screen that
-                // cannot say what the weather is has one row fewer; it is not broken.
-                _logger.LogWarning(
-                    ex,
-                    "Curator: could not read the weather for '{Place}'; the weather row is left out until this succeeds",
-                    place);
-                return WeatherReading.None;
+                // Named specifically, because these four look identical from a config
+                // page and have four different fixes: no DNS, blocked egress, a proxy
+                // returning HTML, and a timeout.
+                return WeatherProbeResult.Failed(
+                    "Could not reach " + new Uri(ForecastUrl).Host + " — " + ex.Message
+                    + ". Check that the server has outbound internet access.");
             }
         }
 
@@ -203,14 +229,14 @@ namespace Jellyfin.Plugin.Curator.Services.Context
         /// nothing. A renamed location in configuration is a different cache key, so
         /// editing the setting takes effect immediately.
         /// </remarks>
-        private async Task<(double Latitude, double Longitude, string Place)?> ResolvePlaceAsync(
+        private async Task<(( double Latitude, double Longitude, string Place)? Coordinates, string? Error)> ResolvePlaceAsync(
             HttpClient client,
             string place,
             CancellationToken cancellationToken)
         {
             if (_places.TryGetValue(place, out var cached))
             {
-                return cached;
+                return (cached, null);
             }
 
             var url = GeocodingUrl
@@ -220,11 +246,10 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             using var response = await client.GetAsync(url, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning(
-                    "Curator: the geocoding lookup for '{Place}' returned {Status}; the weather row is left out",
-                    place,
-                    (int)response.StatusCode);
-                return null;
+                return (null, Describe(
+                    "The geocoding service answered",
+                    response.StatusCode,
+                    response.ReasonPhrase));
             }
 
             var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -236,19 +261,16 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             {
                 // A name nothing matches is a typo in configuration, and the owner
                 // needs to be told rather than left with a row that never appears.
-                _logger.LogWarning(
-                    "Curator: no place called '{Place}' was found, so the weather row cannot be drawn. "
-                    + "Check the location on the Home screen tab — a city name like 'Pittsburgh' or "
-                    + "'Pittsburgh, Pennsylvania' is what this expects.",
-                    place);
-                return null;
+                return (null,
+                    "Reached the geocoding service, but it knows no place called '" + place
+                    + "'. Try a plainer form, like 'Pittsburgh' or 'Pittsburgh, Pennsylvania'.");
             }
 
             var first = results[0];
             if (!TryGetDouble(first, "latitude", out var latitude)
                 || !TryGetDouble(first, "longitude", out var longitude))
             {
-                return null;
+                return (null, "The geocoding service answered without coordinates.");
             }
 
             var resolvedName = first.TryGetProperty("name", out var nameElement)
@@ -259,6 +281,7 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             var coordinates = (latitude, longitude, resolvedName);
             _places[place] = coordinates;
 
+
             _logger.LogInformation(
                 "Curator: weather location '{Place}' resolved to {Resolved} ({Latitude}, {Longitude})",
                 place,
@@ -266,13 +289,13 @@ namespace Jellyfin.Plugin.Curator.Services.Context
                 latitude.ToString("F2", CultureInfo.InvariantCulture),
                 longitude.ToString("F2", CultureInfo.InvariantCulture));
 
-            return coordinates;
+            return (coordinates, null);
         }
 
         /// <summary>
         /// Reads current conditions for a set of coordinates.
         /// </summary>
-        private async Task<WeatherReading> ReadConditionsAsync(
+        private async Task<(WeatherReading Reading, string? Error)> ReadConditionsAsync(
             HttpClient client,
             (double Latitude, double Longitude, string Place) location,
             CancellationToken cancellationToken)
@@ -286,11 +309,10 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             using var response = await client.GetAsync(url, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning(
-                    "Curator: the weather lookup for {Place} returned {Status}; the weather row is left out",
-                    location.Place,
-                    (int)response.StatusCode);
-                return WeatherReading.None;
+                return (WeatherReading.None, Describe(
+                    "Resolved " + location.Place + ", but the forecast service answered",
+                    response.StatusCode,
+                    response.ReasonPhrase));
             }
 
             var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -301,10 +323,8 @@ namespace Jellyfin.Plugin.Curator.Services.Context
                 || !current.TryGetProperty("weather_code", out var codeElement)
                 || !codeElement.TryGetInt32(out var code))
             {
-                _logger.LogWarning(
-                    "Curator: the weather response for {Place} carried no current conditions",
-                    location.Place);
-                return WeatherReading.None;
+                return (WeatherReading.None,
+                    "The forecast service answered without any current conditions.");
             }
 
             double? celsius = TryGetDouble(current, "temperature_2m", out var temperature) ? temperature : null;
@@ -322,10 +342,38 @@ namespace Jellyfin.Plugin.Curator.Services.Context
             var words = WeatherCodes.Describe(code, celsius);
             if (words.Count == 0)
             {
-                return WeatherReading.None;
+                // Reached everything, understood nothing: a WMO code outside the
+                // mapping. Worth saying precisely, because it is a gap in Curator
+                // rather than a problem with the server or the network.
+                return (WeatherReading.None,
+                    "Reached the forecast service for " + location.Place + ", but weather code "
+                    + code.ToString(CultureInfo.InvariantCulture)
+                    + " is one Curator has no word for.");
             }
 
-            return new WeatherReading(words, celsius, location.Place, DateTime.UtcNow, utcOffset);
+            return (new WeatherReading(words, celsius, location.Place, DateTime.UtcNow, utcOffset), null);
+        }
+
+        /// <summary>
+        /// Says what an HTTP failure was, in words an owner can act on.
+        /// </summary>
+        /// <remarks>
+        /// The 403 hint is there because it is the single most common shape of this
+        /// failure that is <em>not</em> Curator's fault: a corporate proxy, a DNS
+        /// sinkhole or an egress filter answering on the API's behalf, which reads
+        /// from the config page exactly like a broken plugin.
+        /// </remarks>
+        private static string Describe(string what, HttpStatusCode status, string? reason)
+        {
+            var text = what + " " + ((int)status).ToString(CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(reason))
+            {
+                text += " (" + reason + ")";
+            }
+
+            return status is HttpStatusCode.Forbidden or HttpStatusCode.ProxyAuthenticationRequired
+                ? text + ". Something between this server and the internet is likely intercepting the request."
+                : text + ".";
         }
 
         private static bool TryGetDouble(JsonElement element, string property, out double value)

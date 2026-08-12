@@ -517,23 +517,21 @@ namespace Jellyfin.Plugin.Curator.Api
                 ? config.WeatherLocation?.Trim() ?? string.Empty
                 : location.Trim();
 
-            if (place.Length == 0)
-            {
-                return new WeatherProbe(
-                    false, string.Empty, string.Empty, [], null, null, string.Empty, string.Empty,
-                    "No location is configured. Type a place name on the Home screen tab and save.");
-            }
-
-            var reading = await _weatherService
-                .RefreshAsync(place, CancellationToken.None)
+            var probe = await _weatherService
+                .ProbeAsync(place, CancellationToken.None)
                 .ConfigureAwait(false);
 
-            if (!reading.IsUsable)
+            var reading = probe.Reading;
+
+            if (probe.Error is not null || !reading.IsUsable)
             {
+                // The reason is carried out rather than logged and swallowed. A wrong
+                // place name, no outbound DNS, a proxy answering 403 and a rate limit
+                // are four problems with four fixes, and they are indistinguishable
+                // from the config page unless the reason survives the trip.
                 return new WeatherProbe(
                     false, place, string.Empty, [], null, null, string.Empty, string.Empty,
-                    "Nothing came back for that place. Check the server log — the usual causes are a name "
-                    + "no geocoder matches, and the server having no outbound internet access.");
+                    probe.Error ?? "Nothing came back for that place.");
             }
 
             var utcNow = DateTime.UtcNow;
