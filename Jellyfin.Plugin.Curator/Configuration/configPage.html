@@ -316,6 +316,33 @@
                 .curatorDataTable .curatorRunSkipped { opacity: 0.5; }
 
                 .curatorTableScroll { overflow-x: auto; }
+
+                /* A long list has to be a LIST, not the page. Two hundred condensed
+                   summaries rendered inline push every control below them off the
+                   bottom, so the tab stops being a settings page and becomes a
+                   document you scroll past to reach the buttons. Capped and scrolled
+                   in its own right, with the header pinned so the columns still mean
+                   something forty rows down. */
+                .curatorScrollList {
+                    overflow: auto;
+                    max-height: 26em;
+                    border: 1px solid rgba(255,255,255,0.12);
+                    border-radius: 6px;
+                }
+
+                .curatorScrollList table { margin: 0; }
+
+                .curatorScrollList thead th {
+                    position: sticky;
+                    top: 0;
+                    z-index: 1;
+
+                    /* Opaque, and Jellyfin's own base rather than a translucent
+                       overlay: rows scrolling underneath a semi-transparent header
+                       show through it. Same reasoning as the hand-styled controls on
+                       the Schedule tab. */
+                    background: #101010;
+                }
                 .curatorMono { font-family: monospace; font-size: 0.88em; opacity: 0.75; word-break: break-all; }
                 .curatorRawLink { display: inline-block; margin-top: 1.4em; font-size: 0.88em; opacity: 0.8; }
                 .curatorRunError {
@@ -2733,7 +2760,9 @@
                         + '<td class="curatorNum">' + escapeHtml(s.SourceLength + ' → ' + s.Length) + '</td></tr>';
                 }).join('');
 
-                container.innerHTML = '<div class="curatorTableScroll"><table class="curatorDataTable">'
+                container.innerHTML = '<div class="fieldDescription" style="margin-bottom:0.6em;">Showing '
+                    + samples.length + ' most recently condensed, newest first.</div>'
+                    + '<div class="curatorScrollList curatorTableScroll"><table class="curatorDataTable">'
                     + '<thead><tr><th>Title</th><th>Condensed summary</th><th>Tags</th>'
                     + '<th class="curatorNum">Chars</th></tr></thead>'
                     + '<tbody>' + rows + '</tbody></table></div>';
@@ -2772,7 +2801,7 @@
             function loadSummarySamples() {
                 return ApiClient.ajax({
                     type: 'GET',
-                    url: ApiClient.getUrl('Curator/Summaries?limit=40'),
+                    url: ApiClient.getUrl('Curator/Summaries?limit=300'),
                     dataType: 'json'
                 }).then(renderSummarySamples, function () { /* leave the previous list */ });
             }
