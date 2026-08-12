@@ -165,6 +165,16 @@ namespace Jellyfin.Plugin.Curator.Tests
             CondensedSummaryMaxLength = 100,
         };
 
+        /// <summary>
+        /// An install with no Concierge index, which is the ordinary case and the one
+        /// these tests are about — the themes are an optional extra input.
+        /// </summary>
+        private sealed class NoThemes : IExternalThemeSource
+        {
+            public IReadOnlyDictionary<Guid, IReadOnlyList<string>> GetThemes()
+                => new Dictionary<Guid, IReadOnlyList<string>>();
+        }
+
         private static (SummaryDistillService Service, StubSummaryStore Store, StubRunLogStore Runs)
             Build(IReadOnlyList<MediaItemRecord> items, ILlmProvider provider)
         {
@@ -173,6 +183,7 @@ namespace Jellyfin.Plugin.Curator.Tests
             var service = new SummaryDistillService(
                 new StubScanner(items),
                 store,
+                new NoThemes(),
                 new StubFactory(provider),
                 runs,
                 NullLogger<SummaryDistillService>.Instance);

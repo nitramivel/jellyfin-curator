@@ -727,6 +727,27 @@ namespace Jellyfin.Plugin.Curator.Configuration
         public bool ClassifyViewingContext { get; set; } = false;
 
         /// <summary>
+        /// Gets or sets whether the condensing pass may read tone descriptions the
+        /// Concierge search plugin has already generated, and send them alongside
+        /// each overview. On by default, and a no-op when that plugin is absent.
+        /// </summary>
+        /// <remarks>
+        /// It is free — the judgement was bought for a different purpose and is
+        /// sitting on disk — and it is better input than an overview for both halves
+        /// of this pass. An overview describes the <em>premise</em>; the rewrite is
+        /// about tone and the context judgement is about mood, and neither is about
+        /// premise. Concierge's themes are explicitly "what watching it feels like",
+        /// which is the question being asked.
+        /// <para>
+        /// Never a replacement for the overview, always an addition — so an item the
+        /// other plugin has not seen is described exactly as it was before. Reading
+        /// stops at two field names and fails open, so nothing here can break a pass
+        /// if that plugin changes, is removed, or was never installed.
+        /// </para>
+        /// </remarks>
+        public bool UseExternalThemes { get; set; } = true;
+
+        /// <summary>
         /// Gets or sets whether the two context rows are published to the home screen.
         /// Off by default.
         /// </summary>

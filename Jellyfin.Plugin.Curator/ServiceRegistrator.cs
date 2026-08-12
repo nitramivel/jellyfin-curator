@@ -47,6 +47,7 @@ namespace Jellyfin.Plugin.Curator
             // would only suggest something in Curator resolves it.
             serviceCollection.AddSingleton<IRunLogStore, RunLogStore>();
             serviceCollection.AddSingleton<ISummaryStore, SummaryStore>();
+            serviceCollection.AddSingleton<IExternalThemeSource, ConciergeThemeSource>();
             serviceCollection.AddSingleton<SummaryDistillService>();
             serviceCollection.AddSingleton<HealthService>();
             serviceCollection.AddSingleton<CuratorRunService>();

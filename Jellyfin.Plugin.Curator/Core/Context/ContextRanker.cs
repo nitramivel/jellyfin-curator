@@ -88,11 +88,17 @@ namespace Jellyfin.Plugin.Curator.Core.Context
                 return [];
             }
 
-            var wanted = kind == ContextRowKind.Weather
+            IReadOnlyList<string> wanted = kind == ContextRowKind.Weather
                 ? context.Weather
                 : [ContextVocabulary.WordFor(context.Daypart)];
 
             var matched = new List<(Guid Id, int Strength, int Rank)>();
+            var standIns = new List<(Guid Id, int Strength, int Rank)>();
+
+            // Words that may stand in when the exact condition is too thin to fill a
+            // row. Never mixed with the exact matches — collected separately so they
+            // can be appended below them, and only if they are needed at all.
+            var related = kind == ContextRowKind.Weather ? RelatedWords(wanted) : [];
 
             for (var rank = 0; rank < rankedIds.Count; rank++)
             {
@@ -103,27 +109,45 @@ namespace Jellyfin.Plugin.Curator.Core.Context
                 }
 
                 var claimed = kind == ContextRowKind.Weather ? affinity.Weather : affinity.Dayparts;
+
                 var strength = Overlap(claimed, wanted);
                 if (strength > 0)
                 {
                     matched.Add((id, strength, rank));
+                    continue;
                 }
-            }
 
-            if (matched.Count < MinimumRowLength)
-            {
-                return [];
+                var stand = Overlap(claimed, related);
+                if (stand > 0)
+                {
+                    standIns.Add((id, stand, rank));
+                }
             }
 
             // Strength first, so a film the model called both cold and snowy leads a
             // snowy cold evening over one that is merely snowy. Then the viewer's own
             // rank, which already carries unwatched-first and everything else the
             // recommendation pass decided.
-            matched.Sort((a, b) =>
+            matched.Sort(CompareMatches);
+
+            // The rescue, and the reason it is conditional. The rarer a condition is,
+            // the fewer items suit it — and the rarest conditions are the ones a
+            // viewer most wants a row for. A thunderstorm would otherwise draw nothing
+            // at all on the one evening the feature should shine. When the exact
+            // matches can fill a row they are used alone, so a well-stocked condition
+            // is never diluted; and stand-ins are APPENDED to the sorted exact list
+            // rather than sorted in with it, so rain may stand in for thunder without
+            // ever outranking it.
+            if (matched.Count < MinimumRowLength && standIns.Count > 0)
             {
-                var byStrength = b.Strength.CompareTo(a.Strength);
-                return byStrength != 0 ? byStrength : a.Rank.CompareTo(b.Rank);
-            });
+                standIns.Sort(CompareMatches);
+                matched.AddRange(standIns);
+            }
+
+            if (matched.Count < MinimumRowLength)
+            {
+                return [];
+            }
 
             IEnumerable<Guid> ordered = matched.Select(m => m.Id);
             if (maxItems > 0)
@@ -132,6 +156,45 @@ namespace Jellyfin.Plugin.Curator.Core.Context
             }
 
             return [.. ordered];
+        }
+
+        /// <summary>
+        /// Orders by fit, then by the viewer's own ranking.
+        /// </summary>
+        private static int CompareMatches(
+            (Guid Id, int Strength, int Rank) a,
+            (Guid Id, int Strength, int Rank) b)
+        {
+            var byStrength = b.Strength.CompareTo(a.Strength);
+            return byStrength != 0 ? byStrength : a.Rank.CompareTo(b.Rank);
+        }
+
+        /// <summary>
+        /// The stand-in words for a set of conditions, excluding the conditions
+        /// themselves.
+        /// </summary>
+        /// <remarks>
+        /// The exclusion matters on a multi-word reading: a cold snowy evening wants
+        /// <c>cold</c> as an exact match, not as snow's stand-in, or an item claiming
+        /// only cold would be filed below one claiming nothing relevant at all.
+        /// </remarks>
+        private static IReadOnlyList<string> RelatedWords(IReadOnlyList<string> wanted)
+        {
+            var exact = new HashSet<string>(wanted, StringComparer.OrdinalIgnoreCase);
+            var related = new List<string>();
+
+            foreach (var word in wanted)
+            {
+                foreach (var candidate in ContextVocabulary.RelatedTo(word))
+                {
+                    if (!exact.Contains(candidate) && !related.Contains(candidate, StringComparer.OrdinalIgnoreCase))
+                    {
+                        related.Add(candidate);
+                    }
+                }
+            }
+
+            return related;
         }
 
         /// <summary>

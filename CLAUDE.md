@@ -573,6 +573,19 @@ every one of these was a real failure on a real server before it was a rule.
    `Integrated`**, and `SyncSectionsAsync` keeps them out of the `desired` list that
    feeds Collection Sections while including them in the section-settings write.
    Four things that will break this if done casually:
+   - **Every WMO code Open-Meteo documents maps to a word, and a stand-in exists
+     for the rare ones.** A code falling through the mapping produces no sky word,
+     a reading with no words is treated as no reading, and the weather row silently
+     vanishes in exactly that weather — so `ViewingContextTests` pins all 28 codes
+     individually. The subtler failure is the row being *drawable in theory and
+     empty in practice*: `storm` is a word few films earn, so a strict thunderstorm
+     row shows nothing on the one evening the feature should shine.
+     `ContextVocabulary.RelatedTo` supplies stand-ins (storm→rain→cloudy,
+     snow→cold→cloudy), and `ContextRanker` consults them **only when the exact
+     matches cannot fill a row**, appending them *below* every exact match. Rain may
+     stand in for thunder; it may not outrank it. Clear and cloudy reach for
+     nothing — if the two commonest skies cannot fill a row, nothing can, and
+     reaching further stops the row meaning anything.
    - **The vocabulary is closed, and closed in three places at once.** The prompt
      lists the words, both structured-output schemas constrain the arrays to them
      with `enum`, and `SummaryParser` drops anything else without mapping it onto a
@@ -644,6 +657,35 @@ every one of these was a real failure on a real server before it was a rule.
    diagnostic — the one place an Open-Meteo call happens in the foreground and
    bypasses the cache, because a stale reading answering "are the requests getting
    through" would report success for a network that has been failing for hours.
+
+24. **Another plugin's cache may be read, never depended on.** `UseExternalThemes`
+   lets the condensing pass read `data/concierge/enrichment.json` — the Concierge
+   search plugin's own index — and send each item's `Themes` alongside its
+   overview. The case for it is that an overview describes the **premise**, while
+   both halves of this pass are about something else: the rewrite is about tone and
+   the context judgement is about mood. Concierge's themes are documented as "what
+   watching it feels like" and read like it (*lonely and heartbreaking*, *stylish
+   and unsettling*), so they are better input for this question than the synopsis
+   is — and they have already been paid for. Measured on the owner's library: 4,599
+   enriched items, **95% overlap** with Curator's summarised set, 8.3 themes each,
+   parsed from 9 MB in 117 ms and cached on the file's write time.
+   The constraints are what keep this from becoming a dependency hard rule 21
+   forbids:
+   - **Additive, never a replacement.** Every item still goes out with its own
+     overview. An item the other plugin has not seen produces a byte-identical
+     prompt to the one it produced before, which `ConciergeThemeSourceTests` pins —
+     otherwise 5% of the library would be quietly degraded by a feature meant to
+     improve it.
+   - **Two field names, not a shared type.** It reads with `JsonDocument` and
+     depends on `ItemId` and `Enrichment.Themes` only. No Concierge type is
+     referenced, so that plugin can be absent, uninstalled mid-pass, or rewrite its
+     file, and the worst case is the pass costing what it cost before. Every
+     failure — missing, corrupt, unrecognised shape — returns empty at `Debug`, not
+     a warning: an install without the other plugin is the normal case.
+   - **Notes come after the overview in the prompt**, so the model reads the source
+     material first and these as commentary on it. The prompt says not to quote them
+     back and that the overview wins where they disagree — the two ways borrowed
+     judgement goes wrong are parroting and displacing.
 
 ## Verified integration facts
 

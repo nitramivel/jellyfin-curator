@@ -105,6 +105,47 @@ namespace Jellyfin.Plugin.Curator.Core.Context
             => !string.IsNullOrWhiteSpace(value) && DaypartSet.Contains(value.Trim());
 
         /// <summary>
+        /// Conditions close enough to stand in when the exact one has too few items.
+        /// </summary>
+        /// <remarks>
+        /// A rescue, not a widening. The rarer a condition is, the fewer items the
+        /// model will have judged as suiting it — and the rarest conditions are
+        /// exactly the ones a viewer most wants a row for. A thunderstorm is the
+        /// clearest case: <c>storm</c> is a word few films earn, so a strict row
+        /// would be empty precisely when the weather is at its most dramatic, and
+        /// the feature would appear broken on the one evening it should shine.
+        /// <para>
+        /// These are only ever consulted when the exact matches cannot fill a row,
+        /// and they always rank below every exact match — see
+        /// <c>ContextRanker</c>. Rain standing in for a thunderstorm is defensible;
+        /// rain <em>outranking</em> thunder during a thunderstorm is not.
+        /// </para>
+        /// </remarks>
+        /// <param name="word">A weather word.</param>
+        /// <returns>Words that may stand in for it, nearest first.</returns>
+        public static IReadOnlyList<string> RelatedTo(string? word) => word?.Trim().ToLowerInvariant() switch
+        {
+            // Thunder is rain at its most extreme, under the darkest sky.
+            Storm => [Rain, Cloudy],
+
+            // Snow is the cold you can see.
+            Snow => [Cold, Cloudy],
+
+            // Fog and rain both mean a sky that has closed in.
+            Fog => [Cloudy],
+            Rain => [Cloudy],
+
+            // Heat belongs with glare.
+            Hot => [Clear],
+            Cold => [Cloudy],
+
+            // Clear and cloudy are the two commonest skies there are. If neither has
+            // enough items, nothing else will either, and reaching further would
+            // stop the row meaning anything at all.
+            _ => [],
+        };
+
+        /// <summary>
         /// The vocabulary word for a daypart.
         /// </summary>
         /// <param name="daypart">The daypart.</param>
