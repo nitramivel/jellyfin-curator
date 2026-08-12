@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.7.2.0",
+        "changelog": "Fixes the weather Test button reporting 'No reading. Check the server log' for lookups that had actually succeeded. Jellyfin sends controller responses in PascalCase and the new handlers were reading camelCase, so the field came back undefined and the page reported a working call as broken \u2014 with nothing in the log to find, because nothing had gone wrong. The same fault had been sitting unnoticed in the home screen row sync button, reporting every successful sync as 'Nothing was synced'. Every response field now goes through a reader that accepts both casings, and a test fails the build on any direct read. The Test button also now tells you WHY when a lookup genuinely fails: a place name nothing matches, no outbound internet, a proxy answering 403 and a rate limit are four different problems with four different fixes, and the weather service previously swallowed the reason on purpose because its normal callers are background refreshes that must fail silently. It now carries the reason out for the diagnostic while staying silent everywhere else.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.7.2.0/curator_0.7.2.0.zip",
+        "checksum": "787770c3c2f0a3a9a89380846eed51e7",
+        "timestamp": "2026-08-12T09:22:37Z"
+      },
+      {
         "version": "0.7.1.0",
         "changelog": "The weather and time-of-day rows can now be named by a model instead of carrying a fixed label. Titles are bought once per set of conditions \u2014 several at a time, cached and rotated \u2014 so a place producing around thirty distinct conditions costs about thirty calls in total rather than two per refresh forever, and unused sets are culled automatically after a year. Each viewer gets their own pair of rows when they have their own location, titled for their own sky. A new hourly task, Refresh Context Rows, re-reads the weather and re-registers the rows; it also pins the conditions each row was titled for, so a row's name and its cards can never contradict each other. The Home Screen Sections order index is now a setting rather than a fixed 500, and the two context rows can be given a lane of their own \u2014 worth doing, since rows sharing a lane are shuffled on every home screen load. Also adds a Test button on the Home screen tab that calls Open-Meteo in the foreground and reports the place, conditions, temperature and local time, so 'the server cannot reach the internet' stops looking identical to 'nothing in the library suits today'.",
         "targetAbi": "10.11.0.0",
