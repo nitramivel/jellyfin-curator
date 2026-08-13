@@ -95,6 +95,8 @@ namespace Jellyfin.Plugin.Curator.Tests
                 typeof(Jellyfin.Plugin.Curator.Services.Playlists.EmptyPlaylistSweepResult),
                 typeof(Jellyfin.Plugin.Curator.Services.Playlists.EmptyPlaylistCandidate),
                 typeof(SummaryPruneResult),
+                typeof(Jellyfin.Plugin.Curator.Services.Footer.FooterApplyResult),
+                typeof(Jellyfin.Plugin.Curator.Configuration.FooterLink),
             ];
 
             var missing = FieldsReadByThePage()

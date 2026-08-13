@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Jellyfin.Plugin.Curator.Core.Context;
 using Jellyfin.Plugin.Curator.Core.HomeScreen;
 using MediaBrowser.Model.Plugins;
@@ -1159,5 +1160,77 @@ namespace Jellyfin.Plugin.Curator.Configuration
         /// </para>
         /// </summary>
         public bool UseBatchApi { get; set; } = false;
+
+        // ---------------------------------------------------------------------
+        // The footer. Not an inference feature, and the one part of this plugin
+        // that draws something rather than deciding something — see the note on
+        // scope in CLAUDE.md. It is off by default and touches nothing else.
+        // ---------------------------------------------------------------------
+
+        /// <summary>
+        /// Gets or sets a value indicating whether a footer is drawn in the Jellyfin
+        /// web client.
+        /// </summary>
+        /// <remarks>
+        /// Off by default, and turning it off removes the injected markup rather than
+        /// merely hiding it — this writes into another plugin's configuration, so
+        /// leaving a disabled fragment behind would be litter in somebody else's
+        /// house.
+        /// </remarks>
+        public bool EnableFooter { get; set; }
+
+        /// <summary>
+        /// Gets or sets where the footer is drawn.
+        /// </summary>
+        public FooterScope FooterScope { get; set; } = FooterScope.HomeOnly;
+
+        /// <summary>Gets or sets the footer's heading. Blank omits the line.</summary>
+        public string FooterHeading { get; set; } = string.Empty;
+
+        /// <summary>Gets or sets the footer's body text. Blank omits the line.</summary>
+        public string FooterText { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the footer's links, in the order they are shown.
+        /// </summary>
+        /// <remarks>
+        /// A concrete <see cref="List{T}"/> of a class with a parameterless
+        /// constructor, because XmlSerializer is what persists this file and it can
+        /// round-trip neither an interface nor a record with positional parameters.
+        /// </remarks>
+        public List<FooterLink> FooterLinks { get; set; } = [];
+    }
+
+    /// <summary>
+    /// Where the footer is drawn.
+    /// </summary>
+    /// <remarks>
+    /// Option order is load-bearing: the config page's <c>setEnumSelect</c> falls
+    /// back to matching by index when a stored config carries the numeric value.
+    /// Change the labels freely; never reorder these.
+    /// </remarks>
+    public enum FooterScope
+    {
+        /// <summary>The home screen only. The default.</summary>
+        HomeOnly = 0,
+
+        /// <summary>Every page in the web client.</summary>
+        AllPages = 1,
+    }
+
+    /// <summary>
+    /// One link in the footer.
+    /// </summary>
+    /// <remarks>
+    /// A mutable class rather than a record for the XmlSerializer reason on
+    /// <see cref="PluginConfiguration.FooterLinks"/>.
+    /// </remarks>
+    public class FooterLink
+    {
+        /// <summary>Gets or sets the text shown on the link.</summary>
+        public string Label { get; set; } = string.Empty;
+
+        /// <summary>Gets or sets where it points.</summary>
+        public string Url { get; set; } = string.Empty;
     }
 }
