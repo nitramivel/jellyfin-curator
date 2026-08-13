@@ -347,6 +347,54 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
+        public void ThePromptLeavesABareClearSkyUnnamed()
+        {
+            // The temperature words carry a notability bar in their thresholds — hot
+            // fires where heat becomes the thing you notice about the day — but the
+            // sky words have none, so "clear" earns a word for the same reason
+            // "storm" does. It should not: a clear sky is the ordinary state of the
+            // sky, and "a clear evening" says barely more than "an evening" while
+            // spending characters from a 40-character budget to do it.
+            var prompt = ContextTitlePromptBuilder.BuildSystemPrompt(5);
+
+            Assert.Contains("clear bright sky and nothing else is not worth naming", prompt, StringComparison.Ordinal);
+
+            // But only when it is alone. A cold bright morning is a specific thing in
+            // a way a clear afternoon is not, which is why this is a rule the model
+            // applies rather than a filter over the vocabulary.
+            Assert.Contains("does NOT apply when the", prompt, StringComparison.Ordinal);
+            Assert.Contains("heat or cold", prompt, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void NoWorkedExampleContradictsTheRules()
+        {
+            // The examples are the strongest instruction in this prompt — a model
+            // copies a shown title over a stated rule. An example naming a bare clear
+            // sky would teach exactly what the rule below it forbids.
+            var prompt = ContextTitlePromptBuilder.BuildSystemPrompt(5);
+
+            // The example block is the indented run between "out loud:" and the
+            // paragraph after it. Anchored on both ends so this cannot quietly start
+            // matching nothing and passing for that reason.
+            var block = prompt.Split("out loud:", StringSplitOptions.None)[1]
+                .Split("\n\n", StringSplitOptions.RemoveEmptyEntries)[0];
+            var examples = block
+                .Split('\n')
+                .Select(line => line.Trim())
+                .Where(line => line.Length > 0)
+                .ToList();
+
+            Assert.Equal(6, examples.Count);
+            Assert.Contains("Good for an overcast afternoon", examples);
+            Assert.Contains("Cold night, warm film", examples);
+
+            // "Clear morning watching" was a worked example until the rule arrived,
+            // and a shown title beats a stated rule every time.
+            Assert.DoesNotContain(examples, line => line.StartsWith("Clear", StringComparison.OrdinalIgnoreCase));
+        }
+
+        [Fact]
         public void ThePromptSaysNotToInventASkyThatCouldNotBeRead()
         {
             // Naming both halves is now a rule, so the case where there is no

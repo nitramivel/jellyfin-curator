@@ -29,6 +29,21 @@ namespace Jellyfin.Plugin.Curator.Core.Context
     /// because the plainest phrasing is the same phrasing every time, so the prompt
     /// spends its remaining length insisting the openings differ.
     /// </para>
+    /// <para>
+    /// Naming the conditions plainly then raises the question of which conditions are
+    /// worth naming, and one is not. The temperature words already carry a notability
+    /// bar in their thresholds — <see cref="WeatherCodes.HotCelsius"/> is set where
+    /// heat becomes the thing you notice about the day — but the sky words have none,
+    /// so <c>clear</c> earns a word for the same reason <c>storm</c> does. It should
+    /// not: a clear sky is the ordinary state of the sky, "a clear evening" says
+    /// barely more than "an evening", and on a 40-character budget it is the word to
+    /// spend elsewhere. So a bare <c>clear</c> is not named. It stays nameable
+    /// <b>with</b> heat or cold, because a cold bright morning is a specific thing in
+    /// a way a clear afternoon is not — which is why this is a rule in the prompt
+    /// rather than a filter over the vocabulary. Selection is untouched either way:
+    /// <c>ContextRanker</c> still chooses on <c>clear</c>, and the title simply stops
+    /// announcing the least interesting thing about the moment.
+    /// </para>
     /// </summary>
     public static class ContextTitlePromptBuilder
     {
@@ -56,10 +71,11 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         /// <para>
         /// 0 is every set written before this existed. 1 was the mood prompt, which
         /// pushed so hard away from naming the conditions that it produced titles
-        /// like <i>Slate Sky Slow Burns</i>. 2 names them plainly.
+        /// like <i>Slate Sky Slow Burns</i>. 2 names them plainly. 3 stops naming a
+        /// clear sky that comes with nothing else.
         /// </para>
         /// </remarks>
-        public const int StyleVersion = 2;
+        public const int StyleVersion = 3;
 
         /// <summary>
         /// Builds the system prompt.
@@ -104,7 +120,7 @@ namespace Jellyfin.Plugin.Curator.Core.Context
               Made for a grey afternoon
               Suits a rainy evening
               When the rain sets in after dark
-              Clear morning watching
+              Something for a slow morning
               Cold night, warm film
 
             Straightforward beats clever here, and by some distance. "Slate Sky Slow Burns" is the
@@ -124,8 +140,13 @@ namespace Jellyfin.Plugin.Curator.Core.Context
             - Never use the words "picks", "selection", "curated", "for you", "recommended", or "row".
               Plain is the point; advertising is not.
             - Both the weather and the hour must be readable in the words. One without the other names
-              half a moment. The exception is when the weather is given as unknown: then name only the
-              hour, and do not guess at a sky.
+              half a moment. Two exceptions, and only these two:
+                - When the weather is given as unknown, name only the hour and do not guess at a sky.
+                - A clear bright sky and nothing else is not worth naming. It is the ordinary state of
+                  the sky, so "a clear evening" says barely more than "an evening" and spends
+                  characters doing it — name the hour and let the sky go. This does NOT apply when the
+                  clear sky comes with heat or cold: a cold bright morning is a specific thing and
+                  worth naming as one.
             - Do not begin more than one of them the same way, and do not return near-duplicates —
               {COUNT} titles that all say the same thing is one title and a wasted call.
             - No second person. Describe the moment, do not address or instruct the reader.
