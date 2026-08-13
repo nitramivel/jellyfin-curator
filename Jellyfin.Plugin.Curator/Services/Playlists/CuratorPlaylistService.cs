@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -184,6 +185,141 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
             }
 
             _categoryStore.Save(category);
+        }
+
+        /// <inheritdoc />
+        public async Task<EmptyPlaylistSweepResult> SweepEmptyPlaylistsAsync(
+            bool apply,
+            CancellationToken cancellationToken)
+        {
+            var playlists = _libraryManager.GetItemsResult(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Playlist],
+                Recursive = true,
+            }).Items.OfType<Playlist>().ToList();
+
+            var candidates = new List<EmptyPlaylistCandidate>();
+            var deleted = 0;
+            var directories = 0;
+
+            foreach (var playlist in playlists)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var verdict = EmptyPlaylistSweep.Judge(
+                    hasItems: playlist.LinkedChildren?.Length > 0,
+                    hasCuratorTag: HasOwnershipTag(playlist),
+                    hasOwner: playlist.OwnerUserId != Guid.Empty);
+
+                if (!EmptyPlaylistSweep.ShouldPrune(verdict))
+                {
+                    continue;
+                }
+
+                var reason = verdict == EmptyPlaylistVerdict.Ghost ? "ghost" : "stranded";
+                if (!apply)
+                {
+                    candidates.Add(new EmptyPlaylistCandidate(
+                        playlist.Name ?? string.Empty, playlist.Id.ToString("N"), reason, Deleted: false));
+                    continue;
+                }
+
+                // The path is read before the delete, because afterwards the item is
+                // gone and with it the only record of where its folder was.
+                var path = playlist.Path;
+
+                _logger.LogInformation(
+                    "Curator: removing empty playlist '{Playlist}' ({PlaylistId}); {Reason}",
+                    playlist.Name,
+                    playlist.Id,
+                    reason == "ghost" ? "it holds nothing and has no owner" : "it is Curator's and holds nothing");
+
+                _libraryManager.DeleteItem(playlist, new DeleteOptions { DeleteFileLocation = true }, true);
+                deleted++;
+
+                if (RemoveLeftoverDirectory(path))
+                {
+                    directories++;
+                }
+
+                candidates.Add(new EmptyPlaylistCandidate(
+                    playlist.Name ?? string.Empty, playlist.Id.ToString("N"), reason, Deleted: true));
+            }
+
+            if (apply && deleted > 0)
+            {
+                _logger.LogInformation(
+                    "Curator: swept {Deleted} empty playlist(s) and {Directories} leftover folder(s) of {Examined} examined",
+                    deleted,
+                    directories,
+                    playlists.Count);
+            }
+
+            await Task.CompletedTask.ConfigureAwait(false);
+            return new EmptyPlaylistSweepResult(playlists.Count, candidates, deleted, directories, apply);
+        }
+
+        /// <summary>
+        /// Removes a playlist's folder when Jellyfin has left it behind.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is why the sweep works rather than merely running.</b> Deleting the
+        /// database row alone does not get rid of these: a playlist directory that
+        /// outlives its row is adopted by the next library scan as a fresh, ownerless,
+        /// empty playlist, which is exactly how the owner's server came to have
+        /// fourteen of them created in a single second, named after categories whose
+        /// playlists had been deleted days earlier. Sweeping without this would delete
+        /// them and watch them come back.
+        /// <para>
+        /// Guarded hard, because this is the only place Curator removes a directory.
+        /// It must be a real directory, and it must contain <b>nothing but Jellyfin's
+        /// own <c>playlist.xml</c></b> — no media, no subfolders, nothing unexpected.
+        /// Anything else and it is left alone and logged: a folder holding a file we
+        /// did not put there is not a folder we understand, and an empty row is a far
+        /// smaller problem than deleting something of somebody's.
+        /// </para>
+        /// <para>
+        /// Never throws. A cleanup that fails must report and carry on, not take the
+        /// caller down with it.
+        /// </para>
+        /// </remarks>
+        private bool RemoveLeftoverDirectory(string? path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+                {
+                    return false;
+                }
+
+                if (Directory.EnumerateDirectories(path).Any())
+                {
+                    _logger.LogInformation(
+                        "Curator: leaving playlist folder '{Path}' in place; it contains subfolders", path);
+                    return false;
+                }
+
+                var files = Directory.EnumerateFiles(path).ToList();
+                if (files.Any(f => !string.Equals(
+                        Path.GetFileName(f), "playlist.xml", StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogInformation(
+                        "Curator: leaving playlist folder '{Path}' in place; it holds files Curator did not write",
+                        path);
+                    return false;
+                }
+
+                Directory.Delete(path, recursive: true);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // The row is already gone, so the worst case is that a later scan
+                // re-imports this one folder — the same state as before the sweep.
+                _logger.LogWarning(
+                    ex, "Curator: could not remove leftover playlist folder '{Path}'", path);
+                return false;
+            }
         }
 
         /// <inheritdoc />
@@ -461,6 +597,26 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
                     category.Name);
                 return null;
             }
+
+            // Identity first, in its own save, before any member is added.
+            //
+            // Precautionary rather than a fix for anything measured — but the window
+            // it closes is real. Jellyfin's CreatePlaylist persists a playlist that
+            // carries neither the ownership tag nor the tether, and installing any
+            // plugin tears the host down in-process while a run keeps going. Stopped
+            // in between, the old order left a playlist Curator could never touch
+            // again: untagged means the user's forever (rule 6), untethered means
+            // FindByTether cannot see it, and the next run built a second one beside
+            // it. Stamped first, the same interruption leaves an empty *tagged*
+            // playlist, which the next run updates and the sweep would remove — a
+            // recoverable state rather than a permanent duplicate.
+            //
+            // One extra save, and only on creation. Updates are the common path and
+            // are untouched.
+            playlist.Tags = [.. playlist.Tags ?? [], OwnershipTag];
+            playlist.SetProviderId(CategoryProviderKey, category.Id.ToString("N"));
+            await playlist.UpdateToRepositoryAsync(ItemUpdateType.MetadataEdit, cancellationToken)
+                .ConfigureAwait(false);
 
             await ApplyStateAsync(playlist, category, members, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation(

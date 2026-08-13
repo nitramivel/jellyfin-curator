@@ -3,10 +3,31 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.Curator.Core.Models;
+using Jellyfin.Plugin.Curator.Core.Playlists;
 using Jellyfin.Plugin.Curator.Core.Recommendations;
 
 namespace Jellyfin.Plugin.Curator.Services.Playlists
 {
+    /// <summary>One playlist the sweep judged, named so a person can check it.</summary>
+    /// <param name="Name">The playlist's name.</param>
+    /// <param name="PlaylistId">Its Jellyfin ID.</param>
+    /// <param name="Reason">Why it qualified: <c>ghost</c> or <c>stranded</c>.</param>
+    /// <param name="Deleted">Whether it was actually removed on this pass.</param>
+    public sealed record EmptyPlaylistCandidate(string Name, string PlaylistId, string Reason, bool Deleted);
+
+    /// <summary>What the empty-playlist sweep found and did.</summary>
+    /// <param name="Examined">How many playlists were looked at.</param>
+    /// <param name="Candidates">The ones that qualified, most interesting first.</param>
+    /// <param name="Deleted">How many were removed. 0 on a preview.</param>
+    /// <param name="DirectoriesRemoved">How many leftover folders went with them.</param>
+    /// <param name="Applied">Whether this pass deleted anything or only looked.</param>
+    public sealed record EmptyPlaylistSweepResult(
+        int Examined,
+        IReadOnlyList<EmptyPlaylistCandidate> Candidates,
+        int Deleted,
+        int DirectoriesRemoved,
+        bool Applied);
+
     /// <summary>
     /// Creates, updates, and removes the Jellyfin playlists backing one category,
     /// per target user. Persists link changes back through the category store.
@@ -33,6 +54,30 @@ namespace Jellyfin.Plugin.Curator.Services.Playlists
         /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns>A task.</returns>
         Task RemoveCategoryPlaylistsAsync(CategoryDefinition category, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Finds — and optionally deletes — playlists that hold nothing and belong to
+        /// nobody.
+        /// </summary>
+        /// <remarks>
+        /// The judgement is <see cref="Core.Playlists.EmptyPlaylistSweep"/> and is
+        /// deliberately narrow: a viewer's own empty playlist is never touched. See
+        /// that type for why "empty" alone is the wrong test.
+        /// <para>
+        /// Deleting the database row is not enough on its own. These come back — a
+        /// playlist directory that outlives its row is re-imported by the next
+        /// library scan as a fresh ownerless playlist, which is how they appeared in
+        /// the first place. So the leftover directory goes too, and only when it
+        /// holds nothing but Jellyfin's own <c>playlist.xml</c>.
+        /// </para>
+        /// </remarks>
+        /// <param name="apply">
+        /// False to report what would go without touching anything, which is what
+        /// the config page's first click does. True to delete.
+        /// </param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>What was found, and what was removed.</returns>
+        Task<EmptyPlaylistSweepResult> SweepEmptyPlaylistsAsync(bool apply, CancellationToken cancellationToken);
 
         /// <summary>
         /// Brings one viewer's recommendation playlist in line with a ranked list of

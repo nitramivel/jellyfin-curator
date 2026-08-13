@@ -205,6 +205,37 @@ every one of these was a real failure on a real server before it was a rule.
    to the user permanently — never modify, delete, or replace it, and never create
    a replacement for that user. Handoff takes precedence over deletion, even when
    the category empties.
+   **The one exception is narrower than it looks, and it is not an exception to the
+   tag at all.** `Core/Playlists/EmptyPlaylistSweep` may delete an untagged playlist
+   *only* when it holds nothing **and has no owner**. Jellyfin stamps the creating
+   user onto every playlist made through the UI or the API, so an ownerless one
+   cannot have been made by a person: it is a **directory the scanner adopted**.
+   That happens because deleting a playlist removes the database row and can leave
+   the folder behind — measured on the owner's server, 14 of them created inside one
+   second on 9 Aug 2026, named after categories whose playlists Curator had deleted
+   8–10 days earlier, each sitting beside a working playlist of the same name. Since
+   they arrive with no tag, every other pass here is obliged to leave them alone
+   forever, and the next run builds a second playlist rather than repairing them.
+   Three things this depends on:
+   - **Items are tested before ownership.** A playlist holding anything is kept
+     whoever owns it and whatever it is tagged with.
+   - **Untagged *with* an owner is always kept**, empty or not. That is a viewer's
+     own empty playlist, or one of Curator's that they untagged to keep, and "it is
+     empty" is not an exception to this rule — they may be about to fill it.
+     `EmptyPlaylistSweepTests` enumerates all eight combinations and asserts exactly
+     three are prunable, so widening it means editing a number in a test that says
+     what it expected.
+   - **The leftover directory goes with the row**, or the next library scan adopts
+     it again and the sweep achieves nothing. It is removed only when it contains
+     nothing but Jellyfin's own `playlist.xml` — this is the only place Curator
+     deletes a directory, and a folder holding a file we did not write is a folder
+     we do not understand.
+   `CreatePlaylistAsync` also stamps the tag and tether in **their own save, before
+   any member**, which is precautionary rather than a fix for the above: Jellyfin's
+   `CreatePlaylist` persists a playlist carrying neither, and installing any plugin
+   tears the host down mid-run. Stopped in between, the old order left a playlist
+   nothing could ever touch again; stamped first, the same interruption leaves an
+   empty *tagged* playlist that the next run updates and the sweep would remove.
 7. **Empty category ≠ deleted category.** Remove the Jellyfin playlist, null the
    stored playlist ID, keep the definition so a later run reuses the same identity.
    Identity is name **or** member similarity, not name alone — the model renames
@@ -498,11 +529,15 @@ every one of these was a real failure on a real server before it was a rule.
    every pass. When `SendConsolidatedTags` is on the run service raises the
    effective tag cap, because `MaxTagsPerItem` is normally 0 and would otherwise
    substitute the consolidated tags onto every record and then write none of them.
-18. **Seven scheduled tasks, one job each.** Generate Categories (weekly, the only
+18. **Eight scheduled tasks, one job each.** Generate Categories (weekly, the only
    one that costs money), Condense Summaries (daily), Refresh Recommendations
-   (6-hourly), Clean Up and Sync (daily), Health Check (daily), Publish Home
+   (6-hourly), Clean Up and Sync (daily), Health Check (daily), Prune Empty
+   Playlists (daily), Publish Home
    Screen Rows (**every server start**), Refresh Context Rows (hourly, plus
-   startup). The recommendation
+   startup). Prune Empty Playlists is deliberately **not** folded into Clean Up and
+   Sync, for the same reason the recommendation refresh was pulled out of it: it
+   deletes things, and a job that deletes things should be one a person can find,
+   read the description of, and switch off by itself. The recommendation
    refresh deliberately does **not** live in the maintenance task any more: it
    tracks watch activity and wants a far shorter cadence than reconciling
    playlists does, and having two tasks rebuild the same playlists was duplicate

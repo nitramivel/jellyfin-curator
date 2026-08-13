@@ -108,6 +108,16 @@ namespace Jellyfin.Plugin.Curator.Api
     /// <param name="CategoryIds">The category IDs.</param>
     public sealed record DeleteCategoriesRequest(IReadOnlyList<Guid> CategoryIds);
 
+    /// <summary>
+    /// Body for the empty-playlist sweep.
+    /// </summary>
+    /// <param name="Apply">
+    /// False lists what would go and touches nothing; true deletes. Defaulting to
+    /// false is the point — this endpoint destroys things, and a caller that forgets
+    /// the field should get a preview rather than a purge.
+    /// </param>
+    public sealed record PruneEmptyPlaylistsRequest(bool Apply = false);
+
     /// <summary>The outcome of a bulk delete.</summary>
     /// <param name="Deleted">How many definitions were removed.</param>
     /// <param name="NotFound">How many IDs matched nothing.</param>
@@ -383,6 +393,41 @@ namespace Jellyfin.Plugin.Curator.Api
         /// </summary>
         /// <response code="200">Sync ran; the body says whether it succeeded, and how.</response>
         /// <returns>Whether rows were published, and whether by the configured route.</returns>
+        /// <summary>
+        /// Finds playlists that hold nothing and belong to nobody, and optionally
+        /// deletes them.
+        /// </summary>
+        /// <remarks>
+        /// Two calls by design: the config page previews with <c>Apply: false</c>,
+        /// shows what would go, and only sends <c>Apply: true</c> after the reader
+        /// has confirmed. A viewer's own empty playlist is never a candidate in
+        /// either call — see <c>EmptyPlaylistSweep</c>.
+        /// </remarks>
+        /// <param name="request">Whether to delete or only look.</param>
+        /// <response code="200">The sweep ran; the body says what qualified.</response>
+        /// <returns>What was found, and what was removed.</returns>
+        [HttpPost("Playlists/PruneEmpty")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<EmptyPlaylistSweepResult>> PruneEmptyPlaylists(
+            [FromBody] PruneEmptyPlaylistsRequest? request)
+        {
+            var apply = request?.Apply == true;
+            var result = await _playlistService
+                .SweepEmptyPlaylistsAsync(apply, HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+
+            // Logged as well as returned. A destructive action leaves a trace on the
+            // server whatever the client does with the answer.
+            _logger.LogInformation(
+                "Curator: empty-playlist sweep ({Mode}) examined {Examined}, matched {Matched}, deleted {Deleted}",
+                apply ? "delete" : "preview",
+                result.Examined,
+                result.Candidates.Count,
+                result.Deleted);
+
+            return Ok(result);
+        }
+
         [HttpPost("HomeScreen/Sync")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public async Task<ActionResult<SectionSyncResult>> SyncHomeScreen()
