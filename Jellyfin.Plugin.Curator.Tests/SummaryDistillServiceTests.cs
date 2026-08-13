@@ -208,6 +208,60 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
+        public async Task ASecondCopyOfATitleIsNotDistilledTwice()
+        {
+            // Measured on the owner's server: 3 of 202 stored summaries were the
+            // second library row of something already summarised, so the pass had
+            // paid twice for one rewrite and the Summaries tab listed the title
+            // twice. The run collapsed duplicates and both results classes collapsed
+            // them again; this pass never did.
+            var first = Item(0);
+            var twin = new MediaItemRecord
+            {
+                Id = Guid.NewGuid(),
+                Kind = first.Kind,
+                Name = first.Name,
+                Year = first.Year,
+                Overview = first.Overview,
+            };
+
+            var provider = new StubProvider(size => Answer(size));
+            var (service, store, _) = Build([first, twin], provider);
+
+            var result = await service.DistillAsync(Config(batchSize: 10), null, force: false, CancellationToken.None);
+
+            Assert.Equal(1, result.Distilled);
+            Assert.Single(store.Stored);
+        }
+
+        [Fact]
+        public async Task TurningCollapsingOffKeepsBothCopies()
+        {
+            // The switch is the run's, and this pass honours it rather than deciding
+            // for itself — otherwise the Summaries tab and the home screen would
+            // disagree about how many things the library holds.
+            var first = Item(0);
+            var twin = new MediaItemRecord
+            {
+                Id = Guid.NewGuid(),
+                Kind = first.Kind,
+                Name = first.Name,
+                Year = first.Year,
+                Overview = first.Overview,
+            };
+
+            var config = Config(batchSize: 10);
+            config.CollapseDuplicateVersions = false;
+
+            var provider = new StubProvider(size => Answer(size));
+            var (service, store, _) = Build([first, twin], provider);
+
+            await service.DistillAsync(config, null, force: false, CancellationToken.None);
+
+            Assert.Equal(2, store.Stored.Count);
+        }
+
+        [Fact]
         public async Task ATruncatedBatchIsSplitAndItsItemsAreRecovered()
         {
             // The measured failure, end to end: a request the model cannot answer at

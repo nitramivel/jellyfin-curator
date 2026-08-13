@@ -1491,15 +1491,27 @@
                             <button is="emby-button" type="button" id="CuratorDistillAllButton" class="raised">
                                 <span>Redo all</span>
                             </button>
+                            <button is="emby-button" type="button" id="CuratorPruneDuplicateSummariesButton" class="raised">
+                                <span>Remove duplicates</span>
+                            </button>
                             <button is="emby-button" type="button" id="CuratorClearSummariesButton" class="raised">
                                 <span>Clear cache</span>
                             </button>
                         </div>
+                        <div id="CuratorPruneSummariesState" class="fieldDescription" style="margin:-0.8em 0 1.2em;"></div>
                         <div class="fieldDescription" style="margin-bottom:1.6em;">
                             <strong>Condense now</strong> only pays for items that are new or whose overview has
                             changed. <strong>Redo all</strong> re-buys the whole library — use it after changing the
                             length or the model. Both also run on a schedule, daily, under
                             <em>Scheduled Tasks &rarr; Curator &rarr; Condense Summaries</em>.
+                            <br /><br />
+                            <strong>Remove duplicates</strong> drops the summaries belonging to second copies —
+                            where your library holds one title as two rows, both were being condensed and both
+                            appear in the list below. It uses the same test the rest of the plugin uses to decide
+                            what a duplicate is, never a title match, so it will not confuse two films that share
+                            a name. Nothing is bought and nothing is lost: a summary removed in error is simply
+                            re-made on the next pass. The condensing pass now does this by itself as well, so
+                            this is only for seeing it happen now rather than tomorrow.
                         </div>
 
                         <h3 class="sectionTitle">Settings</h3>
@@ -3008,6 +3020,31 @@
                     url: ApiClient.getUrl('Curator/Summaries?limit=300'),
                     dataType: 'json'
                 }).then(renderSummarySamples, function () { /* leave the previous list */ });
+            }
+
+            function pruneDuplicateSummaries() {
+                var button = page.querySelector('#CuratorPruneDuplicateSummariesButton');
+                var state = page.querySelector('#CuratorPruneSummariesState');
+                button.disabled = true;
+                state.innerHTML = 'Checking&hellip;';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Summaries/PruneDuplicates'),
+                    dataType: 'json'
+                }).then(function (result) {
+                    var removed = field(result, 'removed') || 0;
+                    state.innerHTML = removed === 0
+                        ? 'No duplicates found — every stored summary belongs to a distinct title.'
+                        : 'Removed ' + removed + ' duplicate summary/summaries.';
+                    button.disabled = false;
+                    // The list and the counts above it are both now wrong.
+                    refreshSummaries(true);
+                }, function () {
+                    state.innerHTML = 'Could not remove duplicates — a condensing pass may be running. '
+                        + 'Check the server log.';
+                    button.disabled = false;
+                });
             }
 
             function startDistill(force) {
@@ -5094,6 +5131,8 @@
                 page.querySelector('#CuratorDistillAllButton').addEventListener('click', function () {
                     startDistill(true);
                 });
+                page.querySelector('#CuratorPruneDuplicateSummariesButton')
+                    .addEventListener('click', pruneDuplicateSummaries);
                 page.querySelector('#CuratorClearSummariesButton').addEventListener('click', clearSummaries);
 
                 page.querySelector('#CuratorSaveSchedules').addEventListener('click', saveSchedules);

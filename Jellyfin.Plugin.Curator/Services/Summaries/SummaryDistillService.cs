@@ -14,6 +14,9 @@ using Jellyfin.Plugin.Curator.Services.Llm;
 using Jellyfin.Plugin.Curator.Services.Runs;
 using Microsoft.Extensions.Logging;
 
+// Placed here rather than inline so the distillation pass and the Summaries tab's
+// "Remove duplicates" button cannot drift apart about what a duplicate is.
+
 namespace Jellyfin.Plugin.Curator.Services.Summaries
 {
     /// <summary>
@@ -126,6 +129,67 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
         public SummaryRunResult? LastResult { get; private set; }
 
         /// <summary>
+        /// The rows worth distilling: one per title, with second copies dropped.
+        /// </summary>
+        /// <remarks>
+        /// Honours the same two switches the run does, so a library where the owner
+        /// has turned collapsing off keeps every row here too. Anything else would
+        /// mean the Summaries tab and the home screen disagreed about how many things
+        /// the library contains.
+        /// </remarks>
+        private static IReadOnlyList<MediaItemRecord> SurvivingItems(
+            IReadOnlyList<MediaItemRecord> scanned,
+            PluginConfiguration config)
+        {
+            if (!config.CollapseDuplicateVersions)
+            {
+                return scanned;
+            }
+
+            var surviving = DuplicateItems.SurvivingIds(scanned, config.MatchDuplicatesByProviderId);
+            return [.. scanned.Where(item => surviving.Contains(item.Id))];
+        }
+
+        /// <summary>
+        /// Removes stored summaries for library rows that are second copies of
+        /// something already summarised, without distilling anything.
+        /// </summary>
+        /// <remarks>
+        /// The on-demand form of what the daily pass now does anyway. It exists
+        /// because the pass is daily and a library that has just been de-duplicated
+        /// should not have to wait — and because seeing the count go down is how
+        /// somebody confirms the list they were looking at was wrong rather than the
+        /// library.
+        /// <para>
+        /// Buys nothing and calls no model: it is a scan, a set operation, and a
+        /// prune. A summary removed in error costs one item's worth of the next
+        /// pass, which is why this needs no confirmation step of its own.
+        /// </para>
+        /// </remarks>
+        /// <param name="config">Plugin configuration.</param>
+        /// <returns>How many stored summaries were removed.</returns>
+        public int PruneDuplicateSummaries(PluginConfiguration config)
+        {
+            ArgumentNullException.ThrowIfNull(config);
+
+            var scanned = _libraryScanner.ScanLibrary(
+                includeEpisodes: false,
+                surfacedCollections: null,
+                maxOverviewLength: ItemReducer.NoOverviewLimit);
+
+            var items = SurvivingItems(scanned, config);
+            var removed = _store.Prune([.. items.Select(i => i.Id)]);
+
+            _logger.LogInformation(
+                "Curator summaries: removed {Removed} duplicate/stale summary/summaries ({Kept} of {Scanned} rows kept)",
+                removed,
+                items.Count,
+                scanned.Count);
+
+            return removed;
+        }
+
+        /// <summary>
         /// Runs a distillation pass.
         /// </summary>
         /// <param name="config">Plugin configuration.</param>
@@ -204,12 +268,40 @@ namespace Jellyfin.Plugin.Curator.Services.Summaries
             // NoOverviewLimit matters. The reducer's default cuts overviews at 300
             // characters, and distilling that cut would store a compression of the
             // first 300 characters forever, with nothing downstream able to tell.
-            var items = _libraryScanner.ScanLibrary(
+            var scanned = _libraryScanner.ScanLibrary(
                 includeEpisodes: false,
                 surfacedCollections: null,
                 maxOverviewLength: ItemReducer.NoOverviewLimit);
+
+            // Two library rows for one title are one thing to distil, not two. The
+            // run collapses them before the model sees them and both results classes
+            // collapse them again on the way to the screen, but this pass never did —
+            // so a library holding a show twice paid for two rewrites of it, stored
+            // both, and listed the title twice on the Summaries tab. Measured on the
+            // owner's server: 3 of 202 stored summaries were the second row of
+            // something already summarised.
+            //
+            // Reuses DuplicateItems deliberately, exactly as the backstops do. A
+            // second opinion here about what a duplicate is would be a second answer
+            // to disagree with — see hard rule 2, which is also why nothing in this
+            // file tries to match titles itself.
+            var items = SurvivingItems(scanned, config);
+            if (items.Count < scanned.Count)
+            {
+                _logger.LogInformation(
+                    "Curator summaries: {Dropped} library row(s) are second copies of something already here; "
+                    + "distilling {Kept} of {Scanned}",
+                    scanned.Count - items.Count,
+                    items.Count,
+                    scanned.Count);
+            }
+
             var existing = _store.GetAll();
 
+            // Passing the survivors rather than everything scanned is what removes an
+            // alias row's summary once it has one: Prune drops whatever is not in the
+            // set it is handed, so the duplicate goes on the next pass without
+            // needing a step of its own.
             var pruned = _store.Prune([.. items.Select(i => i.Id)]);
             if (pruned > 0)
             {
