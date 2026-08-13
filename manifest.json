@@ -9,12 +9,12 @@
     "imageUrl": "",
     "versions": [
       {
-        "version": "0.9.0.0",
-        "changelog": "Adds a Footer tab: a footer drawn at the bottom of Jellyfin itself, with a heading, a line of text and a row of link buttons. Shown on the home screen by default, or on every page if you prefer. Off by default, and it needs the File Transformation plugin to do the drawing \u2014 because the fragment is stored in that plugin's configuration rather than held in memory, it survives restarts on its own. Everything you type is written into the page as text rather than markup, and link addresses are limited to http, https, mailto and same-server paths.",
+        "version": "0.9.1.0",
+        "changelog": "Adds a Footer tab: a footer drawn at the bottom of Jellyfin itself, with a heading, a line of text and a row of link buttons. Shown on the home screen by default, or on every page if you prefer. Off by default, and it needs the File Transformation plugin to do the drawing \u2014 because the fragment is stored in that plugin's configuration rather than held in memory, it survives restarts on its own. Everything you type is written into the page as text rather than markup, and link addresses are limited to http, https, mailto and same-server paths.\n\nThe weather and time-of-day row now titles itself in Title Case, matching Jellyfin's own rows \u2014 \"Good for an Overcast Afternoon\" rather than \"Good for an overcast afternoon\". Existing titles are re-made on the next hourly refresh.",
         "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.9.0.0/curator_0.9.0.0.zip",
-        "checksum": "80cc65047892ac0e8ac4786c1828485f",
-        "timestamp": "2026-08-13T11:07:52Z"
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.9.1.0/curator_0.9.1.0.zip",
+        "checksum": "1e31e1257cc12766ab127aecfc4148c2",
+        "timestamp": "2026-08-13T11:17:23Z"
       },
       {
         "version": "0.8.10.0",
@@ -39,14 +39,6 @@
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.8.0/curator_0.8.8.0.zip",
         "checksum": "c383e027c97128b47bcb4c8575e7162a",
         "timestamp": "2026-08-13T01:42:12Z"
-      },
-      {
-        "version": "0.8.7.0",
-        "changelog": "The weather and time-of-day home screen row now says plainly what it is for \u2014 'Good for an overcast afternoon' rather than 'Slate Sky Slow Burns'. Titles name the sky and the hour in ordinary words, in sentence case, and vary how they open so they do not all begin the same way. Titles bought under the old wording are replaced automatically on the next hourly refresh rather than lingering for a year.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.7.0/curator_0.8.7.0.zip",
-        "checksum": "6441ee850e598acd1d952e1d86180909",
-        "timestamp": "2026-08-12T20:33:30Z"
       }
     ]
   }

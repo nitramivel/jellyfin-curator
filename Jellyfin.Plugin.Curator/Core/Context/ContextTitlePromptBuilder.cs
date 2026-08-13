@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using Jellyfin.Plugin.Curator.Core.Llm;
 
@@ -23,7 +24,7 @@ namespace Jellyfin.Plugin.Curator.Core.Context
     /// <para>
     /// So the target is the middle and it has to be described as the middle, not as
     /// a direction to travel in: say plainly what the row suits, in the words a
-    /// person would use out loud — <i>Good for an overcast afternoon</i>. The
+    /// person would use out loud — <i>Good for an Overcast Afternoon</i>. The
     /// merchandising vocabulary stays banned, which is what keeps plain from
     /// collapsing back into <i>Picks</i>. The one thing plainness costs is variety,
     /// because the plainest phrasing is the same phrasing every time, so the prompt
@@ -72,10 +73,11 @@ namespace Jellyfin.Plugin.Curator.Core.Context
         /// 0 is every set written before this existed. 1 was the mood prompt, which
         /// pushed so hard away from naming the conditions that it produced titles
         /// like <i>Slate Sky Slow Burns</i>. 2 names them plainly. 3 stops naming a
-        /// clear sky that comes with nothing else.
+        /// clear sky that comes with nothing else. 4 is Title Case, to match the rows
+        /// Jellyfin draws beside it.
         /// </para>
         /// </remarks>
-        public const int StyleVersion = 3;
+        public const int StyleVersion = 4;
 
         /// <summary>
         /// Builds the system prompt.
@@ -116,12 +118,12 @@ namespace Jellyfin.Plugin.Curator.Core.Context
             Say plainly what the row is for. Name the weather and the hour in ordinary words, the way
             someone would say them out loud:
 
-              Good for an overcast afternoon
-              Made for a grey afternoon
-              Suits a rainy evening
-              When the rain sets in after dark
-              Something for a slow morning
-              Cold night, warm film
+              Good for an Overcast Afternoon
+              Made for a Grey Afternoon
+              Suits a Rainy Evening
+              When the Rain Sets In
+              Something for a Slow Morning
+              Cold Night, Warm Film
 
             Straightforward beats clever here, and by some distance. "Slate Sky Slow Burns" is the
             failure to avoid: it is a riddle, the reader has to work out what is being offered, and on a
@@ -135,7 +137,11 @@ namespace Jellyfin.Plugin.Curator.Core.Context
 
             Rules:
             - At most {MAX} characters. Rows clip rather than wrap, so a long title is a cut-off one.
-            - Sentence case — a capital at the start, and after that only words normally capitalised.
+            - Title Case, the way a heading is written: capitalise the first word, the last word, and every
+              important word between them. Leave short joining words lowercase — a, an, the, and, or, for,
+              of, in, on, at, to. "Good for an Overcast Afternoon", not "Good For An Overcast Afternoon"
+              and not "Good for an overcast afternoon". This row sits beside Jellyfin's own, which are
+              titled that way, and one row in a different case is the one that looks broken.
             - No full stops, no colons, no quotation marks, no emoji.
             - Never use the words "picks", "selection", "curated", "for you", "recommended", or "row".
               Plain is the point; advertising is not.
@@ -243,7 +249,84 @@ namespace Jellyfin.Plugin.Curator.Core.Context
             // budget produces exactly the clipped phrase the budget exists to
             // prevent, and the fallback — the owner's own row name — is better than
             // a sentence that stops halfway.
-            return title.Length is 0 or > MaxTitleLength ? null : title;
+            return title.Length is 0 or > MaxTitleLength ? null : TitleCase(title);
+        }
+
+        /// <summary>
+        /// Words left lowercase inside a title.
+        /// </summary>
+        /// <remarks>
+        /// Articles, coordinating conjunctions and the short prepositions. Kept
+        /// deliberately small: the failure worth avoiding is a title that reads as
+        /// shouting, and the way to get there is lowercasing too little, not too
+        /// much.
+        /// </remarks>
+        private static readonly HashSet<string> SmallWords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "a", "an", "the",
+            "and", "as", "but", "for", "if", "nor", "or", "so", "yet",
+            "at", "by", "down", "from", "in", "into", "near", "of", "off", "on",
+            "onto", "out", "over", "per", "to", "up", "upon", "via", "with",
+        };
+
+        /// <summary>
+        /// Puts a title into Title Case.
+        /// </summary>
+        /// <remarks>
+        /// A backstop, not the mechanism — the prompt asks for this case and usually
+        /// gets it. It exists because the row sits beside Jellyfin's own
+        /// ("Continue Watching", "Next Up"), and a single row in a different case is
+        /// the one that looks broken; leaving that to a model that is right most of
+        /// the time means it is visibly wrong some of the time.
+        /// <para>
+        /// Only ever changes the FIRST letter of a word. <c>ToTitleCase</c> from
+        /// <c>TextInfo</c> was the obvious tool and is wrong twice over: it
+        /// capitalises articles ("Good For An Overcast Afternoon") and it lowercases
+        /// the rest of a word, which turns "TV" into "Tv". First and last words are
+        /// always capitalised however small, so "Next Up" keeps its capital.
+        /// </para>
+        /// </remarks>
+        /// <param name="title">The title as written.</param>
+        /// <returns>The same words, cased as a heading.</returns>
+        public static string TitleCase(string title)
+        {
+            ArgumentNullException.ThrowIfNull(title);
+
+            // A title with no lowercase letter anywhere is shouting rather than
+            // cased, and preserving its capitals would produce "MADE for a COLD
+            // NIGHT" — worse than what came in. Flattened first, then cased
+            // normally. Anything with even one lowercase letter is left to the
+            // per-word rule below, so "A Night of TV" keeps its TV.
+            var source = title.Any(char.IsLower) ? title : title.ToLowerInvariant();
+
+            var words = source.Split(' ');
+            var last = words.Length - 1;
+
+            for (var i = 0; i <= last; i++)
+            {
+                var word = words[i];
+                if (word.Length == 0)
+                {
+                    continue;
+                }
+
+                // Small words are lowercased WHOLE. They are all plain function
+                // words with no legitimate internal capitals, and touching only the
+                // first letter leaves "FOR" as "fOR".
+                if (i != 0 && i != last && SmallWords.Contains(word.Trim(',', ';', '-')))
+                {
+                    words[i] = word.ToLowerInvariant();
+                    continue;
+                }
+
+                // Everything else has its first letter raised and the rest left
+                // exactly as it is, so capitals a word carries of its own — "TV",
+                // "IMAX", "McCarthy" — survive. This can add case but never destroy
+                // it.
+                words[i] = char.ToUpperInvariant(word[0]) + word[1..];
+            }
+
+            return string.Join(' ', words);
         }
     }
 }
