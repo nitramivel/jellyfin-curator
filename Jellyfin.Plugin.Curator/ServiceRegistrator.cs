@@ -56,6 +56,7 @@ namespace Jellyfin.Plugin.Curator
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, MaintenanceTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, HealthCheckTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, PruneEmptyPlaylistsTask>();
+            serviceCollection.AddSingleton<Services.Footer.FooterIntegrationService>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, RefreshRecommendationsTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, PublishHomeScreenRowsTask>();
             serviceCollection.AddSingleton<MediaBrowser.Model.Tasks.IScheduledTask, RefreshContextRowsTask>();

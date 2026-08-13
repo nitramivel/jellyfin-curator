@@ -12,6 +12,7 @@ using Jellyfin.Plugin.Curator.Services.Categories;
 using Jellyfin.Plugin.Curator.Core.Context;
 using Jellyfin.Plugin.Curator.Services.Context;
 using Jellyfin.Plugin.Curator.Services.Health;
+using Jellyfin.Plugin.Curator.Services.Footer;
 using Jellyfin.Plugin.Curator.Services.HomeScreen;
 using Jellyfin.Plugin.Curator.Services.Playlists;
 using Jellyfin.Plugin.Curator.Services.Runs;
@@ -246,6 +247,7 @@ namespace Jellyfin.Plugin.Curator.Api
         private readonly SummaryDistillService _distillService;
         private readonly HealthService _healthService;
         private readonly ICuratorPlaylistService _playlistService;
+        private readonly FooterIntegrationService _footerService;
         private readonly IUserManager _userManager;
         private readonly ILibraryManager _libraryManager;
         private readonly ITaskManager _taskManager;
@@ -261,6 +263,7 @@ namespace Jellyfin.Plugin.Curator.Api
             SummaryDistillService distillService,
             HealthService healthService,
             ICuratorPlaylistService playlistService,
+            FooterIntegrationService footerService,
             IUserManager userManager,
             ILibraryManager libraryManager,
             ITaskManager taskManager,
@@ -275,6 +278,7 @@ namespace Jellyfin.Plugin.Curator.Api
             _distillService = distillService;
             _healthService = healthService;
             _playlistService = playlistService;
+            _footerService = footerService;
             _userManager = userManager;
             _libraryManager = libraryManager;
             _taskManager = taskManager;
@@ -430,6 +434,29 @@ namespace Jellyfin.Plugin.Curator.Api
                 result.Deleted);
 
             return Ok(result);
+        }
+
+        /// <summary>
+        /// Publishes the footer, or removes it when it is switched off.
+        /// </summary>
+        /// <remarks>
+        /// Called by the config page after saving, because the footer is written into
+        /// another plugin's configuration rather than drawn from Curator's — saving
+        /// Curator's settings alone would change nothing anybody could see.
+        /// </remarks>
+        /// <response code="200">The body says what happened, in a sentence.</response>
+        /// <returns>What happened.</returns>
+        [HttpPost("Footer/Apply")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<FooterApplyResult>> ApplyFooter()
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config is null)
+            {
+                return Ok(new FooterApplyResult(false, false, false, "Curator configuration is unavailable."));
+            }
+
+            return Ok(await _footerService.ApplyAsync(config, HttpContext.RequestAborted).ConfigureAwait(false));
         }
 
         [HttpPost("HomeScreen/Sync")]

@@ -10,6 +10,16 @@ scope — that is [SmartLists](https://github.com/jyourstone/jellyfin-smartlists
 job, and Curator is designed to sit alongside it. Reject feature requests that
 amount to "add a rules engine."
 
+**One deliberate exception, admitted rather than hidden: the footer** (0.9.0.0).
+It decorates rather than decides, calls no model, and reads nothing about the
+library — by the rule above it does not belong here, and it is in anyway because
+the owner asked for it knowing that. It is fenced accordingly: off by default, one
+tab, one config block, `Core/Footer` + `Services/Footer` touching nothing else,
+and no scheduled task. **Do not treat it as precedent.** If a second cosmetic
+feature is proposed, the answer is still no, and the argument for this one — the
+owner wanted it and it costs the rest of the plugin nothing — has to be made
+again from scratch rather than inherited.
+
 ## Development commands
 
 The .NET 9 SDK is installed per-user and is **not on `PATH` by default**:
@@ -864,6 +874,46 @@ every one of these was a real failure on a real server before it was a rule.
      back and that the overview wins where they disagree — the two ways borrowed
      judgement goes wrong are parroting and displacing.
 
+25. **The footer is injected through File Transformation's *config*, not its
+   registration endpoint — and that is the whole reason it is safe.** That plugin
+   (GUID `5e87cc92-571a-4d8d-8d98-d2d4147f9f90`) offers two routes, read out of the
+   2.5.11.0 DLL by reflection: `POST /FileTransformation/RegisterTransformation`
+   taking a `TransformationRegistrationPayload` (a `FileNamePattern` plus either a
+   `TransformationEndpoint` or the same assembly/class/method triple Home Screen
+   Sections uses), and a declarative `PluginConfiguration.Transformations` array of
+   `PluginDefinedTransformation { Id, FilenamePattern, SearchText, ReplaceText }`.
+   The first is in-memory and would land the footer squarely in **rule 22** — gone
+   on restart, needing a startup task that can itself fail. The second is written
+   to disk by the other plugin and simply survives. Curator writes it the same way
+   it writes Collection Sections' config, `GET` then `POST
+   /Plugins/{guid}/Configuration`, and **the camelCase trap applies identically**:
+   the server serializes plugin config as camelCase over HTTP while the C# type is
+   PascalCase, so `FooterTransformationMerger` matches every property
+   case-insensitively. A naive version creates a second `Transformations` array the
+   plugin ignores and the footer silently never appears.
+   Four things that hold this up:
+   - **The entry is found by a fixed ID, never by its contents**, and every other
+     entry in that array belongs to another plugin or to the owner. Switching the
+     footer off **removes** Curator's entry rather than blanking it: a disabled
+     fragment left in somebody else's configuration is litter, and worse, it would
+     go on being applied to every page.
+   - **The replacement puts the anchor back.** `SearchText` is `</body>` and
+     `ReplaceText` is `<fragment></body>`, so the transformation is idempotent and
+     the document stays well-formed. Without the trailing anchor the closing tag is
+     consumed and every page loses it.
+   - **Nothing owner-typed is ever written as markup.** The fragment is a `<script>`
+     carrying a JSON payload; the client builds the footer through the DOM and
+     assigns to `textContent`, never `innerHTML`. This is the only place in Curator
+     where owner text reaches *every viewer's* browser rather than one admin's
+     config page, so `FooterTests` pins that a heading containing `</script>`
+     cannot close the block, and that `innerHTML` appears nowhere in the fragment.
+   - **URLs are an allow-list**: `http`, `https`, `mailto`, or a path starting `/`
+     but **not** `//`, which is protocol-relative and points off-server however much
+     it looks like a path. `javascript:` in an href runs on click with the page's
+     privileges and a footer is the last place anyone would look for it, so an
+     unrecognised scheme is dropped rather than sanitised. The config page mirrors
+     `IsSafeUrl` in JS for the live preview — change one, change both.
+
 ## Verified integration facts
 
 Read from the source of the plugins we integrate with. Several are
@@ -1194,11 +1244,12 @@ release or two, and only remove it once a few restarts have been survived.
   than only those already carrying a value — an empty box that says what it falls
   back to beats an add-a-row button — and a blank one is **omitted** on save
   rather than stored as an empty string, so "no location" stays one state.
-- **Settings live on five tabs**: Model (profiles, request, spend), Library
+- **Settings live on six tabs**: Model (profiles, request, spend), Library
   (what is sent and who for), Categories (the two pools' size and count), Home
   screen (rows, the recommendation playlist, and the two context rows), Summaries
   (the condensing pass, tag consolidation, and the context judgement that fills
-  those rows). Note the context feature deliberately straddles two tabs, which is
+  those rows), Footer (rule 25's exception — it is its own tab precisely because it
+  belongs to nothing else on the page). Note the context feature deliberately straddles two tabs, which is
   rule "put a new setting where its *subject* is" working as intended: what is
   bought is a property of the condensing pass, and what is shown is a home screen
   row. **Three tabs are NOT part of the settings form** and hide the

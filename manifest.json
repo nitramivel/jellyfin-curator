@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.9.0.0",
+        "changelog": "Adds a Footer tab: a footer drawn at the bottom of Jellyfin itself, with a heading, a line of text and a row of link buttons. Shown on the home screen by default, or on every page if you prefer. Off by default, and it needs the File Transformation plugin to do the drawing \u2014 because the fragment is stored in that plugin's configuration rather than held in memory, it survives restarts on its own. Everything you type is written into the page as text rather than markup, and link addresses are limited to http, https, mailto and same-server paths.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.9.0.0/curator_0.9.0.0.zip",
+        "checksum": "80cc65047892ac0e8ac4786c1828485f",
+        "timestamp": "2026-08-13T11:07:52Z"
+      },
+      {
         "version": "0.8.10.0",
         "changelog": "The condensing pass no longer treats two library rows for one title as two things to summarise \u2014 it was the last place in the plugin that did, so a library holding a show twice paid for two rewrites and listed it twice. A new 'Remove duplicates' button on the Summaries tab clears the ones already stored without waiting for the next daily pass. It uses the same duplicate test as the rest of the plugin, never a title match, so two different films sharing a name are safe; nothing is bought and nothing is lost, since a summary removed in error is re-made next pass.",
         "targetAbi": "10.11.0.0",
@@ -39,14 +47,6 @@
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.7.0/curator_0.8.7.0.zip",
         "checksum": "6441ee850e598acd1d952e1d86180909",
         "timestamp": "2026-08-12T20:33:30Z"
-      },
-      {
-        "version": "0.8.6.0",
-        "changelog": "Each viewer can now get a films-only and a television-only recommendation playlist beside the combined one, switched on with 'Also build a films-only and a television-only list' on the Home screen tab. Both are cut from the same ranking, so they cost no extra model call \u2014 even with model-chosen ordering on, it is still one call per viewer. The combined list is always built and unchanged, which is what the Media Bar plugin wants: it takes a single playlist name and separates films from television itself. Note these cannot appear on the Movies and Shows Suggestions tabs \u2014 those come from the server's own recommendation endpoints, which no plugin can add to.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.6.0/curator_0.8.6.0.zip",
-        "checksum": "34c904d696fcc75138f9ce55f0843c21",
-        "timestamp": "2026-08-12T19:55:46Z"
       }
     ]
   }

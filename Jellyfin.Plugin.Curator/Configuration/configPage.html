@@ -61,6 +61,53 @@
                 .curatorDangerNote { margin-bottom: 1em; }
                 .curatorDangerState { margin-top: 0.7em; }
 
+                /* The footer editor. Rows are built by innerHTML, so they use plain
+                   inputs rather than is="emby-input": customized built-in elements
+                   upgrade unreliably in generated markup, which leaves the first row
+                   styled and the rest bare. */
+                .curatorFooterLinkRow {
+                    display: flex; gap: 0.6em; align-items: center; margin-bottom: 0.6em;
+                }
+                .curatorFooterLinkRow input {
+                    flex: 1 1 12em; min-width: 0; padding: 0.55em 0.7em;
+                    border-radius: 0.3em; border: 1px solid rgba(127,127,127,0.35);
+                    /* Opaque, and with an explicit colour-scheme. A hand-styled
+                       control loses Jellyfin's theming, and the browser's own default
+                       for an input is a LIGHT field — a translucent background
+                       composites over white and renders near-white text unreadable. */
+                    background: #101010; color: inherit; color-scheme: dark;
+                    font: inherit;
+                }
+                .curatorFooterLinkRow input:focus { outline: 1px solid #00a4dc; }
+                .curatorFooterLinkDrop {
+                    flex: 0 0 auto; cursor: pointer; padding: 0.3em 0.6em; border-radius: 0.3em;
+                    border: 1px solid rgba(229,83,83,0.5); background: none; color: #e56a6a; font: inherit;
+                }
+                .curatorFooterLinkDrop:hover { background: rgba(229,83,83,0.12); }
+                .curatorFooterBad { border-color: rgba(229,83,83,0.7) !important; }
+
+                /* The preview deliberately mirrors what FooterMarkup emits, so the
+                   tab shows the thing rather than a description of it. Kept in step
+                   by hand — the generated CSS lives in Core/Footer/FooterMarkup.cs. */
+                .curatorFooterPreview {
+                    margin-top: 0.4em; padding: 2.2em 1.5em 2.6em;
+                    border: 1px solid rgba(127,127,127,0.22); border-radius: 10px;
+                    background: linear-gradient(180deg, rgba(127,127,127,0.05), rgba(127,127,127,0.11));
+                    text-align: center; font-size: 0.95em;
+                }
+                .curatorFooterPreview .fpHeading {
+                    margin: 0 0 0.45em; font-size: 1.18em; font-weight: 600; letter-spacing: 0.01em;
+                }
+                .curatorFooterPreview .fpText { margin: 0; opacity: 0.72; line-height: 1.55; }
+                .curatorFooterPreview .fpLinks {
+                    display: flex; flex-wrap: wrap; gap: 0.55em; justify-content: center; margin-top: 1.25em;
+                }
+                .curatorFooterPreview .fpLink {
+                    display: inline-block; padding: 0.42em 1.05em; border-radius: 999px;
+                    border: 1px solid rgba(127,127,127,0.32); opacity: 0.85;
+                }
+                .curatorFooterPreview .fpEmpty { opacity: 0.55; font-style: italic; }
+
                 /* The armed state, between the first click and the second. It has to
                    look different from the resting state or the confirm step is just
                    a second click on the same button, which is no confirmation at
@@ -621,6 +668,7 @@
                 <button type="button" class="curatorTab" role="tab" data-target="categories-settings">Categories</button>
                 <button type="button" class="curatorTab" role="tab" data-target="home">Home screen</button>
                 <button type="button" class="curatorTab" role="tab" data-target="summaries">Summaries</button>
+                <button type="button" class="curatorTab" role="tab" data-target="footer">Footer</button>
                 <button type="button" class="curatorTab" role="tab" data-target="schedule">Schedule</button>
                 <button type="button" class="curatorTab" role="tab" data-target="categories">Runs</button>
                 <button type="button" class="curatorTab" role="tab" data-target="usage">Usage</button>
@@ -1662,6 +1710,88 @@
                         <div id="CuratorSummarySamples">
                             <p class="fieldDescription">Nothing condensed yet.</p>
                         </div>
+                    </div>
+                </div>
+
+                <div class="curatorTabPanel hide" data-panel="footer">
+                    <div class="verticalSection">
+                        <h3 class="sectionTitle">Footer</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1.2em;">
+                            A footer drawn at the bottom of Jellyfin itself — not on this settings page.
+                            <strong>This is the one part of Curator that decorates rather than decides</strong>, and it
+                            is off by default; nothing here affects categories, playlists or rows.
+                            <br /><br />
+                            It works by asking the <strong>File Transformation</strong> plugin to splice a fragment
+                            into the web client, so that plugin must be installed. Because the fragment is stored in
+                            that plugin's configuration rather than held in memory, it survives restarts on its own
+                            and needs no scheduled task.
+                        </p>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="EnableFooter" name="EnableFooter" />
+                                <span>Show a footer in Jellyfin</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Turning this off removes the fragment rather than hiding it — Curator writes into
+                                another plugin's settings, and leaving a switched-off fragment there would be litter
+                                in somebody else's house. A footer with no heading, no text and no links counts as
+                                off, since it would otherwise draw a bare line across the bottom of the page.
+                            </div>
+                        </div>
+
+                        <div class="selectContainer">
+                            <label class="selectLabel" for="FooterScope">Where it appears</label>
+                            <select is="emby-select" id="FooterScope" name="FooterScope" class="emby-select">
+                                <option value="0">The home screen only</option>
+                                <option value="1">Every page</option>
+                            </select>
+                            <div class="fieldDescription">
+                                The home screen is the sensible default — it is where people arrive and where there
+                                is a natural bottom to the page. <em>Every page</em> also puts it under library
+                                grids and item details, which are already long.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="FooterHeading">Heading</label>
+                            <input id="FooterHeading" name="FooterHeading" type="text" class="emby-input"
+                                   maxlength="120" />
+                            <div class="fieldDescription">The bold line. Leave blank to omit it.</div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="FooterText">Text</label>
+                            <input id="FooterText" name="FooterText" type="text" class="emby-input"
+                                   maxlength="400" />
+                            <div class="fieldDescription">
+                                The quieter line under it. Leave blank to omit it. Plain text — it is written into
+                                the page as text, never as markup, so tags will show as tags.
+                            </div>
+                        </div>
+
+                        <h3 class="sectionTitle" style="margin-top:1.6em;">Links</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1em;">
+                            Shown as pills under the text, in this order. A link needs both a label and an address
+                            to appear. Addresses must be <code>http://</code>, <code>https://</code>,
+                            <code>mailto:</code> or a path beginning <code>/</code> — anything else is dropped
+                            rather than cleaned up, because a footer is the last place anyone would look for a
+                            link that runs code.
+                        </p>
+                        <div id="CuratorFooterLinks"></div>
+                        <button is="emby-button" type="button" id="CuratorFooterAddLink" class="raised"
+                                style="margin-top:0.6em;">
+                            <span>Add a link</span>
+                        </button>
+
+                        <h3 class="sectionTitle" style="margin-top:1.8em;">Preview</h3>
+                        <p class="fieldDescription" style="margin:-0.4em 0 1em;">
+                            The same markup Jellyfin will be given, drawn here. It updates as you type; what is
+                            actually published is whatever you last saved.
+                        </p>
+                        <div id="CuratorFooterPreview" class="curatorFooterPreview"></div>
+
+                        <div id="CuratorFooterState" class="fieldDescription" style="margin-top:1em;"></div>
                     </div>
                 </div>
 
@@ -3020,6 +3150,145 @@
                     url: ApiClient.getUrl('Curator/Summaries?limit=300'),
                     dataType: 'json'
                 }).then(renderSummarySamples, function () { /* leave the previous list */ });
+            }
+
+            // ---- footer ----
+
+            // Held in memory while the page is open, like the model profiles are.
+            var footerLinks = [];
+
+            // A hand-mirror of Core/Footer/FooterMarkup.IsSafeUrl — change one,
+            // change both. An allow-list, because "javascript:" in an href runs on
+            // click with the page's privileges and a footer is the last place anyone
+            // would look for that.
+            function footerUrlOk(url) {
+                var u = (url || '').trim();
+                if (!u) {
+                    return false;
+                }
+
+                // A leading "//" is protocol-relative and points off this server, so
+                // it is not a path however much it looks like one.
+                if (u.charAt(0) === '/' && u.substring(0, 2) !== '//') {
+                    return true;
+                }
+
+                var lower = u.toLowerCase();
+                return lower.indexOf('http://') === 0
+                    || lower.indexOf('https://') === 0
+                    || lower.indexOf('mailto:') === 0;
+            }
+
+            function renderFooterLinks() {
+                var target = page.querySelector('#CuratorFooterLinks');
+                if (!footerLinks.length) {
+                    target.innerHTML = '<p class="fieldDescription" style="margin:0 0 0.4em;">No links yet.</p>';
+                    return;
+                }
+
+                target.innerHTML = footerLinks.map(function (link, i) {
+                    var bad = link.Url && !footerUrlOk(link.Url) ? ' curatorFooterBad' : '';
+                    return '<div class="curatorFooterLinkRow" data-index="' + i + '">'
+                        + '<input type="text" class="curatorFooterLabel" placeholder="Label" maxlength="60" value="'
+                        + escapeHtml(link.Label || '') + '" />'
+                        + '<input type="text" class="curatorFooterUrl' + bad
+                        + '" placeholder="https://example.com" maxlength="500" value="'
+                        + escapeHtml(link.Url || '') + '" />'
+                        + '<button type="button" class="curatorFooterLinkDrop" title="Remove">Remove</button>'
+                        + '</div>';
+                }).join('');
+            }
+
+            function renderFooterPreview() {
+                var target = page.querySelector('#CuratorFooterPreview');
+                var heading = page.querySelector('#FooterHeading').value.trim();
+                var text = page.querySelector('#FooterText').value.trim();
+                var usable = footerLinks.filter(function (l) {
+                    return (l.Label || '').trim() && footerUrlOk(l.Url);
+                });
+
+                if (!heading && !text && !usable.length) {
+                    target.innerHTML = '<div class="fpEmpty">Nothing to show yet — an empty footer is not '
+                        + 'published, so this counts as off.</div>';
+                    return;
+                }
+
+                var html = '';
+                if (heading) {
+                    html += '<div class="fpHeading">' + escapeHtml(heading) + '</div>';
+                }
+
+                if (text) {
+                    html += '<p class="fpText">' + escapeHtml(text) + '</p>';
+                }
+
+                if (usable.length) {
+                    html += '<div class="fpLinks">' + usable.map(function (l) {
+                        return '<span class="fpLink">' + escapeHtml(l.Label.trim()) + '</span>';
+                    }).join('') + '</div>';
+                }
+
+                target.innerHTML = html;
+            }
+
+            function refreshFooterUi() {
+                renderFooterLinks();
+                renderFooterPreview();
+            }
+
+            function onFooterLinksInput(e) {
+                var row = e.target.closest ? e.target.closest('.curatorFooterLinkRow') : null;
+                if (!row) {
+                    return;
+                }
+
+                var i = parseInt(row.getAttribute('data-index'), 10);
+                if (isNaN(i) || !footerLinks[i]) {
+                    return;
+                }
+
+                if (e.target.classList.contains('curatorFooterLabel')) {
+                    footerLinks[i].Label = e.target.value;
+                } else if (e.target.classList.contains('curatorFooterUrl')) {
+                    footerLinks[i].Url = e.target.value;
+                    e.target.classList.toggle('curatorFooterBad',
+                        !!e.target.value && !footerUrlOk(e.target.value));
+                }
+
+                // The preview only, never the rows: rebuilding the rows here would
+                // destroy the input being typed into and drop focus on every letter.
+                renderFooterPreview();
+            }
+
+            function onFooterLinksClick(e) {
+                if (!e.target.classList.contains('curatorFooterLinkDrop')) {
+                    return;
+                }
+
+                var row = e.target.closest('.curatorFooterLinkRow');
+                var i = parseInt(row.getAttribute('data-index'), 10);
+                if (!isNaN(i)) {
+                    footerLinks.splice(i, 1);
+                    refreshFooterUi();
+                }
+            }
+
+            // Publishing is a separate step from saving, because the footer lives in
+            // another plugin's configuration — saving Curator's settings alone would
+            // change nothing anybody could see.
+            function applyFooter() {
+                var state = page.querySelector('#CuratorFooterState');
+                state.innerHTML = 'Publishing the footer&hellip;';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Footer/Apply'),
+                    dataType: 'json'
+                }).then(function (result) {
+                    state.innerHTML = escapeHtml(field(result, 'message') || 'Done.');
+                }, function () {
+                    state.innerHTML = 'Could not publish the footer — check the server log.';
+                });
             }
 
             function pruneDuplicateSummaries() {
@@ -4739,6 +5008,15 @@
                     renderPassProfileSelect('#PersonalModelProfileId', config.PersonalModelProfileId || '');
                     page.querySelector('#RecommendationPlaylists').checked = config.RecommendationPlaylists;
                     page.querySelector('#RecommendationPlaylistName').value = config.RecommendationPlaylistName || '';
+                    page.querySelector('#EnableFooter').checked = config.EnableFooter;
+                    setEnumSelect(page.querySelector('#FooterScope'), config.FooterScope);
+                    page.querySelector('#FooterHeading').value = config.FooterHeading || '';
+                    page.querySelector('#FooterText').value = config.FooterText || '';
+                    footerLinks = (config.FooterLinks || []).map(function (l) {
+                        return { Label: field(l, 'label') || '', Url: field(l, 'url') || '' };
+                    });
+                    refreshFooterUi();
+
                     page.querySelector('#SplitRecommendationsByType').checked = config.SplitRecommendationsByType;
                     page.querySelector('#RecommendationMoviePlaylistName').value =
                         config.RecommendationMoviePlaylistName || '';
@@ -4863,6 +5141,17 @@
                     config.SurfaceAllCollections = page.querySelector('#SurfaceAllCollections').checked;
                     config.RecommendationPlaylists = page.querySelector('#RecommendationPlaylists').checked;
                     config.RecommendationPlaylistName = page.querySelector('#RecommendationPlaylistName').value.trim();
+                    config.EnableFooter = page.querySelector('#EnableFooter').checked;
+                    config.FooterScope = parseInt(page.querySelector('#FooterScope').value, 10);
+                    config.FooterHeading = page.querySelector('#FooterHeading').value.trim();
+                    config.FooterText = page.querySelector('#FooterText').value.trim();
+                    // A half-typed row is dropped rather than stored: a link with no
+                    // label or no address cannot be drawn, and keeping it would make
+                    // the saved list disagree with the preview.
+                    config.FooterLinks = footerLinks
+                        .filter(function (l) { return (l.Label || '').trim() && (l.Url || '').trim(); })
+                        .map(function (l) { return { Label: l.Label.trim(), Url: l.Url.trim() }; });
+
                     config.SplitRecommendationsByType = page.querySelector('#SplitRecommendationsByType').checked;
                     config.RecommendationMoviePlaylistName =
                         page.querySelector('#RecommendationMoviePlaylistName').value.trim();
@@ -4916,6 +5205,14 @@
                     return ApiClient.updatePluginConfiguration(pluginId, config);
                 }).then(function (result) {
                     Dashboard.processPluginConfigurationUpdateResult(result);
+
+                    // The footer lives in the File Transformation plugin's own
+                    // configuration, so saving Curator's settings does not move it.
+                    // Published on every save rather than only when the footer
+                    // changed: the alternative is diffing the settings here, and a
+                    // diff that misses a field leaves the page claiming a change the
+                    // server never made.
+                    applyFooter();
                 });
 
                 return false;
@@ -5110,6 +5407,16 @@
                 page.querySelector('#CuratorSyncRowsButton').addEventListener('click', syncRows);
                 page.querySelector('#CuratorSyncPlaylistsButton').addEventListener('click', syncPlaylists);
                 page.querySelector('#CuratorPruneEmptyButton').addEventListener('click', pruneEmptyPlaylists);
+
+                var footerLinkList = page.querySelector('#CuratorFooterLinks');
+                footerLinkList.addEventListener('input', onFooterLinksInput);
+                footerLinkList.addEventListener('click', onFooterLinksClick);
+                page.querySelector('#CuratorFooterAddLink').addEventListener('click', function () {
+                    footerLinks.push({ Label: '', Url: '' });
+                    refreshFooterUi();
+                });
+                page.querySelector('#FooterHeading').addEventListener('input', renderFooterPreview);
+                page.querySelector('#FooterText').addEventListener('input', renderFooterPreview);
                 page.querySelector('#CuratorSelectAll').addEventListener('change', onSelectAll);
                 page.querySelector('#CuratorDeleteSelected').addEventListener('click', onDeleteSelected);
                 page.querySelector('#CuratorExpandAll').addEventListener('click', onExpandAll);
