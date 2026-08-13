@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.9.2.0",
+        "changelog": "Fixes two footer bugs from 0.9.0.0. Switching the footer off left it on screen \u2014 Curator could not recognise its own entry after the round trip reformatted its ID, so the removal quietly did nothing (and a second save would have stacked another copy). And the footer drew at the top of the page instead of the bottom, because Jellyfin positions its layout absolutely and anything appended to the document body lands at the top. It now sits at the end of the scrolling page content, and its links are clickable.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.9.2.0/curator_0.9.2.0.zip",
+        "checksum": "c4ff30834067fb33f2432301ea841988",
+        "timestamp": "2026-08-13T13:57:17Z"
+      },
+      {
         "version": "0.9.1.0",
         "changelog": "Adds a Footer tab: a footer drawn at the bottom of Jellyfin itself, with a heading, a line of text and a row of link buttons. Shown on the home screen by default, or on every page if you prefer. Off by default, and it needs the File Transformation plugin to do the drawing \u2014 because the fragment is stored in that plugin's configuration rather than held in memory, it survives restarts on its own. Everything you type is written into the page as text rather than markup, and link addresses are limited to http, https, mailto and same-server paths.\n\nThe weather and time-of-day row now titles itself in Title Case, matching Jellyfin's own rows \u2014 \"Good for an Overcast Afternoon\" rather than \"Good for an overcast afternoon\". Existing titles are re-made on the next hourly refresh.",
         "targetAbi": "10.11.0.0",
