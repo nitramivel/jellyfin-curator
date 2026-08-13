@@ -328,9 +328,50 @@ namespace Jellyfin.Plugin.Curator.Tests
             // in, because "less oblique" is not a target a model can aim at.
             var prompt = ContextTitlePromptBuilder.BuildSystemPrompt(5);
 
-            Assert.Contains("Good for an overcast afternoon", prompt, StringComparison.Ordinal);
+            Assert.Contains("Good for an Overcast Afternoon", prompt, StringComparison.Ordinal);
             Assert.Contains("Slate Sky Slow Burns", prompt, StringComparison.Ordinal);
-            Assert.Contains("Sentence case", prompt, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Title Case", prompt, StringComparison.Ordinal);
+        }
+
+        [Theory]
+        [InlineData("good for an overcast afternoon", "Good for an Overcast Afternoon")]
+        [InlineData("Good For An Overcast Afternoon", "Good for an Overcast Afternoon")]
+        [InlineData("when the rain sets in", "When the Rain Sets In")]
+        [InlineData("cold night, warm film", "Cold Night, Warm Film")]
+        public void TitlesAreCasedLikeAHeading(string written, string expected)
+        {
+            // The row sits beside Jellyfin's own — "Continue Watching", "Next Up" —
+            // and a single row in a different case is the one that looks broken. The
+            // prompt asks for this and usually gets it; this makes it certain.
+            Assert.Equal(expected, ContextTitlePromptBuilder.TitleCase(written));
+        }
+
+        [Fact]
+        public void ASmallWordAtEitherEndKeepsItsCapital()
+        {
+            // "Next Up" is Jellyfin's own row and would read as a typo lowercased.
+            Assert.Equal("Up for a Quiet One", ContextTitlePromptBuilder.TitleCase("up for a quiet one"));
+            Assert.Equal("Something to Curl Up", ContextTitlePromptBuilder.TitleCase("something to curl up"));
+        }
+
+        [Fact]
+        public void CapitalsAlreadyInAWordAreNeverFlattened()
+        {
+            // TextInfo.ToTitleCase was the obvious tool and does exactly this wrong:
+            // it lowercases the rest of a word, turning "TV" into "Tv".
+            Assert.Equal("A Night of TV", ContextTitlePromptBuilder.TitleCase("a night of TV"));
+            Assert.Equal("McCarthy Weather", ContextTitlePromptBuilder.TitleCase("McCarthy weather"));
+        }
+
+        [Fact]
+        public void ParsedTitlesComeBackCasedWithoutTheCallerAskingTwice()
+        {
+            // The normaliser has to sit inside Parse, not beside it: every caller
+            // that forgot would publish a row in the wrong case.
+            var titles = ContextTitlePromptBuilder.Parse(
+                """{"titles":["good for a rainy evening","MADE FOR A COLD NIGHT"]}""");
+
+            Assert.Equal(["Good for a Rainy Evening", "Made for a Cold Night"], titles);
         }
 
         [Fact]
@@ -386,8 +427,8 @@ namespace Jellyfin.Plugin.Curator.Tests
                 .ToList();
 
             Assert.Equal(6, examples.Count);
-            Assert.Contains("Good for an overcast afternoon", examples);
-            Assert.Contains("Cold night, warm film", examples);
+            Assert.Contains("Good for an Overcast Afternoon", examples);
+            Assert.Contains("Cold Night, Warm Film", examples);
 
             // "Clear morning watching" was a worked example until the rule arrived,
             // and a shown title beats a stated rule every time.
