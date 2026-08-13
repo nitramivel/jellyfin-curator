@@ -43,6 +43,22 @@ namespace Jellyfin.Plugin.Curator.Core.Footer
         /// </summary>
         public const string TransformationId = "c47a1e05-6b3f-4d21-9f76-0a2c8e5b1d44";
 
+        /// <summary>
+        /// The same ID, parsed once.
+        /// </summary>
+        /// <remarks>
+        /// <b>Compared as a GUID, never as a string, and that is a bug fix rather
+        /// than a preference.</b> The property is a <c>Guid</c> on the other
+        /// plugin's type, so what comes back out of it is whatever format its
+        /// serializer chose — measured on the owner's server, the round trip turned
+        /// <c>c47a1e05-6b3f-4d21-9f76-0a2c8e5b1d44</c> into
+        /// <c>c47a1e056b3f4d219f760a2c8e5b1d44</c>, dashes gone. String equality
+        /// then failed to recognise Curator's own entry, so switching the footer off
+        /// silently removed nothing — and a second publish would have appended a
+        /// duplicate rather than replacing the first, stacking one fragment per save.
+        /// </remarks>
+        private static readonly Guid TransformationGuid = Guid.Parse(TransformationId);
+
         /// <summary>The web client file the footer is spliced into.</summary>
         public const string FileNamePattern = "index.html";
 
@@ -85,8 +101,7 @@ namespace Jellyfin.Plugin.Curator.Core.Footer
             var existing = -1;
             for (var i = transformations.Count - 1; i >= 0; i--)
             {
-                if (transformations[i] is JsonObject entry
-                    && string.Equals(GetString(entry, "Id"), TransformationId, StringComparison.OrdinalIgnoreCase))
+                if (transformations[i] is JsonObject entry && IsCuratorEntry(entry))
                 {
                     existing = i;
                     break;
@@ -131,6 +146,14 @@ namespace Jellyfin.Plugin.Curator.Core.Footer
             });
 
             return true;
+        }
+
+        /// <summary>
+        /// Whether this entry is Curator's, whatever format its ID came back in.
+        /// </summary>
+        private static bool IsCuratorEntry(JsonObject entry)
+        {
+            return Guid.TryParse(GetString(entry, "Id"), out var id) && id == TransformationGuid;
         }
 
         /// <summary>
