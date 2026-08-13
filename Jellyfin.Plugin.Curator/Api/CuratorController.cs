@@ -118,6 +118,10 @@ namespace Jellyfin.Plugin.Curator.Api
     /// </param>
     public sealed record PruneEmptyPlaylistsRequest(bool Apply = false);
 
+    /// <summary>What the duplicate-summary prune removed.</summary>
+    /// <param name="Removed">How many stored summaries went.</param>
+    public sealed record SummaryPruneResult(int Removed);
+
     /// <summary>The outcome of a bulk delete.</summary>
     /// <param name="Deleted">How many definitions were removed.</param>
     /// <param name="NotFound">How many IDs matched nothing.</param>
@@ -867,6 +871,40 @@ namespace Jellyfin.Plugin.Curator.Api
         /// <response code="202">Pass started.</response>
         /// <response code="409">A pass is already in progress.</response>
         /// <returns>An action result.</returns>
+        /// <summary>
+        /// Removes stored summaries for library rows that are second copies of
+        /// something already summarised.
+        /// </summary>
+        /// <remarks>
+        /// Uses <c>DuplicateItems</c>, the same judgement the run and both home
+        /// screen results classes use — never a title match of its own. Buys nothing.
+        /// </remarks>
+        /// <response code="200">The prune ran; the body says how many went.</response>
+        /// <response code="409">A summary pass is in progress, or configuration is unavailable.</response>
+        /// <returns>How many summaries were removed.</returns>
+        [HttpPost("Summaries/PruneDuplicates")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status409Conflict)]
+        public ActionResult<SummaryPruneResult> PruneDuplicateSummaries()
+        {
+            // A pass in progress is about to write the very entries this would
+            // remove. Refused rather than raced, the same way every other task here
+            // stands aside for one.
+            if (_distillService.IsRunning)
+            {
+                return Conflict("A Curator summary pass is already in progress.");
+            }
+
+            var config = Plugin.Instance?.Configuration;
+            if (config is null)
+            {
+                return Conflict("Curator configuration is unavailable.");
+            }
+
+            var removed = _distillService.PruneDuplicateSummaries(config);
+            return Ok(new SummaryPruneResult(removed));
+        }
+
         [HttpPost("Summaries/Distill")]
         [ProducesResponseType(StatusCodes.Status202Accepted)]
         [ProducesResponseType(StatusCodes.Status409Conflict)]

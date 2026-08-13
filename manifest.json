@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.8.10.0",
+        "changelog": "The condensing pass no longer treats two library rows for one title as two things to summarise \u2014 it was the last place in the plugin that did, so a library holding a show twice paid for two rewrites and listed it twice. A new 'Remove duplicates' button on the Summaries tab clears the ones already stored without waiting for the next daily pass. It uses the same duplicate test as the rest of the plugin, never a title match, so two different films sharing a name are safe; nothing is bought and nothing is lost, since a summary removed in error is re-made next pass.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.10.0/curator_0.8.10.0.zip",
+        "checksum": "2506241670e7e20f3e061b96372c3fef",
+        "timestamp": "2026-08-13T10:49:26Z"
+      },
+      {
         "version": "0.8.9.0",
         "changelog": "Adds a 'Prune empty playlists' action on the Runs tab and a daily 'Prune Empty Playlists' scheduled task. Jellyfin re-imports playlist folders left on disk after their playlists were deleted, and they arrive with no owner, no contents and none of Curator's marks \u2014 so they sit beside your real playlists as empty duplicates that nothing was allowed to clean up. The sweep removes those and Curator's own empties, along with the leftover folder so a later scan cannot bring them back. It never touches a playlist with anything in it, and never touches an untagged playlist that has an owner: that one is yours, empty or not. The button requires a second confirming click and lists exactly what will go first.",
         "targetAbi": "10.11.0.0",
@@ -39,14 +47,6 @@
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.6.0/curator_0.8.6.0.zip",
         "checksum": "34c904d696fcc75138f9ce55f0843c21",
         "timestamp": "2026-08-12T19:55:46Z"
-      },
-      {
-        "version": "0.8.5.0",
-        "changelog": "Settings page: the tabs now match the Concierge plugin's \u2014 text with an underline instead of eight raised pills competing with the Save button beneath them \u2014 and the model configurator puts the profile picker and its buttons on one line, with every per-profile setting inside a box of its own so it is clear which settings belong to the selected profile and which do not. Fixes the Runs tab losing its scope highlight when you switch tabs, and stops two startup refreshes buying the same context row titles twice.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.5.0/curator_0.8.5.0.zip",
-        "checksum": "97e50c6cfad9cc93017dfec4a86685d3",
-        "timestamp": "2026-08-12T15:41:39Z"
       }
     ]
   }

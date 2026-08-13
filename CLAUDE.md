@@ -395,6 +395,21 @@ every one of these was a real failure on a real server before it was a rule.
    `SummaryPlan` keys staleness on a hash of the source overview, which is the only
    thing that makes a second pass free and stops a metadata refresh leaving a
    summary describing the wrong film.
+   **The pass also collapses duplicates now, and it is rule 2's collapse, not its
+   own.** It was the last place in the plugin that treated two library rows for one
+   title as two things: the run collapses before the model sees them and both
+   results classes collapse again on the way to the screen, but this pass paid for
+   two rewrites of one show, stored both, and listed the title twice. Measured on
+   the owner's server, 3 of 202 stored summaries were a second copy. `SurvivingItems`
+   calls `DuplicateItems.SurvivingIds` and honours **both** of the run's switches
+   (`CollapseDuplicateVersions`, `MatchDuplicatesByProviderId`) — a pass that decided
+   for itself would make the Summaries tab and the home screen disagree about how
+   many things the library holds, and a title match of its own would be the second
+   opinion rule 2 forbids. Removing the stored duplicates needs no separate step:
+   `ISummaryStore.Prune` drops whatever is not in the set it is handed, so passing
+   the survivors does it. `POST /Curator/Summaries/PruneDuplicates` and the
+   Summaries tab's **Remove duplicates** are the same call on demand, for a library
+   that has just been de-duplicated and should not have to wait a day.
 15. **Recommendation selection is arithmetic; only the order may cost money.**
    `RecommendationRanker` decides *which* items appear and calls no model — the
    information is already bought, since every category carries the model's own
