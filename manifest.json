@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.8.8.0",
+        "changelog": "The weather and time-of-day row no longer announces a clear sky. 'Good for a clear evening' says barely more than 'Good for an evening', so a plain clear sky is left out and the hour carries the title; a clear sky with heat or cold is still named, because a cold bright morning is a specific thing. Every other condition \u2014 rain, snow, storm, fog, overcast, hot, cold \u2014 is named as before. Titles bought under the old wording are replaced on the next hourly refresh.",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.8.0/curator_0.8.8.0.zip",
+        "checksum": "c383e027c97128b47bcb4c8575e7162a",
+        "timestamp": "2026-08-13T01:42:12Z"
+      },
+      {
         "version": "0.8.7.0",
         "changelog": "The weather and time-of-day home screen row now says plainly what it is for \u2014 'Good for an overcast afternoon' rather than 'Slate Sky Slow Burns'. Titles name the sky and the hour in ordinary words, in sentence case, and vary how they open so they do not all begin the same way. Titles bought under the old wording are replaced automatically on the next hourly refresh rather than lingering for a year.",
         "targetAbi": "10.11.0.0",
@@ -39,14 +47,6 @@
         "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.4.0/curator_0.8.4.0.zip",
         "checksum": "bc2fb7e16248c2d70dcd4dbc4e31c2b0",
         "timestamp": "2026-08-12T13:30:59Z"
-      },
-      {
-        "version": "0.8.0.0",
-        "changelog": "Full coverage of every weather code Open-Meteo reports, with stand-ins so a thunderstorm row falls back to rain-suited titles rather than showing nothing. Optionally reads tone descriptions from the Concierge search plugin as extra input when condensing.",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/nitramivel/jellyfin-curator/releases/download/v0.8.0.0/curator_0.8.0.0.zip",
-        "checksum": "4e114b993bd8018441ff32f09db7aabc",
-        "timestamp": "2026-08-12T11:25:14Z"
       }
     ]
   }
