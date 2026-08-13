@@ -46,6 +46,36 @@
                 }
                 .curatorEditorEmpty { margin-top: 1em; opacity: 0.75; }
 
+                /* The destructive corner. Red because it deletes things, and boxed
+                   off because a button that deletes things should not sit in the
+                   same visual run as one that rebuilds them — "Re-sync playlists"
+                   directly above is recoverable and this is not. The colour is a
+                   warning, not decoration: it is the only control on this page that
+                   can remove something a person might want. */
+                .curatorDanger {
+                    margin-top: 1.6em; padding: 1em 1.2em;
+                    border: 1px solid rgba(229, 83, 83, 0.55); border-radius: 10px;
+                    background: rgba(229, 83, 83, 0.07);
+                }
+                .curatorDangerTitle { margin: 0 0 0.4em; color: #e56a6a; font-size: 1.05em; }
+                .curatorDangerNote { margin-bottom: 1em; }
+                .curatorDangerState { margin-top: 0.7em; }
+
+                /* The armed state, between the first click and the second. It has to
+                   look different from the resting state or the confirm step is just
+                   a second click on the same button, which is no confirmation at
+                   all. */
+                #CuratorPruneEmptyButton.is-armed {
+                    background: #c0392b; color: #fff;
+                }
+                .curatorDangerList {
+                    margin: 0.6em 0 0; padding: 0.6em 0.8em; max-height: 14em; overflow-y: auto;
+                    border-radius: 0.3em; background: rgba(127,127,127,0.10);
+                    font-size: 0.9em;
+                }
+                .curatorDangerList div { padding: 0.15em 0; }
+                .curatorDangerReason { opacity: 0.65; }
+
                 /* The page tabs, matching Concierge's so the two plugins' settings
                    read as one dashboard. Text with an underline rather than a row of
                    raised pills: eight filled buttons read as eight actions competing
@@ -1694,6 +1724,28 @@
                         playlist a category has lost, deletes categories left holding none, and deletes Curator
                         playlists no category claims. Playlists you have untagged are never touched. Costs
                         nothing and calls no model.
+                    </div>
+
+                    <div class="curatorDanger">
+                        <h4 class="curatorDangerTitle">Prune empty playlists</h4>
+                        <div class="fieldDescription curatorDangerNote">
+                            Deletes playlists that hold nothing <strong>and</strong> belong to nobody. Jellyfin
+                            re-imports a playlist folder left on disk after its playlist was deleted, which
+                            arrives with no owner, no contents, and none of Curator's marks — so every other
+                            pass here is obliged to leave it alone, and it sits beside the working playlist of
+                            the same name forever.
+                            <br /><br />
+                            <strong>Two things are never touched:</strong> a playlist with anything in it, and
+                            an untagged playlist that has an owner — that one is yours, empty or not. What goes
+                            is Curator's own empties and rows nobody could have made. The leftover folder is
+                            removed too, or the next library scan brings the playlist straight back.
+                            <br /><br />
+                            This also runs by itself: see <em>Prune Empty Playlists</em> on the Schedule tab.
+                        </div>
+                        <button is="emby-button" type="button" id="CuratorPruneEmptyButton" class="raised block">
+                            <span>Find empty playlists</span>
+                        </button>
+                        <div id="CuratorPruneEmptyState" class="curatorDangerState"></div>
                     </div>
 
                     <div id="CuratorProgress" class="curatorProgress hide">
@@ -3663,6 +3715,11 @@
                     buttons[j].setAttribute('aria-selected', active ? 'true' : 'false');
                 }
 
+                // Leaving the tab disarms the delete button. A confirmation that
+                // survives navigating away is a confirmation for something the
+                // reader has stopped looking at.
+                disarmPrune();
+
                 // Save applies to the settings form only. Runs, Schedule and Usage
                 // are not part of it — Schedule writes through Jellyfin's task
                 // manager rather than plugin config, and Usage only reads, so the
@@ -4827,6 +4884,108 @@
                 return false;
             }
 
+            // The prune button is armed by its first click and fires on its second.
+            // A confirm() dialog was the obvious alternative and is worse: it is easy
+            // to dismiss without reading, and it cannot show WHICH playlists are
+            // about to go. The first click answers that question with a list, which
+            // is the actual safeguard — the second click is only the acknowledgement.
+            var pruneArmed = false;
+            var pruneDisarmTimer = null;
+
+            function disarmPrune() {
+                pruneArmed = false;
+                if (pruneDisarmTimer) {
+                    window.clearTimeout(pruneDisarmTimer);
+                    pruneDisarmTimer = null;
+                }
+
+                var button = page.querySelector('#CuratorPruneEmptyButton');
+                if (button) {
+                    button.classList.remove('is-armed');
+                    button.querySelector('span').innerHTML = 'Find empty playlists';
+                }
+            }
+
+            function describeCandidates(candidates) {
+                if (!candidates || !candidates.length) {
+                    return '';
+                }
+
+                // Names come from a model, so every one of them is escaped.
+                return '<div class="curatorDangerList">' + candidates.map(function (c) {
+                    var reason = field(c, 'reason') === 'ghost'
+                        ? 'no owner, no contents'
+                        : 'Curator\'s, now empty';
+                    return '<div>' + escapeHtml(field(c, 'name') || '(unnamed)')
+                        + ' <span class="curatorDangerReason">— ' + reason + '</span></div>';
+                }).join('') + '</div>';
+            }
+
+            function pruneEmptyPlaylists() {
+                var button = page.querySelector('#CuratorPruneEmptyButton');
+                var state = page.querySelector('#CuratorPruneEmptyState');
+                var applying = pruneArmed;
+
+                button.disabled = true;
+                state.innerHTML = applying ? 'Deleting…' : 'Looking…';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Curator/Playlists/PruneEmpty'),
+                    // The body goes in `data`. ApiClient.ajax reads it from there and
+                    // silently ignores any other key, so a POST written with
+                    // `content` arrives with no body at all and 400s before the
+                    // action runs, leaving nothing in the server log to find.
+                    data: JSON.stringify({ Apply: applying }),
+                    contentType: 'application/json',
+                    dataType: 'json'
+                }).then(function (result) {
+                    var candidates = field(result, 'candidates') || [];
+                    var examined = field(result, 'examined') || 0;
+                    button.disabled = false;
+
+                    if (applying) {
+                        var deleted = field(result, 'deleted') || 0;
+                        var folders = field(result, 'directoriesRemoved') || 0;
+                        state.innerHTML = deleted === 0
+                            ? 'Nothing was deleted.'
+                            : 'Deleted ' + deleted + ' playlist' + (deleted === 1 ? '' : 's')
+                                + ' and ' + folders + ' leftover folder' + (folders === 1 ? '' : 's') + '.';
+                        disarmPrune();
+                        return;
+                    }
+
+                    if (!candidates.length) {
+                        state.innerHTML = 'Nothing to prune — ' + examined + ' playlist'
+                            + (examined === 1 ? '' : 's') + ' checked, all of them either hold something '
+                            + 'or belong to someone.';
+                        disarmPrune();
+                        return;
+                    }
+
+                    state.innerHTML = '<strong>' + candidates.length + ' of ' + examined
+                        + ' would be deleted.</strong> Check the list, then click again to confirm.'
+                        + describeCandidates(candidates);
+
+                    pruneArmed = true;
+                    button.classList.add('is-armed');
+                    button.querySelector('span').innerHTML =
+                        'Delete ' + candidates.length + ' playlist' + (candidates.length === 1 ? '' : 's')
+                        + ' — click to confirm';
+
+                    // Disarms itself, so a page left open does not keep a loaded
+                    // delete button one stray click away.
+                    pruneDisarmTimer = window.setTimeout(function () {
+                        disarmPrune();
+                        state.innerHTML = 'Confirmation timed out. Nothing was deleted.';
+                    }, 20000);
+                }, function () {
+                    button.disabled = false;
+                    state.innerHTML = 'Could not read the playlists — check the server log.';
+                    disarmPrune();
+                });
+            }
+
             function syncRows() {
                 var button = page.querySelector('#CuratorSyncRowsButton');
                 var state = page.querySelector('#CuratorRunState');
@@ -4913,6 +5072,7 @@
                 page.querySelector('#CuratorRunButton').addEventListener('click', startRun);
                 page.querySelector('#CuratorSyncRowsButton').addEventListener('click', syncRows);
                 page.querySelector('#CuratorSyncPlaylistsButton').addEventListener('click', syncPlaylists);
+                page.querySelector('#CuratorPruneEmptyButton').addEventListener('click', pruneEmptyPlaylists);
                 page.querySelector('#CuratorSelectAll').addEventListener('change', onSelectAll);
                 page.querySelector('#CuratorDeleteSelected').addEventListener('click', onDeleteSelected);
                 page.querySelector('#CuratorExpandAll').addEventListener('click', onExpandAll);
