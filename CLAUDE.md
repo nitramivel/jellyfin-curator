@@ -743,6 +743,22 @@ every one of these was a real failure on a real server before it was a rule.
      plainest phrasing is the same phrasing every time, so the prompt caps how many
      titles in a set may open the same way. Sets are rotated, so the reader sees all
      of them and the repetition with them.
+   - **A bare `clear` is not named in a title, and it is the only condition that
+     isn't.** Naming the conditions plainly raises the question of which are worth
+     naming, and the vocabulary answers it unevenly: `hot` and `cold` carry a
+     notability bar in their thresholds — `HotCelsius` sits where heat becomes the
+     thing you notice about the day — while the sky words have none, so `clear` earns
+     a word for the same reason `storm` does. It should not. A clear sky is the
+     ordinary state of the sky, "a clear evening" says barely more than "an evening",
+     and on a 40-character budget that is the word to spend elsewhere. It stays
+     nameable **with** heat or cold, because a cold bright morning is a specific
+     thing in a way a clear afternoon is not — which is why this is a rule in the
+     prompt and **not** a filter over the vocabulary or the condition key. Selection
+     is untouched: `ContextRanker` still chooses on `clear`, so the title deliberately
+     describes slightly less than the contents were picked for. Do not "fix" that
+     asymmetry by dropping `clear` from `ConditionKey`; the row's contents genuinely
+     differ between a clear sky and no reading at all, and merging those keys would
+     make one set of titles serve two different rows.
    - **Per-viewer rows exist only under per-viewer locations.** A title is a
      property of the section, so two viewers can only read two titles by looking at
      two sections — `ContextSectionIdFor(userId)` builds those, and each is enabled
