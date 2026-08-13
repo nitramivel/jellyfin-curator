@@ -193,6 +193,55 @@ namespace Jellyfin.Plugin.Curator.Tests
         }
 
         [Fact]
+        public void AnIdThatCameBackWithoutItsDashesIsStillRecognised()
+        {
+            // The measured bug. The property is a Guid on the other plugin's type, so
+            // what comes back is whatever ITS serializer chose — on the owner's
+            // server the round trip turned c47a1e05-6b3f-... into c47a1e056b3f...,
+            // dashes gone. String equality then failed to recognise Curator's own
+            // entry: switching the footer off removed nothing, and the log cheerfully
+            // reported "the footer is off and nothing was published" while the
+            // fragment stayed in the file.
+            var config = JsonNode.Parse(
+                """{"Transformations":[{"Id":"c47a1e056b3f4d219f760a2c8e5b1d44","ReplaceText":"old</body>"}]}""");
+
+            Assert.True(FooterTransformationMerger.Merge(config, null));
+            Assert.Empty(config!["Transformations"]!.AsArray());
+        }
+
+        [Fact]
+        public void RepublishingReplacesTheEntryRatherThanStackingASecond()
+        {
+            // The other half of the same bug, and the one that would have been worse
+            // over time: an entry it could not recognise is an entry it appends
+            // beside, so every save added another fragment to every page.
+            var config = JsonNode.Parse(
+                """{"Transformations":[{"Id":"C47A1E056B3F4D219F760A2C8E5B1D44","ReplaceText":"old</body>"}]}""");
+
+            Assert.True(FooterTransformationMerger.Merge(config, "<script>new</script>"));
+
+            var entry = Assert.Single(config!["Transformations"]!.AsArray());
+            Assert.Equal("<script>new</script></body>", (string?)entry!["ReplaceText"]);
+        }
+
+        [Fact]
+        public void TheFragmentGoesIntoThePageContainerRatherThanTheDocumentBody()
+        {
+            // Jellyfin lays out .skinBody and .mainAnimatedPage as position:absolute,
+            // so body's flow is empty and anything appended there renders at the TOP
+            // of the document under the fixed header — which is exactly where the
+            // first version of this put the footer.
+            var built = FooterMarkup.Build(Model());
+
+            Assert.Contains("mainAnimatedPage", built, System.StringComparison.Ordinal);
+            Assert.DoesNotContain("document.body.appendChild", built, System.StringComparison.Ordinal);
+
+            // .skinBody is pointer-events:none, so a descendant that does not
+            // re-enable them renders links nobody can click.
+            Assert.Contains("pointer-events:auto", built, System.StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void TheCamelCaseFormTheServerSendsIsRecognised()
         {
             // The server serializes plugin configuration as camelCase over HTTP while

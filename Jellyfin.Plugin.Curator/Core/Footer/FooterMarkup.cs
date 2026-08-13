@@ -180,6 +180,9 @@ namespace Jellyfin.Plugin.Curator.Core.Footer
                 s.id = 'curatorFooterCss';
                 s.textContent = [
                   '.curatorFooter{',
+                  // .skinBody is pointer-events:none and the footer is a descendant
+                  // of it, so without this the links render and cannot be clicked.
+                  '  pointer-events:auto;',
                   '  margin:3.5em 0 0;padding:2.2em 1.5em 2.6em;',
                   '  border-top:1px solid rgba(127,127,127,0.22);',
                   '  background:linear-gradient(180deg,rgba(127,127,127,0.05),rgba(127,127,127,0.11));',
@@ -258,16 +261,46 @@ namespace Jellyfin.Plugin.Curator.Core.Footer
                 return h.indexOf('#/home') === 0 || h === '' || h === '#/' || h.indexOf('#!/home') === 0;
               }
 
+              // Where the footer has to live to be at the BOTTOM of the page.
+              //
+              // document.body is the obvious target and is wrong: Jellyfin lays the
+              // app out with .skinBody and .mainAnimatedPage both position:absolute,
+              // so body's normal flow is effectively empty and anything appended to
+              // it renders at the top of the document, under the fixed header. That
+              // is where the first version of this put the footer.
+              //
+              // The visible .mainAnimatedPage is the element whose content scrolls,
+              // so appending there puts the footer after the page's own content and
+              // it scrolls into view at the end. The client swaps these elements as
+              // you navigate, hence re-homing rather than appending once.
+              function host() {
+                var pages = document.querySelectorAll('.mainAnimatedPage');
+                for (var i = 0; i < pages.length; i++) {
+                  var p = pages[i];
+                  if (!p.classList.contains('hide') && p.offsetParent !== null) {
+                    return p;
+                  }
+                }
+
+                // Degrade rather than vanish: a future client that renames these
+                // should still get a footer, even if it sits awkwardly.
+                return document.querySelector('.skinBody') || document.body;
+              }
+
               function place() {
                 css();
                 var el = document.getElementById(ID);
                 if (!el) {
                   el = build();
-                  document.body.appendChild(el);
                 }
 
-                // Drawn once, then shown or hidden as the route changes. Rebuilding
-                // per navigation would flicker on every click.
+                var target = host();
+                if (el.parentNode !== target) {
+                  target.appendChild(el);
+                }
+
+                // Shown or hidden as the route changes rather than rebuilt, which
+                // would flicker on every click.
                 el.style.display = (!data.homeOnly || onHome()) ? '' : 'none';
               }
 
